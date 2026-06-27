@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from narrascape.utils.safe_io import atomic_write_json
+
 logger = logging.getLogger("narrascape.cache")
 
 
@@ -46,7 +48,7 @@ class BuildCache:
 
     def _save_index(self) -> None:
         data = {k: v.model_dump() for k, v in self._index.items()}
-        self.index_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(self.index_path, data)
 
     @staticmethod
     def _hash_file(path: Path) -> str:

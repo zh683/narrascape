@@ -51,10 +51,11 @@ class SubtitleStage(Stage):
         if font_name == "Microsoft YaHei":
             font_name = get_system_font_name()
 
-        srt_ff = str(srt_path).replace("\\", "/").replace(":", "\\:")
+        srt_ff = self._escape_filter_path(srt_path)
+        font_filter = self._escape_filter_value(font_name)
         vf = (
             f"subtitles='{srt_ff}':"
-            f"force_style='FontName={font_name},FontSize={sub_cfg.font_size},"
+            f"force_style='FontName={font_filter},FontSize={sub_cfg.font_size},"
             f"PrimaryColour={sub_cfg.primary_color},OutlineColour={sub_cfg.outline_color},"
             f"Outline={sub_cfg.outline},Shadow={sub_cfg.shadow},"
             f"MarginV={sub_cfg.margin_v},Alignment={sub_cfg.alignment}'"
@@ -92,6 +93,16 @@ class SubtitleStage(Stage):
             )
 
         return StageResult(self.name, False, message="subtitle burn failed")
+
+    def _escape_filter_path(self, path) -> str:
+        value = str(path.resolve()).replace("\\", "/")
+        return self._escape_filter_value(value).replace(":", "\\:")
+
+    def _escape_filter_value(self, value: str) -> str:
+        escaped = str(value).replace("\\", "\\\\")
+        for char in ("'", ",", "[", "]", ";"):
+            escaped = escaped.replace(char, f"\\{char}")
+        return escaped
 
     def _build_srt(self, script, durations, sub_cfg, gap_map, gap_default) -> str:
         """Build SRT content from script segments and durations."""

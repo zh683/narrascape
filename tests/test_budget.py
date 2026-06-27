@@ -102,6 +102,21 @@ class TestBudgetTracker:
             assert budget.get_cost_estimate("image", 10) == DEFAULT_COSTS["image_per_image"] * 10
             assert budget.get_cost_estimate("tts", 10) == DEFAULT_COSTS["tts_per_segment"] * 10
             assert budget.get_cost_estimate("music", 5) == DEFAULT_COSTS["music_per_zone"] * 5
+            assert budget.get_cost_estimate("video", 2) == DEFAULT_COSTS["video_per_segment"] * 2
+
+    def test_try_spend_reloads_state_under_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "budget_state.json"
+            first = BudgetTracker(BudgetConfig(total_usd=1.0, mode="cap"), state_path)
+            second = BudgetTracker(BudgetConfig(total_usd=1.0, mode="cap"), state_path)
+
+            allowed, _ = first.try_spend(0.7)
+            blocked, msg = second.try_spend(0.7)
+
+            assert allowed is True
+            assert blocked is False
+            assert "CAP exceeded" in msg
+            assert json.loads(state_path.read_text(encoding="utf-8"))["spent"] == 0.7
 
     def test_get_cost_estimate_custom(self):
         with tempfile.TemporaryDirectory() as tmp:

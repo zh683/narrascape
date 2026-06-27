@@ -225,3 +225,55 @@ def test_film_timeline_prefers_generated_video_over_source_and_image(tmp_path):
     ]
     assert [clip["source"] for clip in story_clips] == ["generated_video", "generated_video"]
     assert timeline["tracks"]["visual"][0]["asset_ref"] == "vid_01"
+
+
+def test_film_timeline_ignores_invalid_external_segment_ids(tmp_path):
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.project_dir / "design_report.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "project_title": "Film Timeline Test",
+                "segments": [
+                    {"segment_id": "bad", "shot_type": "wide_env"},
+                    {"segment_id": 2, "shot_type": "detail"},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (config.project_dir / "image_map.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "segments": [
+                    {"id": "not-an-int", "images": ["ignored"]},
+                    {"id": 2, "images": ["img_02"]},
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (config.project_dir / "footage_timeline.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "edits": [
+                    {
+                        "id": "bad",
+                        "asset_id": "asset_001",
+                        "source_path": "source_media/archive_clip.mp4",
+                        "target_segment_id": "bad",
+                    }
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = FilmTimelineStage().run(_context(config))
+
+    assert result.success is False
+    assert "missing visuals for segments: [1]" in result.message

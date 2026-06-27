@@ -100,3 +100,72 @@ class TestEngineSelection:
         )
         engine = build_motion_engine(params)
         assert isinstance(engine, PILEngine)
+
+
+class TestKenBurnsResourceControls:
+    def test_worker_defaults_are_resource_bounded(self, monkeypatch):
+        from narrascape.stages.kenburns import KenBurnsStage
+
+        stage = KenBurnsStage()
+
+        assert stage._max_workers(6) == 2
+        monkeypatch.setenv("NARRASCAPE_KENBURNS_WORKERS", "4")
+        assert stage._max_workers(6) == 4
+        monkeypatch.setenv("NARRASCAPE_KENBURNS_TIMEOUT", "10")
+        assert stage._worker_timeout({"1": 2.0}) == 30.0
+
+
+class TestPILEngineRuntimeSafety:
+    def test_pil_engine_returns_failure_when_ffmpeg_pipe_breaks(self, tmp_path, monkeypatch):
+        from PIL import Image
+
+        class BrokenStdin:
+            def write(self, data):
+                raise BrokenPipeError("pipe closed")
+
+            def close(self):
+                pass
+
+        class FakeProc:
+            def __init__(self):
+                self.stdin = BrokenStdin()
+                self.returncode = None
+                self.killed = False
+
+            def wait(self, timeout=None):
+                self.returncode = 1
+                return 1
+
+            def communicate(self, timeout=None):
+                self.returncode = 1
+                return b"", b"encoder failed"
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+        image_path = tmp_path / "frame.png"
+        Image.new("RGB", (16, 16), "white").save(image_path)
+        fake_proc = FakeProc()
+
+        monkeypatch.setattr("narrascape.motion.pil.find_ffmpeg", lambda: tmp_path / "ffmpeg")
+        monkeypatch.setattr("narrascape.motion.pil.subprocess.Popen", lambda *a, **k: fake_proc)
+
+        result = PILEngine().generate(
+            MotionParams(
+                image_path=image_path,
+                output_path=tmp_path / "out.mp4",
+                duration=0.1,
+                fps=1,
+                width=16,
+                height=16,
+                movement=MovementType.ZOOM_IN,
+                shot_type=ShotType.MEDIUM,
+                fade_in=0.0,
+                fade_out=0.0,
+            )
+        )
+
+        assert result.success is False
+        assert "pipe closed" in (result.error or "")
+        assert fake_proc.killed is True

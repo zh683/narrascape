@@ -46,3 +46,23 @@ class TestBuildCache:
             # Invalidation
             cache.invalidate(key)
             assert cache.get_output(key) is None
+
+    def test_cache_index_save_uses_atomic_writer(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_atomic_write_json(path, data):
+            calls.append((path, data))
+
+        monkeypatch.setattr("narrascape.cache.atomic_write_json", fake_atomic_write_json)
+
+        cache = BuildCache(tmp_path / "cache")
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test", encoding="utf-8")
+        output_file = tmp_path / "output.mp4"
+        output_file.write_text("video", encoding="utf-8")
+        key = cache.compute_key({"input": input_file}, {"version": 1})
+
+        cache.put(key, {"input": input_file}, {"version": 1}, output_file)
+
+        assert calls
+        assert calls[-1][0] == tmp_path / "cache" / "index.json"

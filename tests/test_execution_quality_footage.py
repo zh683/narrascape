@@ -115,6 +115,18 @@ def test_generate_images_executes_provider_selected_by_selector(tmp_path):
     assert state["provider_selection"]["name"] == "local_image"
 
 
+def test_generate_images_reports_empty_prompt_file_as_stage_failure(tmp_path):
+    from narrascape.stages.generate_images import GenerateImagesStage
+
+    config = _config(tmp_path)
+    (config.project_dir / "image_prompts.yaml").write_text("", encoding="utf-8")
+
+    result = GenerateImagesStage(api_key=None).run(_context(config))
+
+    assert not result.success
+    assert "No prompts" in result.message
+
+
 def test_provider_selector_uses_health_circuit_breaker(tmp_path):
     from narrascape.providers import record_provider_failure, select_provider
 
@@ -233,6 +245,53 @@ def test_generate_video_accepts_pipeline_design_report(tmp_path):
     assert not can_run
     assert "ARK_API_KEY" in reason
     assert "design_report.yaml not found" not in reason
+
+
+def test_generate_video_download_failure_does_not_leave_final_file(tmp_path, monkeypatch):
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+    stage = GenerateVideoStage(api_key="fake", sleep_between=0)
+    monkeypatch.setattr(stage, "_create_task", lambda *args, **kwargs: "task")
+    monkeypatch.setattr(stage, "_poll_task", lambda task_id: "https://example.invalid/out.mp4")
+
+    def fail_download(*args, **kwargs):
+        raise OSError("download failed")
+
+    monkeypatch.setattr("narrascape.stages.generate_video.download_to_path", fail_download)
+
+    ok = stage._generate_one("prompt", "vid_01", "model", "720p", None, None, videos_dir)
+
+    assert ok is False
+    assert not (videos_dir / "vid_01.mp4").exists()
+
+
+def test_generate_video_poll_exits_after_repeated_transport_errors(monkeypatch):
+    import urllib.error
+
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    sleeps = []
+    attempts = []
+
+    def fail_urlopen(*args, **kwargs):
+        attempts.append(1)
+        raise urllib.error.URLError("server unavailable")
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    stage = GenerateVideoStage(
+        api_key="fake",
+        poll_interval=10,
+        max_poll_time=300,
+        max_poll_errors=2,
+    )
+
+    assert stage._poll_task("task") is None
+    assert len(attempts) == 2
+    assert sleeps == [10]
 
 
 def test_qa_reports_deep_quality_checks(tmp_path, monkeypatch):

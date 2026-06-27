@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 
 from narrascape.config import (
@@ -21,6 +22,7 @@ from narrascape.motion import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg
+from narrascape.utils.safe_io import load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.kenburns")
 
@@ -257,9 +259,7 @@ class KenBurnsStage(Stage):
         # Load durations
         durations: dict[str, float] = {}
         if timing_path.exists():
-            import json
-
-            durations = json.loads(timing_path.read_text(encoding="utf-8"))
+            durations = {str(k): float(v) for k, v in load_json_mapping(timing_path).items()}
         else:
             logger.warning("timing.json not found, using default 30s per segment")
             for seg in script.segments:
@@ -287,7 +287,11 @@ class KenBurnsStage(Stage):
         results = []
         failed = []
 
-        with ProcessPoolExecutor(max_workers=max(1, min(4, len(work_items)))) as executor:
+        max_workers = self._max_workers(len(work_items))
+        worker_timeout = self._worker_timeout(durations)
+        logger.info(f"[kenburns] Rendering with {max_workers} worker(s), timeout={worker_timeout}s")
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
                     _render_segment, seg_id, images, timing, durations, prompts, config, supersample
@@ -295,19 +299,32 @@ class KenBurnsStage(Stage):
                 for seg_id, images, timing in work_items
             }
 
-            for future in as_completed(futures):
-                seg_id = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                    if not result.success:
+            try:
+                completed = as_completed(futures, timeout=max(worker_timeout * len(futures), 1))
+                for future in completed:
+                    seg_id = futures[future]
+                    try:
+                        result = future.result(timeout=worker_timeout)
+                        results.append(result)
+                        if not result.success:
+                            failed.append(seg_id)
+                            logger.error(f"[{seg_id}] FAILED: {result.error}")
+                        else:
+                            logger.info(f"[{seg_id}] OK ({result.engine_used})")
+                    except TimeoutError:
+                        logger.error(f"[{seg_id}] Timed out after {worker_timeout}s")
+                        future.cancel()
                         failed.append(seg_id)
-                        logger.error(f"[{seg_id}] FAILED: {result.error}")
-                    else:
-                        logger.info(f"[{seg_id}] OK ({result.engine_used})")
-                except Exception as e:
-                    logger.exception(f"[{seg_id}] Exception: {e}")
-                    failed.append(seg_id)
+                    except Exception as e:
+                        logger.exception(f"[{seg_id}] Exception: {e}")
+                        failed.append(seg_id)
+            except TimeoutError:
+                pending = [seg_id for future, seg_id in futures.items() if not future.done()]
+                failed.extend(pending)
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+                logger.error(f"[kenburns] Timed out waiting for segments: {pending}")
 
         elapsed = time.monotonic() - start
         outputs = [r.output_path for r in results if r.success]
@@ -328,3 +345,22 @@ class KenBurnsStage(Stage):
             message=f"All {len(work_items)} segments rendered in {elapsed:.1f}s",
             duration_seconds=elapsed,
         )
+
+    def _max_workers(self, work_item_count: int) -> int:
+        raw = os.environ.get("NARRASCAPE_KENBURNS_WORKERS")
+        if raw:
+            try:
+                return max(1, min(int(raw), work_item_count))
+            except ValueError:
+                logger.warning(f"Invalid NARRASCAPE_KENBURNS_WORKERS={raw!r}, using default")
+        return max(1, min(2, work_item_count))
+
+    def _worker_timeout(self, durations: dict[str, float]) -> float:
+        raw = os.environ.get("NARRASCAPE_KENBURNS_TIMEOUT")
+        if raw:
+            try:
+                return max(30.0, float(raw))
+            except ValueError:
+                logger.warning(f"Invalid NARRASCAPE_KENBURNS_TIMEOUT={raw!r}, using default")
+        longest = max([float(value) for value in durations.values()] or [30.0])
+        return max(120.0, longest * 20.0)

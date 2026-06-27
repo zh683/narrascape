@@ -112,6 +112,15 @@ def test_artifact_schema_validator_rejects_missing_required_fields():
     from narrascape.artifacts import ArtifactValidationError, validate_artifact
 
     validate_artifact("asset_manifest", {"assets": []})
+    validate_artifact(
+        "film_supervisor",
+        {
+            "schema_version": "film_supervisor.v1",
+            "status": "approved",
+            "decision": {},
+            "next_stages": [],
+        },
+    )
 
     try:
         validate_artifact("asset_manifest", {"items": []})
@@ -119,6 +128,21 @@ def test_artifact_schema_validator_rejects_missing_required_fields():
         assert "assets" in str(exc)
     else:
         raise AssertionError("expected validation error")
+
+    try:
+        validate_artifact(
+            "film_supervisor",
+            {
+                "schema_version": "film_supervisor.v0",
+                "status": "approved",
+                "decision": {},
+                "next_stages": [],
+            },
+        )
+    except ArtifactValidationError as exc:
+        assert "schema_version" in str(exc)
+    else:
+        raise AssertionError("expected schema_version validation error")
 
 
 def test_agent_stage_director_docs_exist_for_core_stages():

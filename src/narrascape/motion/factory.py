@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from narrascape.config import MovementType, ShotType, SupersampleMode
 from narrascape.motion.base import MotionEngine, MotionParams
@@ -55,25 +55,11 @@ def detect_hard_edges(
             img = img.resize((downsample_width, int(h * ratio)), Image.Resampling.BILINEAR)
             w, h = img.size
 
-        pixels = list(img.getdata())
-        high_grad = 0
-        total = 0
-
-        for y in range(h):
-            for x in range(w - 1):
-                idx = y * w + x
-                if abs(pixels[idx + 1] - pixels[idx]) > grad_threshold:
-                    high_grad += 1
-                total += 1
-
-        for y in range(h - 1):
-            for x in range(w):
-                idx = y * w + x
-                if abs(pixels[idx + w] - pixels[idx]) > grad_threshold:
-                    high_grad += 1
-                total += 1
-
-        ratio = high_grad / total if total > 0 else 0
+        edges = img.filter(ImageFilter.FIND_EDGES)
+        hist = edges.histogram()
+        high_grad = sum(count for value, count in enumerate(hist) if value > grad_threshold)
+        total = max(sum(hist), 1)
+        ratio = high_grad / total
         is_hard = ratio > threshold
         _HARDCACHE[cache_key] = is_hard
         logger.debug(

@@ -3,10 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
+from narrascape.utils.safe_io import load_yaml_mapping
 
 
 class FilmAssembleStage(Stage):
@@ -14,6 +13,7 @@ class FilmAssembleStage(Stage):
 
     name = "film_assemble"
     depends_on = ["film_timeline"]
+    VALID_SOURCES = {"generated_video", "source_media", "generated_image", "ending_card"}
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         timeline_path = context.config.project_dir / "film_timeline.yaml"
@@ -24,10 +24,21 @@ class FilmAssembleStage(Stage):
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         timeline_path = config.project_dir / "film_timeline.yaml"
-        timeline = yaml.safe_load(timeline_path.read_text(encoding="utf-8")) or {}
+        timeline = load_yaml_mapping(timeline_path)
         clips = timeline.get("tracks", {}).get("visual", [])
         if not clips:
             return StageResult(self.name, False, message="No visual clips in film_timeline.yaml")
+        invalid_sources = [
+            str(clip.get("id", "unknown"))
+            for clip in clips
+            if str(clip.get("source") or "") not in self.VALID_SOURCES
+        ]
+        if invalid_sources:
+            return StageResult(
+                self.name,
+                False,
+                message=f"Unknown timeline clip source: {invalid_sources}",
+            )
 
         segment_dir = config.pipeline_dir / "timeline_segments"
         segment_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +111,11 @@ class FilmAssembleStage(Stage):
         if out.exists() and validate_video(out):
             return True
 
-        if clip.get("source") == "ending_card":
+        source_type = str(clip.get("source") or "")
+        if source_type not in self.VALID_SOURCES:
+            return False
+
+        if source_type == "ending_card":
             return self._render_ending_card(clip, context, out)
 
         source = config.project_dir / clip["path"]
@@ -113,7 +128,7 @@ class FilmAssembleStage(Stage):
         fps = config.encode.fps
         fit_filter = self._fit_filter(width, height)
 
-        if clip.get("source") == "generated_image":
+        if source_type == "generated_image":
             return run_ffmpeg(
                 [
                     "-loop",

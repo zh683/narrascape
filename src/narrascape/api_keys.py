@@ -39,7 +39,9 @@ class APIKeys:
 
     @classmethod
     def _env(cls) -> dict[str, str]:
-        return load_env_file()
+        if cls._env_cache is None:
+            cls._env_cache = load_env_file()
+        return dict(cls._env_cache)
 
     @classmethod
     def get(cls, key: str, default: str | None = None) -> str | None:

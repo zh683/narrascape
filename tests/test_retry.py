@@ -84,3 +84,24 @@ class TestRetryWithBackoff:
         elapsed = time.monotonic() - start
         # Should be ~0.15s, not 0.2s
         assert elapsed < 0.3
+
+    def test_zero_retries_attempts_once(self):
+        mock = MagicMock(side_effect=RuntimeError("once"))
+
+        with pytest.raises(RuntimeError, match="once"):
+            retry_with_backoff(
+                mock,
+                max_retries=0,
+                base_delay=0.01,
+                retryable_exceptions=(RuntimeError,),
+            )
+
+        assert mock.call_count == 1
+
+    def test_none_return_is_success(self):
+        mock = MagicMock(return_value=None)
+
+        result = retry_with_backoff(mock, max_retries=3, base_delay=0.01)
+
+        assert result is None
+        assert mock.call_count == 1

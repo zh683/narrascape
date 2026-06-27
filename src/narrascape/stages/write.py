@@ -6,6 +6,8 @@ Outputs script.yaml and marks it for human approval.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -61,6 +63,13 @@ class WriteStage(Stage):
 
         # Step 1: Load or generate research
         if self.research_report:
+            report_path = Path(self.research_report)
+            if not report_path.exists():
+                return StageResult(
+                    self.name,
+                    False,
+                    message=f"Research report not found: {self.research_report}",
+                )
             research = load_research_report(self.research_report)
         else:
             research_engine = ResearchEngine(llm_client=self.llm_client)
@@ -89,6 +98,9 @@ class WriteStage(Stage):
 
         # Step 5: Save humanized script (pending approval)
         script_path = scripts_dir / "script.yaml"
+        if script_path.exists():
+            backup_path = scripts_dir / f"script.yaml.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            backup_path.write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
         script_data = {"segments": [seg.model_dump() for seg in script.segments]}
         with open(script_path, "w", encoding="utf-8") as f:
             yaml.dump(script_data, f, allow_unicode=True, sort_keys=False)

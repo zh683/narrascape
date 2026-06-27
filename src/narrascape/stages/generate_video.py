@@ -33,7 +33,14 @@ from narrascape.providers import (
 from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
+from narrascape.utils.ffmpeg import validate_video
 from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.safe_io import (
+    atomic_write_json,
+    download_to_path,
+    load_json_mapping,
+    load_yaml_mapping,
+)
 
 logger = logging.getLogger("narrascape.stages.generate_video")
 
@@ -74,6 +81,7 @@ class GenerateVideoStage(Stage):
         poll_interval: float = 5.0,
         max_poll_time: float = 300.0,
         uploader_backend: str = "base64",
+        max_poll_errors: int = 3,
     ):
         self.api_key = api_key or APIKeys.ark()
         self.model = model
@@ -83,6 +91,7 @@ class GenerateVideoStage(Stage):
         self.sleep_between = sleep_between
         self.poll_interval = poll_interval
         self.max_poll_time = max_poll_time
+        self.max_poll_errors = max(1, max_poll_errors)
         self.uploader = ImageUploader(backend=uploader_backend)
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
@@ -141,7 +150,7 @@ class GenerateVideoStage(Stage):
         state_path = pipe_dir / "video_gen_state.json"
         state = self._load_state(state_path)
         state["provider_selection"] = provider_meta
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(state_path, state)
         done = set(state.get("done", []))
         # 持久化任务 ID 映射，用于断点续传
         task_map = state.get("task_map", {})
@@ -183,7 +192,7 @@ class GenerateVideoStage(Stage):
                 f"references={len(reference_images)}"
             )
             state.setdefault("reference_inputs", {})[vid_id] = reference_inputs["state"]
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(state_path, state)
 
             result = self._generate_one(
                 video_prompt,
@@ -199,11 +208,11 @@ class GenerateVideoStage(Stage):
                 ok_count += 1
                 done.add(vid_id)
                 state["done"] = list(done)
-                state_path.write_text(
-                    json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
+                atomic_write_json(state_path, state)
                 per_video = budget_tracker.get_cost_estimate("video", 1)
-                budget_tracker.record(per_video)
+                spend_ok, spend_msg = budget_tracker.try_spend(per_video)
+                if not spend_ok:
+                    return StageResult(self.name, False, message=spend_msg)
             else:
                 fail_count += 1
             if i < len(segments) - 1:
@@ -232,23 +241,13 @@ class GenerateVideoStage(Stage):
     # ── Internal methods ───────────────────────────
 
     def _load_state(self, path: Path) -> dict:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return {"done": [], "errors": [], "task_map": {}}
+        return load_json_mapping(path, default={"done": [], "errors": [], "task_map": {}})
 
     def _load_design_report(self, path: Path) -> dict:
-        if path.exists():
-            import yaml
-
-            return yaml.safe_load(path.read_text(encoding="utf-8"))
-        return {}
+        return load_yaml_mapping(path)
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        import yaml
-
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return load_yaml_mapping(path)
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:
@@ -319,9 +318,7 @@ class GenerateVideoStage(Stage):
     def _load_director_contract(self, path: Path) -> dict[int, dict[str, Any]]:
         if not path.exists():
             return {}
-        import yaml
-
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = load_yaml_mapping(path)
         result: dict[int, dict[str, Any]] = {}
         for shot in data.get("shots", []) or []:
             try:
@@ -547,6 +544,7 @@ class GenerateVideoStage(Stage):
         poll_url = f"{self.BASE_URL}/tasks/{task_id}"
         start_time = time.time()
         attempts = 0
+        consecutive_errors = 0
 
         while time.time() - start_time < self.max_poll_time:
             attempts += 1
@@ -556,9 +554,14 @@ class GenerateVideoStage(Stage):
             try:
                 r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
             except Exception as e:
+                consecutive_errors += 1
                 logger.warning(f"  Poll error (attempt {attempts}): {e}")
+                if consecutive_errors >= self.max_poll_errors:
+                    logger.error(f"  Polling aborted after {consecutive_errors} consecutive errors")
+                    return None
                 time.sleep(self.poll_interval)
                 continue
+            consecutive_errors = 0
 
             status = r.get("status", "unknown")
             logger.info(f"  Poll {attempts}: status={status}")
@@ -629,7 +632,17 @@ class GenerateVideoStage(Stage):
 
         # Step 3: Download video
         try:
-            urllib.request.urlretrieve(video_url, str(out_mp4))
+            download_to_path(
+                video_url,
+                out_mp4,
+                timeout=300,
+                min_bytes=1024,
+                min_free_mb=128.0,
+                expected_content_prefixes=("video/", "application/octet-stream"),
+            )
+            if not validate_video(out_mp4):
+                out_mp4.unlink(missing_ok=True)
+                raise RuntimeError("downloaded video failed ffprobe validation")
         except Exception as e:
             logger.error(f"Download failed: {e}")
             return False

@@ -175,3 +175,27 @@ def test_film_assemble_respects_timeline_start_gaps(tmp_path, monkeypatch):
     concat_lines = (config.pipeline_dir / "film_assemble.txt").read_text(encoding="utf-8")
     assert "gap_001.mp4" in concat_lines
     assert any("color=c=black" in " ".join(command) for command in commands)
+
+
+def test_film_assemble_rejects_unknown_clip_source(tmp_path, monkeypatch):
+    from narrascape.stages.film_assemble import FilmAssembleStage
+
+    config = _config(tmp_path)
+    timeline_path = config.project_dir / "film_timeline.yaml"
+    timeline = yaml.safe_load(timeline_path.read_text(encoding="utf-8"))
+    timeline["tracks"]["visual"][0]["source"] = "mystery_source"
+    timeline_path.write_text(yaml.safe_dump(timeline, sort_keys=False), encoding="utf-8")
+
+    calls = []
+
+    def fake_run_ffmpeg(args, **kwargs):
+        calls.append(args)
+        return True
+
+    monkeypatch.setattr("narrascape.stages.film_assemble.run_ffmpeg", fake_run_ffmpeg)
+
+    result = FilmAssembleStage().run(_context(config))
+
+    assert not result.success
+    assert "v_001" in result.message
+    assert calls == []

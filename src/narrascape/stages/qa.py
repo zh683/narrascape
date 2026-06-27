@@ -6,11 +6,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import find_ffmpeg, get_media_info, validate_video
+from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
 
 
 class QAStage(Stage):
@@ -97,7 +96,7 @@ class QAStage(Stage):
             "warnings": warnings,
         }
         validate_artifact("render_report", report)
-        report_path.write_text(yaml.safe_dump(report, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(report_path, report)
 
         return StageResult(
             self.name,
@@ -278,13 +277,20 @@ class QAStage(Stage):
         hashes: dict[str, Path] = {}
         for path in media_files:
             try:
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                digest = self._file_sha256(path)
             except Exception:
                 continue
             if digest in hashes:
                 return True
             hashes[digest] = path
         return False
+
+    def _file_sha256(self, path: Path) -> str:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
 
     def _detect_placeholder_residue(self, context: StageContext) -> bool:
         state_path = context.config.pipeline_dir / "image_gen_state.json"
@@ -312,7 +318,7 @@ class QAStage(Stage):
                 "pacing_risk_segments": [],
             }
         try:
-            timeline = yaml.safe_load(timeline_path.read_text(encoding="utf-8")) or {}
+            timeline = load_yaml_mapping(timeline_path)
         except Exception:
             return {
                 "shot_coverage_ratio": None,

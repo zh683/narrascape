@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.stages.base import StageResult
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.approval")
 
@@ -101,8 +102,7 @@ class PipelineApproval:
         pending_file = self.approvals_dir / f"{stage_name}.pending"
         review_content = self._format_review_request(stage_name, stage_result, assets)
 
-        with open(pending_file, "w", encoding="utf-8") as f:
-            f.write(review_content)
+        atomic_write_text(pending_file, review_content)
 
         logger.info(f"[approval] Created review request: {pending_file}")
 
@@ -174,39 +174,45 @@ class PipelineApproval:
         """Mark a stage as approved."""
         self._clear_status_files(stage_name)
         approved_file = self.approvals_dir / f"{stage_name}.approved"
-        with open(approved_file, "w", encoding="utf-8") as f:
-            f.write(f"stage: {stage_name}\n")
-            f.write("status: approved\n")
-            f.write(f"reviewer: {reviewer}\n")
-            f.write(f"timestamp: {datetime.now().isoformat()}\n")
-            if notes:
-                f.write(f"notes: {notes}\n")
+        content = [
+            f"stage: {stage_name}",
+            "status: approved",
+            f"reviewer: {reviewer}",
+            f"timestamp: {datetime.now().isoformat()}",
+        ]
+        if notes:
+            content.append(f"notes: {notes}")
+        atomic_write_text(approved_file, "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' approved by {reviewer}")
 
     def reject(self, stage_name: str, reviewer: str = "human", notes: str = "") -> None:
         """Mark a stage as rejected."""
         self._clear_status_files(stage_name)
         rejected_file = self.approvals_dir / f"{stage_name}.rejected"
-        with open(rejected_file, "w", encoding="utf-8") as f:
-            f.write(f"stage: {stage_name}\n")
-            f.write("status: rejected\n")
-            f.write(f"reviewer: {reviewer}\n")
-            f.write(f"timestamp: {datetime.now().isoformat()}\n")
-            if notes:
-                f.write(f"notes: {notes}\n")
+        content = [
+            f"stage: {stage_name}",
+            "status: rejected",
+            f"reviewer: {reviewer}",
+            f"timestamp: {datetime.now().isoformat()}",
+        ]
+        if notes:
+            content.append(f"notes: {notes}")
+        atomic_write_text(rejected_file, "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' rejected by {reviewer}")
 
     def skip(self, stage_name: str, reviewer: str = "human", notes: str = "") -> None:
         """Mark a stage as explicitly skipped."""
         self._clear_status_files(stage_name)
         skipped_file = self.approvals_dir / f"{stage_name}.skipped"
-        with open(skipped_file, "w", encoding="utf-8") as f:
-            f.write(f"stage: {stage_name}\n")
-            f.write("status: skipped\n")
-            f.write(f"reviewer: {reviewer}\n")
-            f.write(f"timestamp: {datetime.now().isoformat()}\n")
-            if notes:
-                f.write(f"notes: {notes}\n")
+        content = [
+            f"stage: {stage_name}",
+            "status: skipped",
+            f"reviewer: {reviewer}",
+            f"timestamp: {datetime.now().isoformat()}",
+        ]
+        if notes:
+            content.append(f"notes: {notes}")
+        atomic_write_text(skipped_file, "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' skipped by {reviewer}")
 
     def _clear_status_files(self, stage_name: str) -> None:
@@ -214,7 +220,10 @@ class PipelineApproval:
         for suffix in (".pending", ".approved", ".rejected", ".skipped"):
             f = self.approvals_dir / f"{stage_name}{suffix}"
             if f.exists():
-                f.unlink()
+                try:
+                    f.unlink()
+                except OSError as exc:
+                    logger.warning(f"[approval] Could not remove {f}: {exc}")
 
     # ── Interactive prompt ─────────────────────────────────────────
 
@@ -270,7 +279,12 @@ class PipelineApproval:
             console.print("  [4] [dim]skip[/]     — Skip review (not recommended)")
             console.print()
 
-            choice = input("Choice [1/2/3/4]: ").strip().lower()
+            try:
+                choice = input("Choice [1/2/3/4]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                self.request_review(stage_name, stage_result)
+                console.print(f"[yellow]Review for stage '{stage_name}' was saved as pending.[/]")
+                return "rejected"
 
             if choice in ("1", "approve", "a", "y", "yes"):
                 self.approve(stage_name)
@@ -295,8 +309,16 @@ class PipelineApproval:
     def list_all(self) -> dict[str, str]:
         """Return a dict of all stage statuses."""
         statuses = {}
-        for f in self.approvals_dir.iterdir():
-            if f.suffix in (".pending", ".approved", ".rejected", ".skipped"):
-                stage_name = f.stem
-                statuses[stage_name] = f.suffix[1:]  # remove leading dot
+        try:
+            files = list(self.approvals_dir.iterdir())
+        except OSError as exc:
+            logger.warning(f"[approval] Could not list approvals: {exc}")
+            return statuses
+        for f in files:
+            try:
+                if f.suffix in (".pending", ".approved", ".rejected", ".skipped"):
+                    stage_name = f.stem
+                    statuses[stage_name] = f.suffix[1:]  # remove leading dot
+            except OSError as exc:
+                logger.warning(f"[approval] Could not inspect {f}: {exc}")
         return statuses

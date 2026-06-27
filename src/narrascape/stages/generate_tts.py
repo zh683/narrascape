@@ -27,6 +27,7 @@ from narrascape.providers import (
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import find_ffprobe
 from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_tts")
 
@@ -88,12 +89,12 @@ class GenerateTTSStage(Stage):
                 if not out.exists():
                     self._generate_local_tone(out, duration, sid)
                 durations[str(sid)] = duration
-            (pipe_dir / "timing.json").write_text(json.dumps(durations, indent=2), encoding="utf-8")
+            atomic_write_json(pipe_dir / "timing.json", durations)
             state_path = pipe_dir / "tts_state.json"
             state = self._load_state(state_path)
             state["provider_selection"] = provider_meta
             state["done"] = [seg.id for seg in segments]
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(state_path, state)
             record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
@@ -126,7 +127,7 @@ class GenerateTTSStage(Stage):
         state_path = pipe_dir / "tts_state.json"
         state = self._load_state(state_path)
         state["provider_selection"] = provider_meta
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(state_path, state)
         done = set(state.get("done", []))
 
         logger.info(f"TTS: {ns} segments, model={tts_cfg.model}, voice={tts_cfg.voice_id}")
@@ -203,18 +204,20 @@ class GenerateTTSStage(Stage):
                         .strip()
                     )
                     raw = bytes.fromhex(raw_hex)
-                    out.write_bytes(raw)
+                    atomic_write_bytes(out, raw)
                     done.add(sid)
                     state["done"] = list(done)
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
                     # Record actual cost per successful TTS generation
                     per_tts = budget_tracker.get_cost_estimate("tts", 1)
-                    budget_tracker.record(per_tts)
+                    spend_ok, spend_msg = budget_tracker.try_spend(per_tts)
+                    if not spend_ok:
+                        return StageResult(self.name, False, message=spend_msg)
             except Exception as e:
                 logger.error(f"FAIL: {e}")
                 state["errors"].append(f"seg_{sid}: {e}")
 
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(state_path, state)
             time.sleep(0.3)
 
         # Generate timing.json
@@ -238,6 +241,7 @@ class GenerateTTSStage(Stage):
                     ],
                     capture_output=True,
                     text=True,
+                    timeout=60,
                 )
                 try:
                     dur[str(sid)] = float(r.stdout.strip())
@@ -247,7 +251,7 @@ class GenerateTTSStage(Stage):
             else:
                 dur[str(sid)] = max(8, len(seg.text) / 7.2)
 
-        (pipe_dir / "timing.json").write_text(json.dumps(dur, indent=2), encoding="utf-8")
+        atomic_write_json(pipe_dir / "timing.json", dur)
 
         total = sum(dur.values())
         errors = state.get("errors", [])
@@ -277,9 +281,7 @@ class GenerateTTSStage(Stage):
     # ── Helpers ───────────────────────────
 
     def _load_state(self, path: Path) -> dict:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return {"done": [], "errors": []}
+        return load_json_mapping(path, default={"done": [], "errors": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:
         if config.tts.provider.value in ("piper", "local"):

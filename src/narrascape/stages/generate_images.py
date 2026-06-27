@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_image_prompts
@@ -29,6 +30,12 @@ from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import find_ffmpeg
 from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.safe_io import (
+    atomic_write_json,
+    download_to_path,
+    ensure_min_free_space,
+    load_json_mapping,
+)
 
 logger = logging.getLogger("narrascape.stages.generate_images")
 
@@ -95,7 +102,10 @@ class GenerateImagesStage(Stage):
         provider_meta = selection_metadata(selection)
 
         # Load prompts
-        prompts = load_image_prompts(project_dir / "image_prompts.yaml")
+        try:
+            prompts = load_image_prompts(project_dir / "image_prompts.yaml")
+        except ValidationError:
+            return StageResult(self.name, False, message="No prompts in image_prompts.yaml")
         targets = prompts.prompts
         if not targets:
             return StageResult(self.name, False, message="No prompts in image_prompts.yaml")
@@ -111,7 +121,7 @@ class GenerateImagesStage(Stage):
             state = self._load_state(state_path)
             state["provider_selection"] = provider_meta
             state["done"] = [path.stem for path in generated]
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(state_path, state)
             record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
@@ -144,7 +154,7 @@ class GenerateImagesStage(Stage):
         state_path = pipe_dir / "image_gen_state.json"
         state = self._load_state(state_path)
         state["provider_selection"] = provider_meta
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(state_path, state)
         done = set(state.get("done", []))
 
         # Load ref image
@@ -177,7 +187,9 @@ class GenerateImagesStage(Stage):
                         ok_count += 1
                         # Record actual cost per successful generation in batch
                         per_image = budget_tracker.get_cost_estimate("image", 1)
-                        budget_tracker.record(per_image)
+                        spend_ok, spend_msg = budget_tracker.try_spend(per_image)
+                        if not spend_ok:
+                            return StageResult(self.name, False, message=spend_msg)
                     else:
                         fail_count += 1
                 if batch_start + self.sequential_batch < len(targets):
@@ -234,12 +246,12 @@ class GenerateImagesStage(Stage):
                     ok_count += 1
                     done.add(pid)
                     state["done"] = list(done)
-                    state_path.write_text(
-                        json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
-                    )
+                    atomic_write_json(state_path, state)
                     # Record actual cost per successful generation
                     per_image = budget_tracker.get_cost_estimate("image", 1)
-                    budget_tracker.record(per_image)
+                    spend_ok, spend_msg = budget_tracker.try_spend(per_image)
+                    if not spend_ok:
+                        return StageResult(self.name, False, message=spend_msg)
                 else:
                     fail_count += 1
                 if i < len(targets) - 1:
@@ -268,9 +280,7 @@ class GenerateImagesStage(Stage):
     # ── Internal methods ───────────────────────────
 
     def _load_state(self, path: Path) -> dict:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return {"done": [], "errors": []}
+        return load_json_mapping(path, default={"done": [], "errors": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:
         if config.images.provider.value == "local":
@@ -317,6 +327,7 @@ class GenerateImagesStage(Stage):
             draw.text((width * 0.1, y), line, fill=(255, 255, 255), font=font)
             y += 18
         out.parent.mkdir(parents=True, exist_ok=True)
+        ensure_min_free_space(out, min_free_mb=16.0, purpose=f"write placeholder {out.name}")
         image.save(out)
 
     def _derive_size(self, shot_type: str, manual_size: str | None) -> str:
@@ -428,16 +439,23 @@ class GenerateImagesStage(Stage):
         # Download and convert to PNG
         tmp = images_dir / f"_tmp_{out_name}.jpg"
         try:
-            urllib.request.urlretrieve(img_url, str(tmp))
+            download_to_path(img_url, tmp, timeout=180, min_bytes=128, min_free_mb=32.0)
+            if not tmp.exists() or tmp.stat().st_size == 0:
+                raise RuntimeError("download produced an empty image file")
+            ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
+            ffmpeg = find_ffmpeg()
+            subprocess.run(
+                [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
+            )
+            if not out_png.exists() or out_png.stat().st_size == 0:
+                raise RuntimeError("ffmpeg conversion produced an empty PNG")
         except Exception as e:
             logger.error(f"Download failed: {e}")
+            tmp.unlink(missing_ok=True)
+            out_png.unlink(missing_ok=True)
             return False
-
-        ffmpeg = find_ffmpeg()
-        subprocess.run(
-            [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
-        )
-        tmp.unlink(missing_ok=True)
+        finally:
+            tmp.unlink(missing_ok=True)
 
         logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
         return True
@@ -501,11 +519,21 @@ class GenerateImagesStage(Stage):
             name = names[gen_idx]
             out_png = images_dir / f"{name}.png"
             tmp = images_dir / f"_tmp_{name}.jpg"
-            urllib.request.urlretrieve(urls[j], str(tmp))
-            subprocess.run(
-                [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
-            )
-            tmp.unlink(missing_ok=True)
+            try:
+                download_to_path(urls[j], tmp, timeout=180, min_bytes=128, min_free_mb=32.0)
+                ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
+                )
+                if not out_png.exists() or out_png.stat().st_size == 0:
+                    raise RuntimeError("ffmpeg conversion produced an empty PNG")
+            except Exception as exc:
+                logger.error(f"{name} download/convert failed: {exc}")
+                tmp.unlink(missing_ok=True)
+                out_png.unlink(missing_ok=True)
+                continue
+            finally:
+                tmp.unlink(missing_ok=True)
             results[gen_idx] = True
             logger.info(f"{name} OK {out_png.stat().st_size / 1024:.0f}KB")
 

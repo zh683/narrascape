@@ -47,21 +47,11 @@ class FilmTimelineStage(Stage):
         take_selection = self._load_yaml(config.pipeline_dir / "take_selection.yaml")
 
         script_segments = list(context.script.segments)
-        design_by_segment = {
-            int(item.get("segment_id")): item
-            for item in design.get("segments", [])
-            if item.get("segment_id") is not None
-        }
-        image_map_by_segment = {
-            int(item.get("id")): item
-            for item in image_map.get("segments", [])
-            if item.get("id") is not None
-        }
-        footage_by_segment = {
-            int(item.get("target_segment_id")): item
-            for item in footage_timeline.get("edits", [])
-            if item.get("target_segment_id") is not None
-        }
+        design_by_segment = self._items_by_int_key(design.get("segments", []), "segment_id")
+        image_map_by_segment = self._items_by_int_key(image_map.get("segments", []), "id")
+        footage_by_segment = self._items_by_int_key(
+            footage_timeline.get("edits", []), "target_segment_id"
+        )
         generated_video_by_segment = self._generated_videos_by_segment(
             config, video_state, take_selection
         )
@@ -250,6 +240,19 @@ class FilmTimelineStage(Stage):
         if not path.exists():
             return {}
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _items_by_int_key(self, items: Any, key: str) -> dict[int, dict[str, Any]]:
+        result: dict[int, dict[str, Any]] = {}
+        if not isinstance(items, list):
+            return result
+        for item in items:
+            if not isinstance(item, dict) or item.get(key) is None:
+                continue
+            try:
+                result[int(item[key])] = item
+            except (TypeError, ValueError):
+                continue
+        return result
 
     def _generated_videos_by_segment(
         self,

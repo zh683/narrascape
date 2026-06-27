@@ -639,12 +639,12 @@ class ImageMap(BaseModel):
 
 def load_config(path: Path) -> NarrascapeConfig:
     """Load and validate config.yaml from a project directory or file path."""
-    import yaml
+    from narrascape.utils.safe_io import load_yaml_mapping
 
     # If path is a directory, look for config.yaml inside it
     if path.is_dir():
         path = path / "config.yaml"
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = load_yaml_mapping(path)
     cfg = NarrascapeConfig(**data)
     cfg.project_dir = path.parent
     return cfg
@@ -652,23 +652,23 @@ def load_config(path: Path) -> NarrascapeConfig:
 
 def load_script(path: Path) -> Script:
     """Load and validate script.yaml."""
-    import yaml
+    from narrascape.utils.safe_io import load_yaml_mapping
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = load_yaml_mapping(path)
     return Script(**data)
 
 
 def load_image_prompts(path: Path) -> ImagePrompts:
     """Load and validate image_prompts.yaml."""
-    import yaml
+    from narrascape.utils.safe_io import load_yaml_mapping
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = load_yaml_mapping(path)
     return ImagePrompts(**data)
 
 
 def load_image_map(path: Path) -> ImageMap:
     """Load and validate image_map.yaml."""
-    import yaml
+    from narrascape.utils.safe_io import load_yaml_mapping
 
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = load_yaml_mapping(path)
     return ImageMap(**data)

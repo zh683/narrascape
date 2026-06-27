@@ -459,6 +459,59 @@ class TestPipelineStageFactory:
         assert results["cycle_1.rework_execute"].success is True
         assert results["cycle_1.generate_video"].success is True
         assert results["cycle_1.film_supervisor"].success is True
+        assert results["film_supervisor"].message == "needs_rework"
+
+    def test_pipeline_failure_marks_remaining_stages_pending_and_clears_outputs(
+        self, tmp_path, monkeypatch
+    ):
+        class FakeFailStage:
+            name = "fail_stage"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                return StageResult("fail_stage", False, message="failed")
+
+        class FakeLaterStage:
+            name = "later_stage"
+            depends_on = ["fail_stage"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                return StageResult("later_stage", True, message="should not run")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="failure-state-test",
+                title="Failure State Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {"fail_stage": FakeFailStage, "later_stage": FakeLaterStage},
+        )
+
+        pipeline = Pipeline(config, auto_approve=True)
+        pipeline.state.set_stage_status("later_stage", "completed")
+        pipeline.state.set_stage_outputs("later_stage", [str(config.pipeline_dir / "old.txt")])
+
+        results = pipeline.run(stages=["later_stage"])
+
+        assert results["fail_stage"].success is False
+        assert "later_stage" not in results
+        assert pipeline.state.get_stage_status("later_stage") == "pending"
+        assert pipeline.state.get_stage_outputs("later_stage") == []
 
     def test_pipeline_runs_director_review_after_failed_qa(self, tmp_path, monkeypatch):
         class FakeQAStage:
@@ -517,6 +570,76 @@ class TestPipelineStageFactory:
         assert results["qa"].success is False
         assert results["director_review"].success is True
         assert (config.pipeline_dir / "director_review.yaml").exists()
+
+    def test_completed_stage_reruns_when_recorded_output_is_missing(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("fake")
+                output = context.config.pipeline_dir / "fake.txt"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("ok", encoding="utf-8")
+                return StageResult("fake", True, outputs=[output], message="ok")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="missing-output-test",
+                title="Missing Output Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("narrascape.pipeline.STAGE_MAP", {"fake": FakeStage})
+
+        pipeline = Pipeline(config, auto_approve=True)
+        result = pipeline.run(stages=["fake"])
+        assert result["fake"].success is True
+        assert calls == ["fake"]
+
+        (config.pipeline_dir / "fake.txt").unlink()
+        result = Pipeline(config, auto_approve=True).run(stages=["fake"])
+
+        assert result["fake"].success is True
+        assert calls == ["fake", "fake"]
+
+    def test_pipeline_records_nested_output_paths(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="nested-output-test",
+                title="Nested Output Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        pipeline = Pipeline(config, auto_approve=True)
+        first = tmp_path / "pipeline" / "nested-output-test" / "a.txt"
+        second = tmp_path / "pipeline" / "nested-output-test" / "b.txt"
+
+        paths = pipeline._recordable_outputs(
+            StageResult(
+                "fake",
+                True,
+                outputs={
+                    "primary": first,
+                    "alternates": [second, None, ""],
+                    "metadata": {"ignored": 123},
+                },
+            )
+        )
+
+        assert paths == [str(first), str(second)]
 
     def test_pipeline_clean_removes_film_assembly_and_director_review_artifacts(self, tmp_path):
         config = NarrascapeConfig(

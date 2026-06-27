@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import (
+    atomic_write_yaml,
+    load_yaml_mapping,
+    update_json_mapping,
+)
 
 
 class ReworkExecuteStage(Stage):
@@ -82,7 +84,7 @@ class ReworkExecuteStage(Stage):
             "queues": queues,
         }
         validate_artifact("rework_execution", execution)
-        output.write_text(yaml.safe_dump(execution, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, execution)
         return StageResult(
             self.name,
             True,
@@ -125,14 +127,16 @@ class ReworkExecuteStage(Stage):
     def _remove_done_ids(self, state_path: Path, ids: list[str]) -> None:
         if not state_path.exists():
             return
-        state = json.loads(state_path.read_text(encoding="utf-8"))
         remove = set(ids)
-        state["done"] = [item for item in state.get("done", []) if item not in remove]
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        def update(state: dict[str, Any]) -> None:
+            state["done"] = [item for item in state.get("done", []) if item not in remove]
+
+        update_json_mapping(state_path, update, default={"done": [], "errors": [], "task_map": {}})
 
     def _write_queue(self, path: Path, actions: list[dict[str, Any]]) -> str:
         data = {"actions": actions}
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(path, data)
         return path.as_posix()
 
     def _stages_to_rerun(
@@ -169,14 +173,21 @@ class ReworkExecuteStage(Stage):
     def _mark_stages_pending(self, state_path: Path, stages: list[str]) -> None:
         if not stages:
             return
-        if state_path.exists():
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        else:
-            state = {"version": "2.0", "stages": {}, "segments": {}}
-        state.setdefault("stages", {})
-        for stage in stages:
-            state["stages"][stage] = "pending"
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        def update(state: dict[str, Any]) -> None:
+            state.setdefault("version", "2.0")
+            state.setdefault("segments", {})
+            state.setdefault("stage_outputs", {})
+            state.setdefault("stages", {})
+            for stage in stages:
+                state["stages"][stage] = "pending"
+                state["stage_outputs"].pop(stage, None)
+
+        update_json_mapping(
+            state_path,
+            update,
+            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+        )
 
     def _dedupe(self, stages: list[str]) -> list[str]:
         result: list[str] = []
@@ -189,6 +200,4 @@ class ReworkExecuteStage(Stage):
         return result
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return load_yaml_mapping(path)

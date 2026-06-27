@@ -38,6 +38,12 @@ from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.take_select import TakeSelectStage
 from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
 from narrascape.stages.write import WriteStage
+from narrascape.utils.safe_io import (
+    atomic_write_json,
+    load_json_mapping,
+    load_yaml_mapping,
+    update_json_mapping,
+)
 
 logger = logging.getLogger("narrascape.pipeline")
 
@@ -159,27 +165,59 @@ class PipelineState:
         self.data: dict[str, Any] = self._load()
 
     def _load(self) -> dict[str, Any]:
-        if not self.state_path.exists():
-            return {"version": "2.0", "stages": {}, "segments": {}}
-        import json
-
-        return json.loads(self.state_path.read_text(encoding="utf-8"))
+        return load_json_mapping(
+            self.state_path,
+            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+        )
 
     def save(self) -> None:
-        import json
-
-        self.state_path.write_text(
-            json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        atomic_write_json(self.state_path, self.data)
 
     def get_stage_status(self, name: str) -> str:
         return self.data.get("stages", {}).get(name, "pending")
 
     def set_stage_status(self, name: str, status: str) -> None:
-        if "stages" not in self.data:
-            self.data["stages"] = {}
-        self.data["stages"][name] = status
-        self.save()
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", "2.0")
+            data.setdefault("segments", {})
+            data.setdefault("stage_outputs", {})
+            data.setdefault("stages", {})[name] = status
+
+        self.data = update_json_mapping(
+            self.state_path,
+            update,
+            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+        )
+
+    def set_stage_outputs(self, name: str, outputs: list[str]) -> None:
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", "2.0")
+            data.setdefault("stages", {})
+            data.setdefault("segments", {})
+            data.setdefault("stage_outputs", {})[name] = outputs
+
+        self.data = update_json_mapping(
+            self.state_path,
+            update,
+            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+        )
+
+    def clear_stage_outputs(self, name: str) -> None:
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", "2.0")
+            data.setdefault("stages", {})
+            data.setdefault("segments", {})
+            data.setdefault("stage_outputs", {}).pop(name, None)
+
+        self.data = update_json_mapping(
+            self.state_path,
+            update,
+            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+        )
+
+    def get_stage_outputs(self, name: str) -> list[str]:
+        outputs = self.data.get("stage_outputs", {}).get(name, [])
+        return [str(path) for path in outputs] if isinstance(outputs, list) else []
 
     def is_completed(self, name: str) -> bool:
         return self.get_stage_status(name) == "completed"
@@ -440,13 +478,20 @@ class Pipeline:
                 and self.state.is_completed(stage_name)
                 and approval_status in ("approved", "skipped")
             ):
-                logger.info(
-                    f"[{stage_name}] Already completed and approved (skip with --force to rebuild)"
-                )
-                results[stage_name] = StageResult(
-                    stage_name, True, message="skipped (cached + approved)"
-                )
-                continue
+                if not self._completed_outputs_present(stage_name, stage):
+                    logger.warning(
+                        f"[{stage_name}] Completed state ignored because recorded outputs are missing"
+                    )
+                    self.state.set_stage_status(stage_name, "pending")
+                    self.approval._clear_status_files(stage_name)
+                else:
+                    logger.info(
+                        f"[{stage_name}] Already completed and approved (skip with --force to rebuild)"
+                    )
+                    results[stage_name] = StageResult(
+                        stage_name, True, message="skipped (cached + approved)"
+                    )
+                    continue
 
             # Check prerequisites
             can_run, reason = stage.can_run(context)
@@ -488,6 +533,7 @@ class Pipeline:
 
             if result.success:
                 self.state.set_stage_status(stage_name, "completed")
+                self.state.set_stage_outputs(stage_name, self._recordable_outputs(result))
                 logger.info(f"[{stage_name}] Completed in {result.duration_seconds:.1f}s")
                 if stage_name in ("write", "humanize") and self.config.script_path.exists():
                     self.script = self._load_script()
@@ -533,6 +579,7 @@ class Pipeline:
                             # Loop again to prompt for the retry result
                             continue
                     if action == "rejected":
+                        self.state.set_stage_status(stage_name, "pending")
                         break  # Stop pipeline
                     # If action is approved/skipped, continue to next stage
                 elif not self.auto_approve:
@@ -550,6 +597,7 @@ class Pipeline:
                 self.state.set_stage_status(stage_name, "failed")
                 logger.error(f"[{stage_name}] Failed: {result.message}")
                 if not getattr(stage, "continue_on_failure", False):
+                    self._mark_remaining_pending(execution_order, stage_name)
                     break
 
         return results
@@ -570,12 +618,65 @@ class Pipeline:
         path = self.config.pipeline_dir / "film_supervisor.yaml"
         if not path.exists():
             return []
-        import yaml
 
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        try:
+            data = load_yaml_mapping(path)
+        except Exception as exc:
+            logger.warning(f"Could not read film_supervisor.yaml: {exc}")
+            return []
         if data.get("status") != "needs_rework":
             return []
         return [str(stage) for stage in data.get("next_stages", []) or []]
+
+    def _recordable_outputs(self, result: StageResult) -> list[str]:
+        paths: list[str] = []
+        for item in self._flatten_output_values(result.outputs):
+            text = str(item)
+            if not text:
+                continue
+            path = Path(text)
+            if not path.is_absolute():
+                path = self.config.project_dir / path
+            paths.append(str(path))
+        return paths
+
+    def _flatten_output_values(self, value: Any) -> list[str | Path]:
+        if value is None:
+            return []
+        if isinstance(value, (str, Path)):
+            return [value]
+        if isinstance(value, dict):
+            flattened: list[str | Path] = []
+            for item in value.values():
+                flattened.extend(self._flatten_output_values(item))
+            return flattened
+        if isinstance(value, (list, tuple, set)):
+            flattened: list[str | Path] = []
+            for item in value:
+                flattened.extend(self._flatten_output_values(item))
+            return flattened
+        return []
+
+    def _completed_outputs_present(self, stage_name: str, stage: Stage) -> bool:
+        recorded = self.state.get_stage_outputs(stage_name)
+        if recorded:
+            return all(Path(path).exists() for path in recorded)
+        expected = self._expected_stage_outputs(stage)
+        if expected:
+            return all(path.exists() for path in expected)
+        return True
+
+    def _expected_stage_outputs(self, stage: Stage) -> list[Path]:
+        result: list[Path] = []
+        for item in getattr(stage, "outputs", []) or []:
+            text = str(item)
+            if not text or text.endswith("/"):
+                continue
+            path = Path(text.format(name=self.config.project.name))
+            if not path.is_absolute():
+                path = self.config.project_dir / path
+            result.append(path)
+        return result
 
     def _filter_rerun_stages(self, stages: list[str]) -> list[str]:
         result: list[str] = []
@@ -599,7 +700,14 @@ class Pipeline:
         for stage_name, result in cycle_results.items():
             key = f"cycle_{cycle_index}.{stage_name}"
             results[key] = result
-            results[stage_name] = result
+
+    def _mark_remaining_pending(self, execution_order: list[str], failed_stage: str) -> None:
+        if failed_stage not in execution_order:
+            return
+        failed_index = execution_order.index(failed_stage)
+        for stage_name in execution_order[failed_index + 1 :]:
+            self.state.set_stage_status(stage_name, "pending")
+            self.state.clear_stage_outputs(stage_name)
 
     def status(self) -> dict[str, Any]:
         """Get current pipeline status including approval states."""

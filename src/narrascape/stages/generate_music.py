@@ -26,6 +26,7 @@ from narrascape.providers import (
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import find_ffprobe
 from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_music")
 
@@ -87,13 +88,9 @@ class GenerateMusicStage(Stage):
 
         if not zones:
             state_path = pipe_dir / "bgm_state.json"
-            state_path.write_text(
-                json.dumps(
-                    {"done": [], "skipped": "no bgm zones", "provider_selection": provider_meta},
-                    indent=2,
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
+            atomic_write_json(
+                state_path,
+                {"done": [], "skipped": "no bgm zones", "provider_selection": provider_meta},
             )
             return StageResult(
                 self.name,
@@ -122,7 +119,7 @@ class GenerateMusicStage(Stage):
             state = self._load_state(state_path)
             state["provider_selection"] = provider_meta
             state["done"] = [zone.id for zone in zones]
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write_json(state_path, state)
             record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
@@ -161,9 +158,7 @@ class GenerateMusicStage(Stage):
         bgm_state_path = pipe_dir / "bgm_state.json"
         bgm_state = self._load_state(bgm_state_path)
         bgm_state["provider_selection"] = provider_meta
-        bgm_state_path.write_text(
-            json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        atomic_write_json(bgm_state_path, bgm_state)
 
         logger.info(f"BGM: {len(zones)} zones, model={model}")
         logger.info(f"     sample_rate={music_cfg.sample_rate}Hz, bitrate={music_cfg.bitrate}bps")
@@ -190,12 +185,12 @@ class GenerateMusicStage(Stage):
                 generated.append(result)
                 if zone.id not in bgm_state.get("done", []):
                     bgm_state.setdefault("done", []).append(zone.id)
-                    bgm_state_path.write_text(
-                        json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8"
-                    )
+                    atomic_write_json(bgm_state_path, bgm_state)
                 # Record actual cost per successful zone generation
                 per_zone = budget_tracker.get_cost_estimate("music", 1)
-                budget_tracker.record(per_zone)
+                spend_ok, spend_msg = budget_tracker.try_spend(per_zone)
+                if not spend_ok:
+                    return StageResult(self.name, False, message=spend_msg)
             else:
                 logger.error("FAILED - stopping")
                 record_provider_failure(
@@ -223,9 +218,13 @@ class GenerateMusicStage(Stage):
                 ],
                 capture_output=True,
                 text=True,
+                timeout=60,
             )
-            if r.stdout.strip():
-                total_dur += float(r.stdout.strip())
+            try:
+                if r.stdout.strip():
+                    total_dur += float(r.stdout.strip())
+            except ValueError:
+                logger.warning(f"Could not parse music duration for {f}")
 
         logger.info(
             f"Done: {len(generated)}/{len(zones)} OK, {total_dur:.0f}s ({total_dur / 60:.1f}min)"
@@ -241,9 +240,7 @@ class GenerateMusicStage(Stage):
     # ── Helpers ───────────────────────────
 
     def _load_state(self, path: Path) -> dict:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return {"done": []}
+        return load_json_mapping(path, default={"done": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:
         if config.audio.music.provider.value == "local":
@@ -351,7 +348,7 @@ class GenerateMusicStage(Stage):
             return None
 
         raw = bytes.fromhex(r["data"]["audio"])
-        out.write_bytes(raw)
+        atomic_write_bytes(out, raw)
 
         # Check actual duration
         ffprobe = find_ffprobe()
@@ -368,8 +365,13 @@ class GenerateMusicStage(Stage):
             ],
             capture_output=True,
             text=True,
+            timeout=60,
         )
-        actual = float(r2.stdout.strip())
+        try:
+            actual = float(r2.stdout.strip())
+        except ValueError:
+            logger.warning(f"    WARN could not parse duration for {out}")
+            actual = duration_seconds
         need = duration_seconds / 1.2
         ratio = actual / max(need, 1)
         if ratio > 3.0:
