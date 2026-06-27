@@ -1,0 +1,578 @@
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
+
+from narrascape.pipeline_approval import PipelineApproval
+from narrascape.cache import BuildCache
+from narrascape.config import NarrascapeConfig, Script, load_config, load_script
+from narrascape.stages.audio import AudioRemixStage, AudioStage
+from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.stages.concat import ConcatStage
+from narrascape.stages.continuity_bible import ContinuityBibleStage
+from narrascape.stages.creative_review import CreativeReviewStage
+from narrascape.stages.design import DesignStage
+from narrascape.stages.director_contract import DirectorContractStage
+from narrascape.stages.director_review import DirectorReviewStage
+from narrascape.stages.editing_review import EditingReviewStage
+from narrascape.stages.film_supervisor import FilmSupervisorStage
+from narrascape.stages.humanize import HumanizeStage
+from narrascape.stages.kenburns import KenBurnsStage
+from narrascape.stages.generate_images import GenerateImagesStage
+from narrascape.stages.generate_video import GenerateVideoStage
+from narrascape.stages.generate_tts import GenerateTTSStage
+from narrascape.stages.generate_music import GenerateMusicStage
+from narrascape.stages.film_assemble import FilmAssembleStage
+from narrascape.stages.film_timeline import FilmTimelineStage
+from narrascape.stages.footage_edit import FootageEditStage
+from narrascape.stages.pre_production import PreProductionStage
+from narrascape.stages.qa import QAStage
+from narrascape.stages.research import ResearchStage
+from narrascape.stages.rework_execute import ReworkExecuteStage
+from narrascape.stages.rework_plan import ReworkPlanStage
+from narrascape.stages.screenplay_structure import ScriptSceneDirectorStage
+from narrascape.stages.source_media import SourceMediaStage
+from narrascape.stages.subtitles import SubtitleStage
+from narrascape.stages.take_select import TakeSelectStage
+from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+from narrascape.stages.write import WriteStage
+
+logger = logging.getLogger("narrascape.pipeline")
+
+
+# ═══════════════════════════════════════════
+# Stage Registry
+# ═══════════════════════════════════════════
+
+ALL_STAGES: list[type[Stage]] = [
+    ResearchStage,
+    WriteStage,
+    HumanizeStage,
+    SourceMediaStage,
+    FootageEditStage,
+    PreProductionStage,
+    DesignStage,
+    ScriptSceneDirectorStage,
+    DirectorContractStage,
+    GenerateImagesStage,
+    GenerateVideoStage,
+    TakeSelectStage,
+    GenerateTTSStage,
+    FilmTimelineStage,
+    FilmAssembleStage,
+    GenerateMusicStage,
+    AudioRemixStage,
+    KenBurnsStage,
+    ConcatStage,
+    AudioStage,
+    SubtitleStage,
+    QAStage,
+    ContinuityBibleStage,
+    EditingReviewStage,
+    DirectorReviewStage,
+    ReworkPlanStage,
+    CreativeReviewStage,
+    VisualSemanticQAStage,
+    FilmSupervisorStage,
+    ReworkExecuteStage,
+]
+
+STAGE_MAP: dict[str, type[Stage]] | None = None
+
+def get_stage_map() -> dict[str, type[Stage]]:
+    """Lazy-load stage name → class mapping.
+
+    Avoids instantiating all stages at module import time.
+    """
+    global STAGE_MAP
+    if STAGE_MAP is None:
+        STAGE_MAP = {cls().name: cls for cls in ALL_STAGES}
+    return STAGE_MAP
+
+
+def _resolve_dependencies(
+    target_stages: list[str],
+    available: dict[str, type[Stage]],
+) -> list[str]:
+    """Topological sort of stage dependencies.
+
+    Returns stages in execution order (dependencies first).
+    """
+    # Build dependency graph
+    deps: dict[str, set[str]] = {}
+    for name, cls in available.items():
+        stage = cls()
+        deps[name] = set(stage.depends_on)
+
+    # Collect all required stages (target + transitive deps)
+    required = set()
+    queue = list(target_stages)
+    while queue:
+        name = queue.pop(0)
+        if name in required:
+            continue
+        required.add(name)
+        for dep in deps.get(name, set()):
+            if dep not in required:
+                queue.append(dep)
+
+    # Kahn's algorithm for topological sort
+    in_degree = {name: 0 for name in required}
+    for name in required:
+        for dep in deps.get(name, set()):
+            if dep in required:
+                in_degree[name] += 1
+
+    stage_order = {name: idx for idx, name in enumerate(available)}
+
+    result = []
+    queue = [name for name in required if in_degree[name] == 0]
+    while queue:
+        queue.sort(key=lambda item: stage_order.get(item, len(stage_order)))
+        name = queue.pop(0)
+        result.append(name)
+        for other in required:
+            if name in deps.get(other, set()):
+                in_degree[other] -= 1
+                if in_degree[other] == 0:
+                    queue.append(other)
+
+    if len(result) != len(required):
+        raise RuntimeError("Circular dependency detected in stages")
+
+    return result
+
+
+# ═══════════════════════════════════════════
+# Pipeline State
+# ═══════════════════════════════════════════
+
+class PipelineState:
+    """Persistent pipeline execution state."""
+
+    def __init__(self, state_path: Path):
+        self.state_path = state_path
+        self.data: dict[str, Any] = self._load()
+
+    def _load(self) -> dict[str, Any]:
+        if not self.state_path.exists():
+            return {"version": "2.0", "stages": {}, "segments": {}}
+        import json
+        return json.loads(self.state_path.read_text(encoding="utf-8"))
+
+    def save(self) -> None:
+        import json
+        self.state_path.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def get_stage_status(self, name: str) -> str:
+        return self.data.get("stages", {}).get(name, "pending")
+
+    def set_stage_status(self, name: str, status: str) -> None:
+        if "stages" not in self.data:
+            self.data["stages"] = {}
+        self.data["stages"][name] = status
+        self.save()
+
+    def is_completed(self, name: str) -> bool:
+        return self.get_stage_status(name) == "completed"
+
+
+# ═══════════════════════════════════════════
+# Pipeline Executor
+# ═══════════════════════════════════════════
+
+class Pipeline:
+    """Main pipeline executor with dependency graph, incremental builds, and optional stage approval."""
+
+    def __init__(
+        self,
+        config: NarrascapeConfig,
+        dry_run: bool = False,
+        force: bool = False,
+        interactive: bool = False,
+        auto_approve: bool = False,
+        console: Any = None,
+        llm_client: Any = None,
+        image_api_key: str | None = None,
+        minimax_api_key: str | None = None,
+    ):
+        self.config = config
+        self.dry_run = dry_run
+        self.force = force
+        self.interactive = interactive
+        self.auto_approve = auto_approve
+        self.console = console
+        self.llm_client = llm_client
+        self.image_api_key = image_api_key
+        self.minimax_api_key = minimax_api_key
+        # Script may not exist yet (research/write stages create it)
+        self.script = self._load_script()
+        self.cache = BuildCache(config.pipeline_dir / ".cache")
+        self.state = PipelineState(config.pipeline_dir / "state.json")
+        self.approval = PipelineApproval(config.pipeline_dir)
+
+    def _load_script(self) -> Script:
+        """Load script if it exists, otherwise return empty placeholder."""
+        if self.config.script_path.exists():
+            return load_script(self.config.script_path)
+        # Return an internal placeholder for early stages that create the script.
+        from narrascape.config import Script
+        return Script.model_construct(segments=[])
+
+    def _create_stage(self, stage_cls: type[Stage]) -> Stage:
+        """Create a stage instance with appropriate constructor arguments.
+
+        Pulls configuration values from self.config and passes API keys
+        and LLM clients where needed.
+        """
+        from narrascape.stages.pre_production import PreProductionStage
+        from narrascape.stages.design import DesignStage
+        from narrascape.stages.director_contract import DirectorContractStage
+        from narrascape.stages.generate_images import GenerateImagesStage
+        from narrascape.stages.generate_video import GenerateVideoStage
+        from narrascape.stages.generate_tts import GenerateTTSStage
+        from narrascape.stages.generate_music import GenerateMusicStage
+        from narrascape.stages.take_select import TakeSelectStage
+        from narrascape.stages.creative_review import CreativeReviewStage
+        from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+        from narrascape.stages.research import ResearchStage
+        from narrascape.stages.write import WriteStage
+        from narrascape.stages.humanize import HumanizeStage
+
+        style = self.config.images.style if self.config.images else "cinematic documentary"
+
+        if stage_cls == PreProductionStage:
+            return PreProductionStage(
+                llm_client=self.llm_client,
+                style_template=style,
+                image_api_key=self.image_api_key,
+            )
+        elif stage_cls == DesignStage:
+            return DesignStage(
+                llm_client=self.llm_client,
+                style_template=style,
+            )
+        elif stage_cls == DirectorContractStage:
+            return DirectorContractStage(llm_client=self.llm_client)
+        elif stage_cls == GenerateImagesStage:
+            return GenerateImagesStage(api_key=self.image_api_key)
+        elif stage_cls == GenerateVideoStage:
+            return GenerateVideoStage(api_key=self.image_api_key)
+        elif stage_cls == GenerateTTSStage:
+            return GenerateTTSStage(api_key=self.minimax_api_key)
+        elif stage_cls == GenerateMusicStage:
+            return GenerateMusicStage(api_key=self.minimax_api_key)
+        elif stage_cls == TakeSelectStage:
+            return TakeSelectStage(llm_client=self.llm_client)
+        elif stage_cls == CreativeReviewStage:
+            return CreativeReviewStage(llm_client=self.llm_client)
+        elif stage_cls == VisualSemanticQAStage:
+            return VisualSemanticQAStage(llm_client=self.llm_client)
+        elif stage_cls == ResearchStage:
+            return ResearchStage(llm_client=self.llm_client, topic=self.config.project.title)
+        elif stage_cls == WriteStage:
+            return WriteStage(
+                llm_client=self.llm_client,
+                topic=self.config.project.title,
+                segment_count=self.config.project.segment_count or 12,
+                style=self.config.project.style or "documentary",
+            )
+        elif stage_cls == HumanizeStage:
+            return HumanizeStage(llm_client=self.llm_client)
+        else:
+            return stage_cls()
+
+    def run(self, stages: Optional[list[str]] = None) -> dict[str, StageResult]:
+        """Execute the pipeline with optional stage-by-stage approval.
+
+        Args:
+            stages: Specific stages to run (default: all). Dependencies are auto-resolved.
+
+        Returns:
+            Dictionary of stage name -> result
+        """
+        if stages is None:
+            stages = [
+                "pre_production",
+                "design",
+                "screenplay_structure",
+                "director_contract",
+                "generate_images",
+                "generate_tts",
+                "film_timeline",
+                "film_assemble",
+                "generate_music",
+                "remix_audio",
+                "audio",
+                "subtitles",
+                "qa",
+                "continuity_bible",
+                "editing_review",
+                "director_review",
+                "rework_plan",
+                "creative_review",
+                "visual_semantic_qa",
+                "film_supervisor",
+            ]
+
+        # Add research/write to the default pipeline if no script exists
+        if not self.config.script_path.exists():
+            # No script — check if research_report exists
+            research_report = self.config.project_dir / "research_report.md"
+            if research_report.exists() and not self.config.project_dir.joinpath("scripts", "script_approved.yaml").exists():
+                stages = ["write"] + stages
+            else:
+                stages = ["research", "write"] + stages
+
+        # Resolve dependencies
+        stage_map = get_stage_map()
+        execution_order = _resolve_dependencies(stages, stage_map)
+        logger.info(f"Pipeline execution order: {execution_order}")
+
+        # Build context
+        context = StageContext(
+            config=self.config,
+            script=self.script,
+            cache=self.cache,
+            state={},
+            dry_run=self.dry_run,
+        )
+
+        results: dict[str, StageResult] = {}
+
+        for stage_name in execution_order:
+            stage_cls = stage_map[stage_name]
+            stage = self._create_stage(stage_cls)
+
+            # ── Check approval gate ──
+            approval_status = self.approval.get_status(stage_name)
+            if approval_status == "rejected":
+                logger.error(f"[{stage_name}] Previously rejected. Fix and retry, or run: narrascape approve -p . -s {stage_name}")
+                results[stage_name] = StageResult(
+                    stage_name, False,
+                    message=f"Stage rejected. Run 'narrascape approve -p . -s {stage_name}' to continue.",
+                )
+                break
+
+            # Check if already completed (incremental) AND approved
+            if not self.force and self.state.is_completed(stage_name) and approval_status in ("approved", "skipped"):
+                logger.info(f"[{stage_name}] Already completed and approved (skip with --force to rebuild)")
+                results[stage_name] = StageResult(stage_name, True, message="skipped (cached + approved)")
+                continue
+
+            # Check prerequisites
+            can_run, reason = stage.can_run(context)
+            if not can_run:
+                logger.error(f"[{stage_name}] Prerequisites not met: {reason}")
+                results[stage_name] = StageResult(stage_name, False, message=reason)
+                continue
+
+            # Execute
+            self.state.set_stage_status(stage_name, "running")
+            start = time.monotonic()
+
+            try:
+                result = stage.run(context)
+                result.duration_seconds = time.monotonic() - start
+            except Exception as e:
+                logger.exception(f"[{stage_name}] Execution failed")
+                result = StageResult(
+                    stage_name, False, message=f"Exception: {e}",
+                    duration_seconds=time.monotonic() - start,
+                )
+
+            results[stage_name] = result
+
+            if result.success:
+                self.state.set_stage_status(stage_name, "completed")
+                logger.info(f"[{stage_name}] Completed in {result.duration_seconds:.1f}s")
+                if stage_name in ("write", "humanize") and self.config.script_path.exists():
+                    self.script = self._load_script()
+                    context.script = self.script
+
+                # ── Approval gate ──
+                if self.interactive and self.console:
+                    # Interactive mode: pause for user approval
+                    # Use a loop to handle retry multiple times
+                    while True:
+                        action = self.approval.prompt_interactive(stage_name, result, self.console)
+                        if action == "rejected":
+                            break
+                        elif action == "approved" or action == "skipped":
+                            break  # Continue to next stage
+                        elif action == "retry":
+                            # Remove approval files and retry this stage
+                            self.approval._clear_status_files(stage_name)
+                            self.state.set_stage_status(stage_name, "pending")
+                            # Retry: create a new stage instance and re-run
+                            logger.info(f"[{stage_name}] Retrying...")
+                            stage = self._create_stage(stage_cls)
+                            retry_start = time.monotonic()
+                            try:
+                                result = stage.run(context)
+                                result.duration_seconds = time.monotonic() - retry_start
+                            except Exception as e:
+                                logger.exception(f"[{stage_name}] Retry failed")
+                                result = StageResult(
+                                    stage_name, False, message=f"Retry exception: {e}",
+                                    duration_seconds=time.monotonic() - retry_start,
+                                )
+                            results[stage_name] = result
+                            if not result.success:
+                                self.state.set_stage_status(stage_name, "failed")
+                                break  # Retry failed, stop
+                            self.state.set_stage_status(stage_name, "completed")
+                            logger.info(f"[{stage_name}] Retry completed in {result.duration_seconds:.1f}s")
+                            # Loop again to prompt for the retry result
+                            continue
+                    if action == "rejected":
+                        break  # Stop pipeline
+                    # If action is approved/skipped, continue to next stage
+                elif not self.auto_approve:
+                    # Non-interactive, no auto-approve: create review request and stop
+                    self.approval.request_review(stage_name, result)
+                    logger.info(f"[{stage_name}] Review required. Run: narrascape approve -p . -s {stage_name}")
+                    break
+                else:
+                    # Auto-approve mode
+                    self.approval.approve(stage_name, reviewer="auto")
+                    logger.info(f"[{stage_name}] Auto-approved")
+            else:
+                self.state.set_stage_status(stage_name, "failed")
+                logger.error(f"[{stage_name}] Failed: {result.message}")
+                if not getattr(stage, "continue_on_failure", False):
+                    break
+
+        return results
+
+    def status(self) -> dict[str, Any]:
+        """Get current pipeline status including approval states."""
+        stage_map = get_stage_map()
+        approvals = self.approval.list_all()
+        return {
+            "project": self.config.project.name,
+            "state_file": str(self.state.state_path),
+            "stages": {
+                name: {
+                    "status": self.state.get_stage_status(name),
+                    "depends_on": cls().depends_on,
+                    "approval": approvals.get(name, "unknown"),
+                }
+                for name, cls in stage_map.items()
+            },
+            "segments": self.state.data.get("segments", {}),
+            "approvals": approvals,
+        }
+
+    def clean(self, stages: Optional[list[str]] = None) -> None:
+        """Remove intermediate artifacts for given stages."""
+        stage_map = get_stage_map()
+        dirs_to_clean = []
+        if stages is None or "kenburns" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "video_segments")
+        if stages is None or "concat" in stages:
+            dirs_to_clean.extend([
+                self.config.pipeline_dir / "gaps",
+                self.config.pipeline_dir / "body_concat.mp4",
+                self.config.pipeline_dir / "final_nosub.mp4",
+            ])
+        if stages is None or "audio" in stages:
+            dirs_to_clean.extend([
+                self.config.pipeline_dir / "mixed_audio*.mp3",
+                self.config.pipeline_dir / "narration_*.mp3",
+                self.config.output_dir / f"{self.config.project.name}-clean.mp4",
+            ])
+        if stages is None or "subtitles" in stages:
+            dirs_to_clean.append(
+                self.config.output_dir / f"{self.config.project.name}-sub.mp4"
+            )
+        if stages is None or "pre_production" in stages:
+            dirs_to_clean.extend([
+                self.config.project_dir / "assets" / "references" / "*.png",
+                self.config.project_dir / "assets" / "storyboard" / "*.png",
+                self.config.pipeline_dir / "pre_production.yaml",
+            ])
+        if stages is None or "generate_images" in stages:
+            dirs_to_clean.extend([
+                self.config.images_dir / "*.png",
+                self.config.pipeline_dir / "image_gen_state.json",
+            ])
+        if stages is None or "generate_tts" in stages:
+            dirs_to_clean.extend([
+                self.config.tts_dir / "*.mp3",
+                self.config.pipeline_dir / "timing.json",
+                self.config.pipeline_dir / "tts_state.json",
+            ])
+        if stages is None or "film_timeline" in stages:
+            dirs_to_clean.append(self.config.project_dir / "film_timeline.yaml")
+        if stages is None or "film_assemble" in stages:
+            dirs_to_clean.extend([
+                self.config.pipeline_dir / "timeline_segments",
+                self.config.pipeline_dir / "film_assemble.txt",
+                self.config.pipeline_dir / "film_assembled.mp4",
+            ])
+        if stages is None or "generate_music" in stages:
+            dirs_to_clean.extend([
+                self.config.music_dir / "*.mp3",
+                self.config.pipeline_dir / "bgm_state.json",
+            ])
+        if stages is None or "remix_audio" in stages:
+            dirs_to_clean.extend([
+                self.config.pipeline_dir / "mixed_audio*.mp3",
+                self.config.pipeline_dir / "narration_*.mp3",
+            ])
+        if stages is None or "qa" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "render_report.yaml")
+        if stages is None or "screenplay_structure" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "screenplay_structure.yaml")
+        if stages is None or "director_contract" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "director_contract.yaml")
+        if stages is None or "continuity_bible" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "continuity_bible.yaml")
+        if stages is None or "editing_review" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "editing_review.yaml")
+        if stages is None or "director_review" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "director_review.yaml")
+        if stages is None or "rework_plan" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "rework_plan.yaml")
+        if stages is None or "creative_review" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "creative_review.yaml")
+        if stages is None or "visual_semantic_qa" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "visual_semantic_report.yaml")
+        if stages is None or "film_supervisor" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "film_supervisor.yaml")
+        if stages is None or "rework_execute" in stages:
+            dirs_to_clean.extend([
+                self.config.pipeline_dir / "rework_execution.yaml",
+                self.config.pipeline_dir / "video_regen_queue.yaml",
+                self.config.pipeline_dir / "recut_queue.yaml",
+                self.config.pipeline_dir / "source_media_replacement_queue.yaml",
+            ])
+        if stages is None or "take_select" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "take_selection.yaml")
+
+        for path in dirs_to_clean:
+            if isinstance(path, str) and "*" in path:
+                import glob
+                for p in glob.glob(path):
+                    Path(p).unlink(missing_ok=True)
+            elif isinstance(path, Path) and "*" in str(path):
+                import glob
+                for p in glob.glob(str(path)):
+                    Path(p).unlink(missing_ok=True)
+            elif path.is_dir():
+                import shutil
+                shutil.rmtree(path, ignore_errors=True)
+            elif path.exists():
+                path.unlink(missing_ok=True)
+
+        # Reset state and approvals
+        for stage in (stages or list(stage_map.keys())):
+            self.state.set_stage_status(stage, "pending")
+            self.approval._clear_status_files(stage)
+
+        logger.info(f"Cleaned: {stages or 'all stages'}")

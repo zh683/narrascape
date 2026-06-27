@@ -1,0 +1,152 @@
+project:
+  name: "tolstoy-11-finale"
+  title: "托尔斯泰合集 · 终章"
+  subtitle: "人为什么还能站起来"
+  author: "读白"
+  year: 2026
+  series: "托尔斯泰合集"
+  episode: 11
+  script_file: "scripts/script_11.yaml"
+
+pipeline:
+  name: "animated-explainer"
+  category: "series_finale"
+  version: "2.0"
+
+tts:
+  provider: minimax
+  model: "speech-2.8-hd"
+  voice_id: "male-qn-jingying"
+  speed: 0.9
+  pitch: -1
+  vol: 1.0
+  sample_rate: 32000
+  continuous_sound: false
+  text_normalization: true
+  language_boost: "Chinese"
+  add_pauses: false
+  pronunciation_dict:
+    - "萨斯卡彻温/(sa4)(si1)(ka3)(che4)(wen1)"
+    - "别尔嘉耶夫/(bie4)(er3)(jia1)(ye1)(fu1)"
+
+images:
+  provider: seedream
+  model: "doubao-seedream-5-0-260128"
+  style: "NOT anime, NOT illustration. Three visual modes: biographical scenes (19th century Russian realist oil painting), botanical close-ups (photorealistic macro), night scenes (Rembrandt chiaroscuro)."
+  aspect_ratio: "16:9"
+  width: 2560
+  height: 1440
+  count: 22
+
+visual:
+  type: "ken_burns"
+  zoom_rate: 0.001
+  zoom_cap: 1.20
+  fade_in_duration: 3.0
+  supersample: auto
+  segment_gap: 1.5
+  gap_map:
+    1: 2.5
+    2: 2.0
+    3: 3.0
+    4: 1.5
+    5: 1.5
+    6: 2.0
+    7: 2.5
+    8: 2.0
+    9: 2.5
+    10: 1.5
+    11: 2.0
+    12: 2.0
+    13: 2.5
+    14: 2.5
+    15: 1.5
+    16: 2.0
+    17: 2.5
+    18: 4.0
+    19: 3.0
+
+subtitles:
+  engine: srt
+  font: "Microsoft YaHei"
+  font_size: 24
+  max_chars_per_line: 18
+  strip_punctuation: true
+  alignment: 2
+  primary_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+  outline: 2
+  shadow: 1
+  margin_v: 60
+
+audio:
+  narration:
+    provider: minimax
+    format: mp3
+    sample_rate: 32000
+  music:
+    provider: minimax
+    model: "music-2.6-free"
+    sample_rate: 44100
+    bitrate: 256000
+    volume: 0.25
+    music_boost_db: 2.0
+    sidechain_threshold: 0.05
+    sidechain_ratio: 3
+    sidechain_attack: 20
+    sidechain_release: 600
+    narration_lufs: -16
+    target_lufs: -14
+    fade_out_seconds: 5
+
+bgm_map:
+  zone_crossfade: 1.5
+  zones:
+    - id: bgm_opening
+      covers: [1, 4]
+      label: "引言·那株花"
+      prompt: "Solo cello, sparse and fragile, a single flower in a muddy field, 48 BPM, G minor"
+      min_duration: 120
+    - id: bgm_crushed
+      covers: [5, 9]
+      label: "被碾·日记到贫民窟"
+      prompt: "Piano and cello, restrained and searching, candlelight diary entries, 58 BPM, D minor"
+      min_duration: 200
+    - id: bgm_bloom
+      covers: [10, 12]
+      label: "开花·船票到做鞋"
+      prompt: "Piano and cello, quiet conviction growing, 52 BPM, G major"
+      min_duration: 130
+    - id: bgm_seeds
+      covers: [13, 15]
+      label: "播种·甘地与陀思妥耶夫斯基"
+      prompt: "Cello solo, luminous and intimate, 50 BPM, C major"
+      min_duration: 130
+    - id: bgm_escape
+      covers: [16, 18]
+      label: "出走·最后一次被碾"
+      prompt: "Piano, sparse and fragile, an old man walking into winter darkness, 44 BPM, Eb minor"
+      min_duration: 300
+    - id: bgm_thistle
+      covers: [19, 20]
+      label: "终章·回到那株花"
+      prompt: "Solo piano, luminous and still, morning light through birch leaves, 44 BPM, C major"
+      min_duration: 120
+
+encode:
+  width: 1920
+  height: 1080
+  fps: 25
+  crf: 18
+  preset: "medium"
+  codec: "libx264"
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+
+ending:
+  enabled: false
+
+budget:
+  total_usd: 3.0
+  mode: "warn"
+  per_action_threshold: 0.5

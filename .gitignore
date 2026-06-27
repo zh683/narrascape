@@ -1,0 +1,105 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+.venv_test/
+venv/
+ENV/
+env/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Local Narrascape runtime state
+.narrascape/
+pipeline/
+output/
+approvals/
+.cache/
+budget_state.json
+*_state.json
+render_report.yaml
+film_timeline.yaml
+asset_manifest.yaml
+footage_timeline.yaml
+design_report.yaml
+image_prompts.yaml
+image_map.yaml
+!examples/**/image_prompts.yaml
+!examples/**/image_map.yaml
+
+# Generated media and local project assets
+assets/images/
+assets/videos/
+assets/tts/
+assets/music/
+assets/references/
+assets/storyboard/
+examples/**/assets/images/
+examples/**/assets/videos/
+examples/**/assets/tts/
+examples/**/assets/music/
+examples/**/assets/references/
+examples/**/assets/storyboard/
+video_segments/
+timeline_segments/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.m4a
+*.srt
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Local demo/output projects
+demo_project/
+demo-dashboard/
+notre-dame-trailer/
+test_style_consistency/
+
+# Secrets and local config
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*
+secrets*
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local bridge/browser scratch
+%TEMP%webbridge-nav.json
+webbridge_nav.json

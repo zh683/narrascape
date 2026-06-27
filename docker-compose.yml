@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  narrascape:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: narrascape:latest
+    container_name: narrascape-pipeline
+    volumes:
+      # Mount your projects directory
+      - ./projects:/app/projects
+      # Mount output directory
+      - ./output:/app/output
+      # Optional: mount API keys file
+      - ./.env:/app/.env:ro
+    environment:
+      # API keys (or use .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - ARK_API_KEY=${ARK_API_KEY:-}
+      # FFmpeg path in container
+      - NARRASCAPE_FFMPEG=/usr/bin/ffmpeg
+    working_dir: /app
+    # Override default command to keep container running
+    command: ["check"]
+    # Or run a specific project:
+    # command: ["build", "--project", "/app/projects/my-documentary"]
+
+  # Optional: development environment with tests
+  narrascape-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: narrascape:latest
+    container_name: narrascape-dev
+    volumes:
+      - .:/app
+      - ./.env:/app/.env:ro
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - ARK_API_KEY=${ARK_API_KEY:-}
+    working_dir: /app
+    command: ["pytest", "-v", "tests/"]
+    profiles:
+      - dev

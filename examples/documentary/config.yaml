@@ -1,0 +1,122 @@
+project:
+  name: "documentary"
+  title: "The Last Flower"
+  subtitle: "A short documentary on resilience"
+  author: "narrascape"
+  year: 2026
+  series: "Documentary Series"
+  episode: 1
+  script_file: "scripts/script.yaml"
+
+pipeline:
+  name: "documentary-explainer"
+  category: "short_documentary"
+  version: "2.0"
+
+tts:
+  provider: minimax
+  model: "speech-2.8-hd"
+  voice_id: "male-qn-jingying"
+  speed: 0.9
+  pitch: -1
+  vol: 1.0
+  sample_rate: 32000
+  continuous_sound: false
+  text_normalization: true
+  language_boost: "Chinese"
+  add_pauses: false
+
+images:
+  provider: seedream
+  model: "doubao-seedream-5-0-260128"
+  style: "NOT anime, NOT illustration. Documentary photography style, photorealistic, cinematic lighting."
+  aspect_ratio: "16:9"
+  width: 2560
+  height: 1440
+  count: 5
+
+visual:
+  type: "ken_burns"
+  zoom_rate: 0.001
+  zoom_cap: 1.20
+  fade_in_duration: 3.0
+  supersample: auto
+  segment_gap: 1.5
+  gap_map:
+    1: 2.5
+    2: 2.0
+    3: 2.0
+    4: 2.5
+
+subtitles:
+  engine: srt
+  font: "Microsoft YaHei"
+  font_size: 24
+  max_chars_per_line: 18
+  strip_punctuation: true
+  alignment: 2
+  primary_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+  outline: 2
+  shadow: 1
+  margin_v: 60
+
+audio:
+  narration:
+    provider: minimax
+    format: mp3
+    sample_rate: 32000
+  music:
+    provider: minimax
+    model: "music-2.6-free"
+    sample_rate: 44100
+    bitrate: 256000
+    volume: 0.25
+    music_boost_db: 2.0
+    sidechain_threshold: 0.05
+    sidechain_ratio: 3
+    sidechain_attack: 20
+    sidechain_release: 600
+    narration_lufs: -16
+    target_lufs: -14
+    fade_out_seconds: 5
+
+bgm_map:
+  zone_crossfade: 1.5
+  zones:
+    - id: bgm_opening
+      covers: [1, 2]
+      label: "Opening"
+      prompt: "Solo piano, sparse and contemplative, a single flower in a muddy field, 48 BPM, G minor"
+      min_duration: 60
+    - id: bgm_middle
+      covers: [3, 4]
+      label: "Middle"
+      prompt: "Piano and cello, restrained and searching, candlelight diary entries, 58 BPM, D minor"
+      min_duration: 80
+    - id: bgm_closing
+      covers: [5, 5]
+      label: "Closing"
+      prompt: "Solo piano, luminous and still, morning light through birch leaves, 44 BPM, C major"
+      min_duration: 60
+
+encode:
+  width: 1920
+  height: 1080
+  fps: 25
+  crf: 18
+  preset: "medium"
+  codec: "libx264"
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+
+ending:
+  enabled: false
+
+budget:
+  total_usd: 5.0
+  mode: "warn"
+  per_action_threshold: 0.5
+  images_estimated: 0.05
+  tts_estimated: 0.001
+  music_estimated: 0.02

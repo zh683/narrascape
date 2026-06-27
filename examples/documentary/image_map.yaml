@@ -1,0 +1,11 @@
+segments:
+  - id: 1
+    images: [img_01]
+  - id: 2
+    images: [img_02]
+  - id: 3
+    images: [img_03]
+  - id: 4
+    images: [img_04]
+  - id: 5
+    images: [img_05]
