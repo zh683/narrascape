@@ -60,27 +60,27 @@ rework_execute
 ```
 
 The default full build intentionally excludes `research`, `write`, `humanize`,
-`source_media`, `footage_edit`, and `generate_video` unless needed or requested.
+`source_media`, and `footage_edit` unless needed or requested. Generated video is
+controlled by `pipeline.video_generation`: `auto` includes `generate_video` and
+`take_select` but skips them when credentials or multi-take clips are missing;
+`required` makes generated-video coverage blocking; `off` omits those stages.
 
 Default full build:
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_tts -> film_timeline
+-> generate_images -> generate_video -> take_select -> generate_tts -> film_timeline
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
+-> rework_execute -> supervisor requested rerun stages (when rework is needed)
 ```
 
 If the script file is missing, `research` and `write` are prepended. If a research report already exists, only `write` is prepended.
 
-Optional Seedance path:
-
-```text
-pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_video
--> take_select
-```
+`pipeline.auto_rework` defaults to true. When `film_supervisor.yaml` reports
+`status: needs_rework`, the default build runs `rework_execute`, then reruns the
+supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 
 ## Dependencies
 

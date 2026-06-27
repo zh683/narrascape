@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from narrascape.cache import BuildCache
-from narrascape.config import NarrascapeConfig, ProjectConfig, load_script
+from narrascape.config import NarrascapeConfig, PipelineConfig, ProjectConfig, load_script
 from narrascape.stages.base import StageContext
 
 
@@ -32,6 +32,7 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
             title="Review Project",
             script_file="scripts/script.yaml",
         ),
+        pipeline=PipelineConfig(video_generation="required"),
         project_dir=project_dir,
     )
     config.pipeline_dir.mkdir(parents=True)

@@ -147,11 +147,28 @@ class ProjectConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """Pipeline identity."""
+    """Pipeline identity and production-loop behavior."""
 
     name: str = Field("animated-explainer", description="Pipeline type identifier")
     category: str | None = Field(None, description="Pipeline category")
     version: str = Field("2.0", description="Pipeline version string")
+    video_generation: Literal["auto", "required", "off"] = Field(
+        "auto",
+        description=(
+            "Generated-video policy: auto tries video when credentials are available, "
+            "required fails instead of falling back, off omits generated-video stages."
+        ),
+    )
+    auto_rework: bool = Field(
+        True,
+        description="Automatically execute film_supervisor rework decisions during default builds.",
+    )
+    max_rework_cycles: int = Field(
+        1,
+        ge=0,
+        le=10,
+        description="Maximum automatic rework/rerun cycles after the first supervisor pass.",
+    )
 
 
 # ───────────────────────────────────────────

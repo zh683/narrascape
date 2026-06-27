@@ -617,6 +617,7 @@ class TestPreProductionModels:
 
         report = PreProductionReport(
             project_title="Test Project",
+            style_anchor_path="/tmp/style_anchor.png",
             characters=[sheet],
             environments=[env],
             storyboard=sb,
@@ -635,6 +636,7 @@ class TestPreProductionModels:
 
         full_report = report.to_pre_production_report()
         assert full_report["project_title"] == "Test Project"
+        assert full_report["style_anchor_path"] == "/tmp/style_anchor.png"
         assert len(full_report["characters"]) == 1
         assert len(full_report["environments"]) == 1
         assert full_report["storyboard"]["total_frames"] == 1

@@ -31,6 +31,26 @@ project:
 
 `project.name` controls the pipeline directory and output filenames.
 
+## Pipeline
+
+```yaml
+pipeline:
+  name: animated-explainer
+  category: null
+  version: "2.0"
+  video_generation: auto   # auto | required | off
+  auto_rework: true
+  max_rework_cycles: 1
+```
+
+| Field | Behavior |
+| --- | --- |
+| `video_generation: auto` | Include `generate_video` and `take_select`, but skip video generation when required credentials or multi-take clips are unavailable. |
+| `video_generation: required` | Treat missing generated video as a blocking production issue and queue regeneration. |
+| `video_generation: off` | Omit generated-video stages and rely on source footage or generated-image fallback. |
+| `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
+| `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
+
 ## LLM
 
 ```yaml

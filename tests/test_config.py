@@ -11,6 +11,7 @@ from narrascape.config import (
     ImageMap,
     ImageMapEntry,
     ImagePrompt,
+    PipelineConfig,
     NarrascapeConfig,
     ProjectConfig,
     Script,
@@ -55,6 +56,17 @@ class TestNarrascapeConfig:
         assert cfg.pipeline_dir == Path("/tmp/test/pipeline/test-proj")
         assert cfg.output_dir == Path("/tmp/test/output")
         assert cfg.resolution == (1920, 1080)
+
+    def test_pipeline_defaults_enable_productized_film_loop(self):
+        cfg = PipelineConfig()
+
+        assert cfg.video_generation == "auto"
+        assert cfg.auto_rework is True
+        assert cfg.max_rework_cycles == 1
+
+    def test_pipeline_rejects_invalid_video_generation_policy(self):
+        with pytest.raises(ValueError):
+            PipelineConfig(video_generation="sometimes")
 
 
 class TestScript:

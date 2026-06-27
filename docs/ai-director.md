@@ -193,10 +193,13 @@ available.
 `visual_semantic_report.yaml`, and QA output. It writes `film_supervisor.yaml`
 with the next stages to run. It does not mutate media.
 
-`rework_execute` is the explicit execution stage for the supervisor loop. It
+In the default build, `pipeline.auto_rework: true` lets the supervisor trigger
+`rework_execute` automatically when it reports `needs_rework`. `rework_execute`
 reads `rework_plan.yaml`, quarantines invalid generated videos, writes concrete
 regeneration/recut/source-media replacement queues, and marks affected stages
-pending.
+pending. The pipeline then reruns the supervisor's requested stages, such as
+`generate_video -> take_select -> film_timeline -> qa -> film_supervisor`, up to
+`pipeline.max_rework_cycles`.
 
 ## Prompt Template Vs Local Template
 

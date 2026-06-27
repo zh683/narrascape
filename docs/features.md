@@ -28,7 +28,7 @@ This page describes the implemented product surface as it exists in the codebase
   - `creative_review` uses an LLM when configured to review story clarity, cinematic intent, pacing, emotion, and continuity.
   - `visual_semantic_qa` uses an LLM when configured to check whether visuals match script, character, costume, scene, and shot intent.
   - `film_supervisor` reads director reports and decides the next pipeline stages.
-  - `rework_execute` explicitly executes a rework plan by quarantining failed generated clips, writing rework queues, and marking affected stages pending.
+  - `rework_execute` applies a rework plan by quarantining failed generated clips, writing rework queues, marking affected stages pending, and feeding the automatic rerun loop.
 
 ## AI Director
 
@@ -87,14 +87,14 @@ This page describes the implemented product surface as it exists in the codebase
 
 ## Video Generation
 
-- Optional Seedance async task workflow.
+- Configurable Seedance async task workflow through `pipeline.video_generation`.
 - Uses generated images as first frames when available.
 - Uses `pipeline/<project>/director_contract.yaml` prompts when available, so director intent reaches the video provider instead of remaining review-only metadata.
 - Supports model mapping from internal names to Volcengine Ark IDs.
 - Persists video generation state for resumability.
 - Provider selector is executed before generation and records `seedance_video` selection and requirements.
 - `take_select` can choose among `vid_<segment>_take_<take>.mp4` candidates, using an LLM judge when configured and deterministic QA proxy scoring otherwise.
-- This stage is requested explicitly with `--stage generate_video`; completed `assets/videos/vid_*.mp4` clips are consumed by `film_timeline` on the next build.
+- The default `pipeline.video_generation: auto` path includes `generate_video` and `take_select`; missing credentials or missing multi-take clips are skipped so the build can continue through fallback visuals. `required` makes generated video blocking, and `off` removes those stages.
 
 ## Source Media
 
@@ -147,7 +147,8 @@ This page describes the implemented product surface as it exists in the codebase
 - `continuity_bible`, `editing_review`, and `rework_plan` complete the director loop after QA by preserving continuity context, diagnosing edit rhythm, and grouping executable rework actions.
 - `creative_review` and `visual_semantic_qa` add LLM-assisted creative and semantic review when an LLM client is configured, with deterministic metadata fallback for offline verification.
 - `film_supervisor` is the default supervising report: it reads the director artifacts and returns the next stages to run.
-- `rework_execute` is explicit rather than automatic. It safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, and resets affected stage state.
+- In the default build, `pipeline.auto_rework: true` lets `film_supervisor` trigger `rework_execute` automatically when it reports `needs_rework`.
+- `rework_execute` safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, resets affected stage state, and lets the pipeline rerun the requested stages up to `pipeline.max_rework_cycles`.
 
 ## Provider Governance
 

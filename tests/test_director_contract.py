@@ -133,6 +133,15 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
     for index in range(1, 3):
         (project_dir / "assets" / "images" / f"img_{index:02d}.png").write_bytes(b"image")
         (project_dir / "assets" / "videos" / f"vid_{index:02d}.mp4").write_bytes(b"video")
+    refs_dir = project_dir / "assets" / "references"
+    refs_dir.mkdir(parents=True)
+    for ref_id in (
+        "style_anchor",
+        "char_mira_anchor",
+        "scene_lab_mood",
+        "scene_lab_window_mood",
+    ):
+        (refs_dir / f"{ref_id}.png").write_bytes(f"{ref_id} image".encode())
     config = NarrascapeConfig(
         project=ProjectConfig(
             name="contract-project",
@@ -204,6 +213,7 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                         },
                     ],
                 },
+                "style_anchor_path": "assets/references/style_anchor.png",
             },
             sort_keys=False,
         ),
@@ -365,6 +375,87 @@ def test_generate_video_prefers_director_contract_prompt(tmp_path):
     assert prompt == contract["shots"][0]["generation"]["video_prompt"]
 
 
+def test_generate_video_resolves_contract_reference_images_for_seedance(tmp_path, monkeypatch):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    design = yaml.safe_load((config.project_dir / "design_report.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    pre_production = yaml.safe_load(
+        (config.pipeline_dir / "pre_production.yaml").read_text(encoding="utf-8")
+    )
+    stage = GenerateVideoStage(api_key="fake")
+    monkeypatch.setattr(stage.uploader, "upload", lambda value: f"uploaded://{Path(value).stem}")
+
+    refs = stage._reference_inputs_for_segment(
+        config,
+        design,
+        pre_production,
+        design["segments"][0],
+        contract["shots"][0],
+    )
+
+    state = refs["state"]
+    assert state["storyboard_reference_image_ids"] == ["char_mira_anchor", "scene_lab_mood"]
+    assert "style_anchor" in state["expected_reference_ids"]
+    assert "char_mira_anchor" in state["expected_reference_ids"]
+    assert "scene_lab_mood" in state["expected_reference_ids"]
+    assert not state["missing_reference_ids"]
+    uploaded = refs["uploaded_reference_images"]
+    assert "uploaded://style_anchor" in uploaded
+    assert "uploaded://char_mira_anchor" in uploaded
+    assert "uploaded://scene_lab_mood" in uploaded
+
+
+def test_generate_video_passes_contract_references_to_task(tmp_path, monkeypatch):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    created = []
+
+    stage = GenerateVideoStage(api_key="fake", sleep_between=0)
+    monkeypatch.setattr(stage.uploader, "upload", lambda value: f"uploaded://{Path(value).stem}")
+
+    def fake_generate_one(
+        prompt,
+        out_name,
+        model,
+        resolution,
+        first_frame,
+        last_frame,
+        videos_dir,
+        reference_images=None,
+    ):
+        created.append(
+            {
+                "out_name": out_name,
+                "reference_images": reference_images or [],
+                "first_frame": first_frame,
+            }
+        )
+        (videos_dir / f"{out_name}.mp4").write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(stage, "_generate_one", fake_generate_one)
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert created
+    first_refs = created[0]["reference_images"]
+    assert "uploaded://style_anchor" in first_refs
+    assert "uploaded://char_mira_anchor" in first_refs
+    assert "uploaded://scene_lab_mood" in first_refs
+    state = json.loads((config.pipeline_dir / "video_gen_state.json").read_text(encoding="utf-8"))
+    assert state["reference_inputs"]["vid_01"]["uploaded_reference_count"] >= 3
+
+
 def test_visual_semantic_qa_sends_director_contract_to_llm(tmp_path):
     from narrascape.stages.director_contract import DirectorContractStage
     from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
@@ -379,6 +470,7 @@ def test_visual_semantic_qa_sends_director_contract_to_llm(tmp_path):
     prompt, kwargs = llm.calls[0]
     assert "director_contract" in prompt
     assert "must_show" in prompt
+    assert "reference image paths" in prompt
     assert kwargs["json_mode"] is True
 
 
@@ -429,6 +521,84 @@ def test_visual_semantic_qa_fallback_checks_storyboard_contract_fields(tmp_path)
     assert (1, "storyboard_wardrobe_mismatch") in risks
     assert (1, "storyboard_character_position_mismatch") in risks
     assert (1, "storyboard_composition_mismatch") in risks
+
+
+def test_visual_semantic_qa_records_reference_assets_and_extracted_frames(
+    tmp_path, monkeypatch
+):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    (config.pipeline_dir / "video_gen_state.json").write_text(
+        json.dumps(
+            {
+                "done": ["vid_01", "vid_02"],
+                "reference_inputs": {
+                    "vid_01": {
+                        "expected_reference_ids": [
+                            "style_anchor",
+                            "char_mira_anchor",
+                            "scene_lab_mood",
+                        ],
+                        "uploaded_reference_count": 3,
+                    },
+                    "vid_02": {
+                        "expected_reference_ids": [
+                            "style_anchor",
+                            "scene_lab_window_mood",
+                        ],
+                        "uploaded_reference_count": 2,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    stage = VisualSemanticQAStage()
+    monkeypatch.setattr(
+        stage,
+        "_extract_clip_frames",
+        lambda clip, path, context: [
+            (context.config.pipeline_dir / f"frame_{clip['segment_id']}.jpg").as_posix()
+        ],
+    )
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
+    first = report["reference_checks"][0]
+    assert first["extracted_frames"]
+    assert "char_mira_anchor" in first["expected_reference_ids"]
+    assert any(
+        item["requested_id"] == "char_mira_anchor" for item in first["reference_assets"]
+    )
+    risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
+    assert (1, "reference_images_not_executed") not in risks
+
+
+def test_visual_semantic_qa_flags_reference_images_not_executed(tmp_path, monkeypatch):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    stage = VisualSemanticQAStage()
+    monkeypatch.setattr(stage, "_extract_clip_frames", lambda clip, path, context: [])
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
+    risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
+    assert (1, "reference_images_not_executed") in risks
+    assert (1, "visual_frame_extract_failed") in risks
 
 
 def test_director_contract_stage_is_registered_before_generate_video():

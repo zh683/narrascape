@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
-from narrascape.config import LLMConfig, NarrascapeConfig, ProjectConfig, Script
+from narrascape.config import LLMConfig, NarrascapeConfig, PipelineConfig, ProjectConfig, Script
 from narrascape.llm import LLMClient
 from narrascape.pipeline import Pipeline, _resolve_dependencies
 from narrascape.stages.audio import AudioRemixStage, AudioStage
@@ -146,7 +147,11 @@ class TestDependencyResolution:
         default_stages = [
             "pre_production",
             "design",
+            "screenplay_structure",
+            "director_contract",
             "generate_images",
+            "generate_video",
+            "take_select",
             "generate_tts",
             "film_timeline",
             "film_assemble",
@@ -158,7 +163,23 @@ class TestDependencyResolution:
         available = {
             "pre_production": PreProductionStage,
             "design": DesignStage,
+            "screenplay_structure": __import__(
+                "narrascape.stages.screenplay_structure",
+                fromlist=["ScriptSceneDirectorStage"],
+            ).ScriptSceneDirectorStage,
+            "director_contract": __import__(
+                "narrascape.stages.director_contract",
+                fromlist=["DirectorContractStage"],
+            ).DirectorContractStage,
             "generate_images": GenerateImagesStage,
+            "generate_video": __import__(
+                "narrascape.stages.generate_video",
+                fromlist=["GenerateVideoStage"],
+            ).GenerateVideoStage,
+            "take_select": __import__(
+                "narrascape.stages.take_select",
+                fromlist=["TakeSelectStage"],
+            ).TakeSelectStage,
             "generate_tts": GenerateTTSStage,
             "film_timeline": FilmTimelineStage,
             "film_assemble": FilmAssembleStage,
@@ -173,6 +194,9 @@ class TestDependencyResolution:
         order = _resolve_dependencies(default_stages, available)
 
         assert order.index("generate_tts") < order.index("film_timeline")
+        assert order.index("director_contract") < order.index("generate_video")
+        assert order.index("generate_video") < order.index("take_select")
+        assert order.index("take_select") < order.index("film_timeline")
         assert order.index("film_timeline") < order.index("film_assemble")
         assert order.index("film_assemble") < order.index("audio")
         assert order.index("remix_audio") < order.index("audio")
@@ -217,6 +241,224 @@ class TestPipelineStageFactory:
 
         assert isinstance(pipeline.script, Script)
         assert pipeline.script.segments == []
+
+    def test_default_stages_include_video_take_select_and_supervisor_loop(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="default-stage-test",
+                title="Default Stage Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+
+        stages = Pipeline(config)._default_stages()
+
+        assert "generate_video" in stages
+        assert "take_select" in stages
+        assert stages.index("generate_video") < stages.index("take_select")
+        assert stages.index("take_select") < stages.index("film_timeline")
+        assert stages[-1] == "film_supervisor"
+
+    def test_default_stages_can_disable_video_generation(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="no-video-test",
+                title="No Video Test",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(video_generation="off"),
+            project_dir=tmp_path,
+        )
+
+        stages = Pipeline(config)._default_stages()
+
+        assert "generate_video" not in stages
+        assert "take_select" not in stages
+        assert "film_timeline" in stages
+
+    def test_optional_video_stage_can_be_skipped_in_auto_policy(self, tmp_path, monkeypatch):
+        class FakeGenerateVideoStage:
+            name = "generate_video"
+            depends_on = []
+
+            def can_run(self, context):
+                return False, "seedance_video selected but ARK_API_KEY not found"
+
+            def run(self, context):
+                raise AssertionError("optional stage should not execute")
+
+        class FakeFilmTimelineStage:
+            name = "film_timeline"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                return StageResult("film_timeline", True, message="timeline fallback")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="optional-video-test",
+                title="Optional Video Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {
+                "generate_video": FakeGenerateVideoStage,
+                "film_timeline": FakeFilmTimelineStage,
+            },
+        )
+
+        results = Pipeline(config, auto_approve=True, image_api_key=None).run(
+            stages=["generate_video", "film_timeline"]
+        )
+
+        assert results["generate_video"].success is False
+
+        results = Pipeline(config, auto_approve=True, image_api_key=None)._run_once(
+            ["generate_video", "film_timeline"], allow_optional_skips=True
+        )
+
+        assert results["generate_video"].success is True
+        assert results["generate_video"].metadata["optional_skipped"] is True
+        assert results["film_timeline"].success is True
+
+    def test_pipeline_auto_rework_executes_and_reruns_supervisor_next_stages(
+        self, tmp_path, monkeypatch
+    ):
+        calls = []
+
+        class FakeFilmSupervisorStage:
+            name = "film_supervisor"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("film_supervisor")
+                output = context.config.pipeline_dir / "film_supervisor.yaml"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                status = "needs_rework" if calls.count("film_supervisor") == 1 else "approved"
+                output.write_text(
+                    yaml.safe_dump(
+                        {
+                            "schema_version": "film_supervisor.v1",
+                            "status": status,
+                            "decision": {},
+                            "next_stages": (
+                                [
+                                    "rework_execute",
+                                    "generate_video",
+                                    "take_select",
+                                    "film_timeline",
+                                    "film_supervisor",
+                                ]
+                                if status == "needs_rework"
+                                else []
+                            ),
+                        },
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return StageResult("film_supervisor", True, message=status)
+
+        class FakeReworkExecuteStage:
+            name = "rework_execute"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("rework_execute")
+                return StageResult("rework_execute", True, message="executed")
+
+        class FakeGenerateVideoStage:
+            name = "generate_video"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("generate_video")
+                return StageResult("generate_video", True, message="regenerated")
+
+        class FakeTakeSelectStage:
+            name = "take_select"
+            depends_on = ["generate_video"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("take_select")
+                return StageResult("take_select", True, message="selected")
+
+        class FakeFilmTimelineStage:
+            name = "film_timeline"
+            depends_on = ["take_select"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("film_timeline")
+                return StageResult("film_timeline", True, message="rebuilt")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="auto-loop-test",
+                title="Auto Loop Test",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(max_rework_cycles=1),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {
+                "rework_execute": FakeReworkExecuteStage,
+                "generate_video": FakeGenerateVideoStage,
+                "take_select": FakeTakeSelectStage,
+                "film_timeline": FakeFilmTimelineStage,
+                "film_supervisor": FakeFilmSupervisorStage,
+            },
+        )
+
+        pipeline = Pipeline(config, auto_approve=True, image_api_key="ark")
+        monkeypatch.setattr(pipeline, "_default_stages", lambda: ["film_supervisor"])
+
+        results = pipeline.run(stages=None)
+
+        assert calls == [
+            "film_supervisor",
+            "rework_execute",
+            "generate_video",
+            "take_select",
+            "film_timeline",
+            "film_supervisor",
+        ]
+        assert results["cycle_1.rework_execute"].success is True
+        assert results["cycle_1.generate_video"].success is True
+        assert results["cycle_1.film_supervisor"].success is True
 
     def test_pipeline_runs_director_review_after_failed_qa(self, tmp_path, monkeypatch):
         class FakeQAStage:

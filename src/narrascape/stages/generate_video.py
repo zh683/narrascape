@@ -25,6 +25,7 @@ from typing import Any
 
 from narrascape.api_keys import APIKeys
 from narrascape.providers import select_provider, selection_metadata
+from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.retry import retry_with_backoff
@@ -119,6 +120,7 @@ class GenerateVideoStage(Stage):
         if not segments:
             return StageResult(self.name, False, message="No segments in design_report.yaml")
         contract_by_segment = self._load_director_contract(pipe_dir / "director_contract.yaml")
+        pre_production = self._load_yaml(pipe_dir / "pre_production.yaml")
 
         # Budget check
         from narrascape.utils.budget import BudgetTracker
@@ -156,6 +158,15 @@ class GenerateVideoStage(Stage):
             img_id = f"img_{seg['segment_id']:02d}"
             first_frame = self._resolve_first_frame(seg, images_dir, img_id)
             last_frame = self._resolve_last_frame(seg, images_dir)
+            contract = contract_by_segment.get(int(seg["segment_id"]), {})
+            reference_inputs = self._reference_inputs_for_segment(
+                config,
+                design,
+                pre_production,
+                seg,
+                contract,
+            )
+            reference_images = reference_inputs["uploaded_reference_images"]
 
             # Select model per segment
             model = seg.get("seedance_model", self.model)
@@ -163,8 +174,11 @@ class GenerateVideoStage(Stage):
 
             logger.info(f"[{i + 1}/{len(segments)}] {vid_id}: {video_prompt[:60]}...")
             logger.info(
-                f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}"
+                f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}, "
+                f"references={len(reference_images)}"
             )
+            state.setdefault("reference_inputs", {})[vid_id] = reference_inputs["state"]
+            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
             result = self._generate_one(
                 video_prompt,
@@ -174,6 +188,7 @@ class GenerateVideoStage(Stage):
                 first_frame,
                 last_frame,
                 videos_dir,
+                reference_images,
             )
             if result:
                 ok_count += 1
@@ -214,6 +229,13 @@ class GenerateVideoStage(Stage):
 
             return yaml.safe_load(path.read_text(encoding="utf-8"))
         return {}
+
+    def _load_yaml(self, path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        import yaml
+
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:
@@ -294,6 +316,71 @@ class GenerateVideoStage(Stage):
             except (TypeError, ValueError):
                 continue
         return result
+
+    def _reference_inputs_for_segment(
+        self,
+        config: Any,
+        design: dict[str, Any],
+        pre_production: dict[str, Any],
+        seg: dict[str, Any],
+        contract: dict[str, Any],
+    ) -> dict[str, Any]:
+        manifest = resolve_reference_assets_for_shot(
+            config.project_dir,
+            contract=contract,
+            design_segment=seg,
+            pre_production=pre_production,
+            design=design,
+        )
+        uploaded_reference_images = self._upload_reference_assets(
+            manifest["resolved_references"]
+        )
+        compact_resolved = [
+            self._compact_reference_asset(asset) for asset in manifest["resolved_references"]
+        ]
+        return {
+            "uploaded_reference_images": uploaded_reference_images,
+            "state": {
+                "segment_id": seg.get("segment_id"),
+                "storyboard_reference_image_ids": manifest[
+                    "storyboard_reference_image_ids"
+                ],
+                "expected_reference_ids": manifest["expected_reference_ids"],
+                "resolved_references": compact_resolved,
+                "missing_reference_ids": manifest["missing_reference_ids"],
+                "uploaded_reference_count": len(uploaded_reference_images),
+            },
+        }
+
+    def _upload_reference_assets(self, assets: list[dict[str, Any]]) -> list[str]:
+        uploaded: list[str] = []
+        for asset in assets:
+            value = asset.get("url") or asset.get("path")
+            if not value:
+                continue
+            if is_reference_uri(value):
+                resolved = value
+            else:
+                resolved = self.uploader.upload(value)
+            if resolved not in uploaded:
+                uploaded.append(resolved)
+        return uploaded[:9]
+
+    def _compact_reference_asset(self, asset: dict[str, Any]) -> dict[str, Any]:
+        item = {
+            "requested_id": asset.get("requested_id"),
+            "asset_id": asset.get("asset_id"),
+            "role": asset.get("role"),
+            "source": asset.get("source"),
+            "path": asset.get("path"),
+            "exists": asset.get("exists"),
+        }
+        url = str(asset.get("url") or "")
+        if url.startswith("data:"):
+            item["url"] = "data-uri"
+        elif url:
+            item["url"] = url
+        return item
 
     def _resolve_first_frame(self, seg: dict, images_dir: Path, img_id: str) -> str | None:
         """Resolve the first frame image for Seedance.
@@ -508,13 +595,21 @@ class GenerateVideoStage(Stage):
         first_frame: str | None,
         last_frame: str | None,
         videos_dir: Path,
+        reference_images: list[str] | None = None,
     ) -> bool:
         out_mp4 = videos_dir / f"{out_name}.mp4"
         if out_mp4.exists():
             return True
 
         # Step 1: Create task
-        task_id = self._create_task(prompt, model, resolution, first_frame, last_frame)
+        task_id = self._create_task(
+            prompt,
+            model,
+            resolution,
+            first_frame,
+            last_frame,
+            reference_images=reference_images,
+        )
         if not task_id:
             return False
 

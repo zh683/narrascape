@@ -21,10 +21,11 @@ Narrascape is a staged video-production pipeline for narration-driven documentar
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_tts -> film_timeline
+-> generate_images -> generate_video -> take_select -> generate_tts -> film_timeline
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
+-> rework_execute + rerun requested stages when rework is needed
 ```
 
 If `scripts/script.yaml` does not exist, the pipeline prepends:
@@ -35,14 +36,10 @@ research -> write
 
 `humanize` is available as a script-polishing command or explicit stage.
 `source_media` and `footage_edit` are optional real-footage documentary stages.
-`generate_video` is an optional Seedance stage. Generated clips are consumed by
-the next `film_timeline` build:
-
-```text
-pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_video
--> take_select
-```
+`generate_video` is controlled by `pipeline.video_generation`: `auto` includes
+it but skips it when credentials are unavailable, `required` makes it blocking,
+and `off` omits it. Generated clips are consumed by the next `film_timeline`
+build.
 
 ## Stage Outputs
 
@@ -56,8 +53,8 @@ pre_production -> design -> screenplay_structure -> director_contract
 | `screenplay_structure` | Split story into act, scene, sequence, shot | `pipeline/<name>/screenplay_structure.yaml` |
 | `director_contract` | Compile director intent into video prompts and QA assertions | `pipeline/<name>/director_contract.yaml` |
 | `generate_images` | Generate Seedream or local images | `assets/images/*.png` |
-| `generate_video` | Optional Seedance clips from generated images | `assets/videos/*.mp4` |
-| `take_select` | Optional multi-take selection | `pipeline/<name>/take_selection.yaml` |
+| `generate_video` | Seedance clips from generated images when enabled | `assets/videos/*.mp4` |
+| `take_select` | Multi-take selection when takes exist | `pipeline/<name>/take_selection.yaml` |
 | `generate_tts` | Generate narration audio and timing | `assets/tts/*.mp3`, `pipeline/<name>/timing.json` |
 | `film_timeline` | Build unified film timeline | `film_timeline.yaml` |
 | `film_assemble` | Render the film timeline visual track | `pipeline/<name>/film_assembled.mp4`, `pipeline/<name>/timeline_segments/*.mp4` |
@@ -75,7 +72,7 @@ pre_production -> design -> screenplay_structure -> director_contract
 | `creative_review` | LLM or fallback creative supervision | `pipeline/<name>/creative_review.yaml` |
 | `visual_semantic_qa` | LLM or fallback visual semantic QA | `pipeline/<name>/visual_semantic_report.yaml` |
 | `film_supervisor` | Decide the next production stages | `pipeline/<name>/film_supervisor.yaml` |
-| `rework_execute` | Explicitly execute rework queues and quarantine invalid generated media | `pipeline/<name>/rework_execution.yaml`, rework queue YAML files |
+| `rework_execute` | Execute rework queues and quarantine invalid generated media, automatically in default rework cycles | `pipeline/<name>/rework_execution.yaml`, rework queue YAML files |
 | `source_media` | Discover local clips/images and plan footage cuts | `asset_manifest.yaml`, `footage_timeline.yaml` |
 | `footage_edit` | Render a source-media rough cut | `pipeline/<name>/footage_roughcut.mp4` |
 

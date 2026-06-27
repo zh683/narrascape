@@ -31,6 +31,15 @@ DesignStage
 design_report.yaml
 image_prompts.yaml
 image_map.yaml
+        |
+        v
+director_contract.yaml
+        |
+        v
+generate_video -> video_gen_state.json
+        |
+        v
+visual_semantic_qa
 ```
 
 Generated reference assets are stored under:
@@ -109,10 +118,21 @@ shot as `storyboard_binding`:
 - `composition_requirements`
 - `reference_image_ids`
 
-`GenerateVideoStage` receives those bindings through the compiled
-`generation.video_prompt`, and `VisualSemanticQAStage` checks the same binding
-against timeline metadata. This keeps storyboard intent from remaining a loose
-suggestion.
+`GenerateVideoStage` receives those bindings in two ways:
+
+- `generation.video_prompt` carries the director's text instructions.
+- `storyboard_binding.reference_image_ids` resolves to actual style, character,
+  and scene images under `assets/references/` or paths recorded in
+  `pre_production.yaml`.
+
+The video stage sends those resolved images to Seedance as `reference_image`
+inputs and records the execution handoff in `video_gen_state.json`.
+
+`VisualSemanticQAStage` then checks the same binding against timeline metadata,
+reference-image execution records, and extracted clip frames. In LLM mode, the
+QA prompt includes the extracted frames and reference image paths so a vision
+capable reviewer can judge identity, wardrobe, scene, style, and composition
+drift.
 
 In offline mode, the stage still produces deterministic prompts, but does not make creative LLM decisions.
 
@@ -130,6 +150,30 @@ seedream_sample_strength: 0.7
 
 `GenerateImagesStage` uses these fields when invoking the configured image provider.
 
+## Interaction With Video Generation
+
+`director_contract.yaml` may contain:
+
+```yaml
+storyboard_binding:
+  reference_image_ids:
+    - char_001_anchor
+    - scene_lab_mood
+```
+
+`GenerateVideoStage` resolves those ids using:
+
+- `pre_production.yaml` character sheets
+- `pre_production.yaml` environment references
+- `pre_production.yaml` `style_anchor_path`
+- files in `assets/references/`
+- design report reference chains
+
+The stage always tries to include the style anchor when it is available, then
+adds storyboard, character, and scene references. The resolved references are
+sent as video generation reference images and persisted in
+`video_gen_state.json`.
+
 ## Production Review Checklist
 
 Before final image generation, review:
@@ -139,9 +183,12 @@ Before final image generation, review:
 - Does the prompt explicitly describe how each reference should be used?
 - Does `seedream_sample_strength` match the task?
 - Do storyboard cues match the narration pacing?
+- Does `video_gen_state.json` show the expected reference ids were uploaded for
+  each generated video?
+- Does `visual_semantic_report.yaml` contain extracted frame evidence for
+  reference-critical clips?
 
 ## Non-Goals
 
-- This workflow does not make `generate_video` part of the default final-video build.
 - It does not replace human review of generated images.
 - It does not guarantee model quality; it supplies structure and references.

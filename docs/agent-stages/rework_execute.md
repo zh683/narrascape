@@ -29,4 +29,4 @@
 - Do not permanently delete generated media.
 - Do not execute provider calls directly.
 - Do not edit source footage.
-- Do not run automatically in the default build; this stage applies a plan and should be requested explicitly.
+- Do not call generation or rendering providers from inside this stage; the pipeline reruns the requested stages after this stage writes queues and resets state.

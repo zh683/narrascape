@@ -669,6 +669,10 @@ class PreProductionReport(BaseModel):
 
     project_title: str = ""
     style_template: str = ""
+    style_anchor_path: str = Field(
+        "",
+        description="Path to the unified style anchor image used by downstream design/video stages",
+    )
     characters: list[CharacterReferenceSheet] = Field(
         default_factory=list, description="Character reference sheets"
     )
@@ -703,6 +707,7 @@ class PreProductionReport(BaseModel):
         return {
             "project_title": self.project_title,
             "style_template": self.style_template,
+            "style_anchor_path": self.style_anchor_path,
             "characters": [
                 {
                     "char_id": c.char_id,

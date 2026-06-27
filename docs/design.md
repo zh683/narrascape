@@ -72,7 +72,7 @@ visual_semantic_qa -> visual_semantic_report.yaml
         |
 film_supervisor -> film_supervisor.yaml
         |
-rework_execute -> rework queues + quarantined failed media (explicit stage)
+rework_execute -> rework queues + quarantined failed media + rerun plan
 ```
 
 `kenburns` and `concat` remain explicit legacy stages for animated still-image
@@ -175,9 +175,11 @@ director layers:
   flags metadata mismatches such as scene or wardrobe drift.
 - `film_supervisor` reads all director reports and writes `film_supervisor.yaml`
   with the next stages that should run.
-- `rework_execute` is an explicit stage that executes `rework_plan.yaml` safely
-  by quarantining failed generated video clips, writing concrete queues, and
-  resetting affected stage state.
+- `rework_execute` executes `rework_plan.yaml` safely by quarantining failed
+  generated video clips, writing concrete queues, and resetting affected stage
+  state. In the default auto-rework path, the pipeline runs it after a
+  `film_supervisor` `needs_rework` decision and then reruns the requested
+  stages.
 
 ## Film Timeline
 
@@ -261,9 +263,9 @@ reads `director_contract.yaml` so semantic review checks the same contract that
 guided video generation, including storyboard frame ids, scene references,
 wardrobe locks, character positions, and composition requirements.
 `film_supervisor` does not mutate media; it decides the next stage list.
-`rework_execute` performs the mutation only when explicitly requested, so
-ordinary builds can inspect the plan before moving generated clips into
-quarantine.
+`rework_execute` performs the mutation. Default builds run it automatically when
+`pipeline.auto_rework` is true; set `auto_rework: false` to inspect the plan
+before moving generated clips into quarantine.
 
 ## State And Approvals
 

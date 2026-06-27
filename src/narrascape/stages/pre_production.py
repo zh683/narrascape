@@ -130,6 +130,7 @@ class PreProductionStage(Stage):
                 project_title=config.project.title,
                 style_template=self.style_template
                 or (config.images.style if config.images else "cinematic documentary"),
+                style_anchor_path="",
                 storyboard=storyboard,
             )
             report_path = pipe_dir / "pre_production.yaml"
@@ -215,6 +216,7 @@ class PreProductionStage(Stage):
             project_title=config.project.title,
             style_template=self.style_template
             or (config.images.style if config.images else "cinematic documentary"),
+            style_anchor_path=style_anchor_path or "",
             characters=character_sheets,
             environments=environment_refs,
             storyboard=storyboard,

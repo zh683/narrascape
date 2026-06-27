@@ -6,7 +6,7 @@ It turns a script into an inspectable production graph: visual pre-production, A
 
 ## Current Status
 
-Narrascape is an early AI film studio prototype with a working CLI pipeline and offline verification path. The local test suite covers the main stage graph, AI assistant bridge batching, provider selection, source-media workflow, film timeline assembly, render QA, director review, rework planning, and the `director_contract` prompt/QA handoff.
+Narrascape is an early AI film studio prototype with a working CLI pipeline and offline verification path. The local test suite covers the main stage graph, AI assistant bridge batching, provider selection, source-media workflow, film timeline assembly, render QA, director review, rework planning, automated rework execution, and the `director_contract` prompt/QA handoff.
 
 AI Director behavior depends on the configured LLM mode:
 
@@ -21,7 +21,9 @@ script
   -> design
   -> screenplay_structure
   -> director_contract
-  -> generate_images / generate_video / source_media
+  -> generate_images
+  -> generate_video
+  -> take_select
   -> film_timeline
   -> film_assemble
   -> generate_tts + generate_music + remix_audio
@@ -35,6 +37,7 @@ script
   -> creative_review
   -> visual_semantic_qa
   -> film_supervisor
+  -> rework_execute + rerun when supervisor requests rework
 ```
 
 `film_timeline.yaml` is the default visual spine. Visual priority is:
@@ -42,6 +45,10 @@ script
 ```text
 generated video -> source footage -> generated image fallback
 ```
+
+By default, `pipeline.video_generation: auto` tries the generated-video path when it can run. If Seedance/Ark credentials are missing, the video stage is skipped and the timeline continues through source footage or generated-image fallback. Use `pipeline.video_generation: required` to make missing generated video a blocking production issue, or `off` to omit video generation stages.
+
+The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework_cycles: 1`. After `film_supervisor`, a `needs_rework` decision automatically executes `rework_execute`, then reruns the supervisor's requested stages such as `generate_video -> take_select -> film_timeline -> qa -> film_supervisor`.
 
 ## AI Director
 

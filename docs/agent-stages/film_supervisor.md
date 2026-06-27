@@ -22,6 +22,6 @@
 ## Do Not
 
 - Do not mutate media files.
-- Do not run the stages it recommends.
+- Do not run provider calls or mutate assets from this stage.
 - Do not hide unresolved rework actions.
-- Do not automatically execute `rework_execute`; that remains an explicit stage.
+- Do not mark a film approved while `next_stages` still contains unresolved rework. The pipeline executor may automatically run `rework_execute` after this stage when `pipeline.auto_rework` is enabled.

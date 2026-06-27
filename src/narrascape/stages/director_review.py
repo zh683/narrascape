@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import yaml
@@ -23,7 +24,7 @@ class DirectorReviewStage(Stage):
         report_path = context.config.pipeline_dir / "render_report.yaml"
         report = yaml.safe_load(report_path.read_text(encoding="utf-8")) or {}
         checks = report.get("checks", {})
-        queue = self._build_rework_queue(checks)
+        queue = self._build_rework_queue(checks, context)
         status = "needs_rework" if queue or report.get("errors") else "approved"
         review = {
             "status": status,
@@ -41,8 +42,11 @@ class DirectorReviewStage(Stage):
             metadata={"status": status, "rework_count": len(queue)},
         )
 
-    def _build_rework_queue(self, checks: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_rework_queue(
+        self, checks: dict[str, Any], context: StageContext | None = None
+    ) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
+        require_generated_video = self._requires_generated_video(context)
         for segment_id in checks.get("missing_visual_segments", []) or []:
             actions.append(
                 {
@@ -51,14 +55,15 @@ class DirectorReviewStage(Stage):
                     "reason": "missing_visual",
                 }
             )
-        for segment_id in checks.get("missing_generated_video_segments", []) or []:
-            actions.append(
-                {
-                    "segment_id": int(segment_id),
-                    "action": "regenerate_video",
-                    "reason": "missing_generated_video",
-                }
-            )
+        if require_generated_video:
+            for segment_id in checks.get("missing_generated_video_segments", []) or []:
+                actions.append(
+                    {
+                        "segment_id": int(segment_id),
+                        "action": "regenerate_video",
+                        "reason": "missing_generated_video",
+                    }
+                )
         for segment_id in checks.get("missing_video_clips", []) or []:
             actions.append(
                 {
@@ -93,6 +98,23 @@ class DirectorReviewStage(Stage):
             seen.add(key)
             deduped.append(action)
         return deduped
+
+    def _requires_generated_video(self, context: StageContext | None) -> bool:
+        if context is None:
+            return True
+        policy = context.config.pipeline.video_generation
+        if policy == "required":
+            return True
+        if policy == "off":
+            return False
+        state_path = context.config.pipeline_dir / "video_gen_state.json"
+        if not state_path.exists():
+            return False
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return bool(state.get("done") or state.get("task_map") or state.get("errors"))
 
     def _notes(self, report: dict[str, Any], queue: list[dict[str, Any]]) -> list[str]:
         notes = []

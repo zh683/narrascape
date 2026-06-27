@@ -292,23 +292,20 @@ class Pipeline:
         else:
             return stage_cls()
 
-    def run(self, stages: list[str] | None = None) -> dict[str, StageResult]:
-        """Execute the pipeline with optional stage-by-stage approval.
-
-        Args:
-            stages: Specific stages to run (default: all). Dependencies are auto-resolved.
-
-        Returns:
-            Dictionary of stage name -> result
-        """
-        if stages is None:
-            stages = [
-                "pre_production",
-                "design",
-                "screenplay_structure",
-                "director_contract",
-                "generate_images",
-                "generate_tts",
+    def _default_stages(self) -> list[str]:
+        stages = [
+            "pre_production",
+            "design",
+            "screenplay_structure",
+            "director_contract",
+            "generate_images",
+            "generate_tts",
+        ]
+        video_policy = self.config.pipeline.video_generation
+        if video_policy != "off":
+            stages.extend(["generate_video", "take_select"])
+        stages.extend(
+            [
                 "film_timeline",
                 "film_assemble",
                 "generate_music",
@@ -324,6 +321,21 @@ class Pipeline:
                 "visual_semantic_qa",
                 "film_supervisor",
             ]
+        )
+        return stages
+
+    def run(self, stages: list[str] | None = None) -> dict[str, StageResult]:
+        """Execute the pipeline with optional stage-by-stage approval.
+
+        Args:
+            stages: Specific stages to run (default: all). Dependencies are auto-resolved.
+
+        Returns:
+            Dictionary of stage name -> result
+        """
+        default_run = stages is None
+        if stages is None:
+            stages = self._default_stages()
 
         # Add research/write to the default pipeline if no script exists
         if not self.config.script_path.exists():
@@ -337,6 +349,56 @@ class Pipeline:
             else:
                 stages = ["research", "write"] + stages
 
+        if default_run:
+            return self._run_with_auto_rework(stages)
+        return self._run_once(stages)
+
+    def _run_with_auto_rework(self, stages: list[str]) -> dict[str, StageResult]:
+        results = self._run_once(stages, allow_optional_skips=True)
+        if not self.config.pipeline.auto_rework or self.config.pipeline.max_rework_cycles <= 0:
+            return results
+        if not self._stage_succeeded(results, "film_supervisor"):
+            return results
+
+        for cycle_index in range(1, self.config.pipeline.max_rework_cycles + 1):
+            next_stages = self._supervisor_next_stages()
+            if not next_stages:
+                break
+
+            rework_result = self._run_once(
+                ["rework_execute"],
+                force_stages={"rework_execute"},
+            )
+            self._merge_cycle_results(results, rework_result, cycle_index)
+            if not self._stage_succeeded(rework_result, "rework_execute"):
+                break
+
+            rerun_stages = [
+                stage
+                for stage in next_stages
+                if stage != "rework_execute" and stage in get_stage_map()
+            ]
+            rerun_stages = self._filter_rerun_stages(rerun_stages)
+            if not rerun_stages:
+                break
+
+            cycle_results = self._run_once(
+                rerun_stages,
+                allow_optional_skips=True,
+                force_stages=set(rerun_stages),
+            )
+            self._merge_cycle_results(results, cycle_results, cycle_index)
+            if not self._stage_succeeded(cycle_results, "film_supervisor"):
+                break
+        return results
+
+    def _run_once(
+        self,
+        stages: list[str],
+        *,
+        allow_optional_skips: bool = False,
+        force_stages: set[str] | None = None,
+    ) -> dict[str, StageResult]:
         # Resolve dependencies
         stage_map = get_stage_map()
         execution_order = _resolve_dependencies(stages, stage_map)
@@ -352,6 +414,7 @@ class Pipeline:
         )
 
         results: dict[str, StageResult] = {}
+        force_stages = force_stages or set()
 
         for stage_name in execution_order:
             stage_cls = stage_map[stage_name]
@@ -372,7 +435,8 @@ class Pipeline:
 
             # Check if already completed (incremental) AND approved
             if (
-                not self.force
+                stage_name not in force_stages
+                and not self.force
                 and self.state.is_completed(stage_name)
                 and approval_status in ("approved", "skipped")
             ):
@@ -387,9 +451,22 @@ class Pipeline:
             # Check prerequisites
             can_run, reason = stage.can_run(context)
             if not can_run:
+                if allow_optional_skips and self._can_skip_optional_stage(stage_name, reason):
+                    logger.warning(f"[{stage_name}] Optional stage skipped: {reason}")
+                    result = StageResult(
+                        stage_name,
+                        True,
+                        message=f"skipped optional stage: {reason}",
+                        metadata={"optional_skipped": True, "reason": reason},
+                    )
+                    results[stage_name] = result
+                    self.state.set_stage_status(stage_name, "skipped")
+                    if self.auto_approve:
+                        self.approval.skip(stage_name, reviewer="auto", notes=reason)
+                    continue
                 logger.error(f"[{stage_name}] Prerequisites not met: {reason}")
                 results[stage_name] = StageResult(stage_name, False, message=reason)
-                continue
+                break
 
             # Execute
             self.state.set_stage_status(stage_name, "running")
@@ -476,6 +553,55 @@ class Pipeline:
                     break
 
         return results
+
+    def _can_skip_optional_stage(self, stage_name: str, reason: str) -> bool:
+        if self.config.pipeline.video_generation == "required":
+            return False
+        if stage_name == "generate_video" and self.config.pipeline.video_generation in {
+            "auto",
+            "off",
+        }:
+            return True
+        if stage_name == "take_select":
+            return True
+        if stage_name in {"source_media", "footage_edit"}:
+            return True
+        return False
+
+    def _supervisor_next_stages(self) -> list[str]:
+        path = self.config.pipeline_dir / "film_supervisor.yaml"
+        if not path.exists():
+            return []
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if data.get("status") != "needs_rework":
+            return []
+        return [str(stage) for stage in data.get("next_stages", []) or []]
+
+    def _filter_rerun_stages(self, stages: list[str]) -> list[str]:
+        result: list[str] = []
+        for stage in stages:
+            if stage == "generate_video" and self.config.pipeline.video_generation == "off":
+                continue
+            if stage not in result:
+                result.append(stage)
+        return result
+
+    def _stage_succeeded(self, results: dict[str, StageResult], stage_name: str) -> bool:
+        result = results.get(stage_name)
+        return bool(result and result.success)
+
+    def _merge_cycle_results(
+        self,
+        results: dict[str, StageResult],
+        cycle_results: dict[str, StageResult],
+        cycle_index: int,
+    ) -> None:
+        for stage_name, result in cycle_results.items():
+            key = f"cycle_{cycle_index}.{stage_name}"
+            results[key] = result
+            results[stage_name] = result
 
     def status(self) -> dict[str, Any]:
         """Get current pipeline status including approval states."""
