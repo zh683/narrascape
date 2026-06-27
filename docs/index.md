@@ -4,6 +4,7 @@ Narrascape is a staged video-production pipeline for narration-driven documentar
 
 ## Read This First
 
+- [Product Introduction / 产品介绍](product-introduction.md): a bilingual, product-level overview for creators and GitHub visitors.
 - [Quick Start](quickstart.md): create a project and build a video.
 - [Complete Feature Map](features.md): what is implemented and which providers each part uses.
 - [System Design](design.md): how the whole workflow is connected.

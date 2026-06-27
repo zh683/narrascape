@@ -174,6 +174,7 @@ Generated project outputs are intentionally ignored by git.
 
 ## Documentation
 
+- [Product Introduction / 产品介绍](docs/product-introduction.md)
 - [Quick Start](docs/quickstart.md)
 - [Complete Feature Map](docs/features.md)
 - [System Design](docs/design.md)
