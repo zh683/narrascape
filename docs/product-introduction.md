@@ -1,5 +1,11 @@
 # Narrascape Product Introduction
 
+## 发布状态 / Release Status
+
+Narrascape is now published as a public GitHub repository at [zh683/narrascape](https://github.com/zh683/narrascape). The current `main` branch runs CI across Ubuntu and Windows with Python 3.10, 3.11, and 3.12.
+
+Narrascape 目前已经作为公开 GitHub 仓库发布：[zh683/narrascape](https://github.com/zh683/narrascape)。当前 `main` 分支会在 Ubuntu 和 Windows 上使用 Python 3.10、3.11、3.12 跑完整 CI。
+
 ## 中文介绍
 
 Narrascape 是一个面向 AI 电影、纪录片和叙事视频的开源制作流水线。它的目标不是只把一段文字变成一组图片，也不是只做简单的视频拼接，而是把“剧本 -> 导演设计 -> 分镜约束 -> 素材生成/选择 -> 时间线剪辑 -> 音频字幕 -> QA -> 返工”的完整制作链条变成可检查、可复用、可自动化的工程系统。
