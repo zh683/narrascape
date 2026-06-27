@@ -564,9 +564,7 @@ class Pipeline:
             return True
         if stage_name == "take_select":
             return True
-        if stage_name in {"source_media", "footage_edit"}:
-            return True
-        return False
+        return stage_name in {"source_media", "footage_edit"}
 
     def _supervisor_next_stages(self) -> list[str]:
         path = self.config.pipeline_dir / "film_supervisor.yaml"

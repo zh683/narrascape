@@ -523,9 +523,7 @@ def test_visual_semantic_qa_fallback_checks_storyboard_contract_fields(tmp_path)
     assert (1, "storyboard_composition_mismatch") in risks
 
 
-def test_visual_semantic_qa_records_reference_assets_and_extracted_frames(
-    tmp_path, monkeypatch
-):
+def test_visual_semantic_qa_records_reference_assets_and_extracted_frames(tmp_path, monkeypatch):
     from narrascape.stages.director_contract import DirectorContractStage
     from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
 
@@ -574,9 +572,7 @@ def test_visual_semantic_qa_records_reference_assets_and_extracted_frames(
     first = report["reference_checks"][0]
     assert first["extracted_frames"]
     assert "char_mira_anchor" in first["expected_reference_ids"]
-    assert any(
-        item["requested_id"] == "char_mira_anchor" for item in first["reference_assets"]
-    )
+    assert any(item["requested_id"] == "char_mira_anchor" for item in first["reference_assets"])
     risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
     assert (1, "reference_images_not_executed") not in risks
 

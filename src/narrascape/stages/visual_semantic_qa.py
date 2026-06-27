@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -544,20 +544,14 @@ class VisualSemanticQAStage(Stage):
                     item["storyboard_reference_image_ids"] = reference_manifest[
                         "storyboard_reference_image_ids"
                     ]
-                    item["expected_reference_ids"] = reference_manifest[
-                        "expected_reference_ids"
-                    ]
-                    item["missing_reference_ids"] = reference_manifest[
-                        "missing_reference_ids"
-                    ]
+                    item["expected_reference_ids"] = reference_manifest["expected_reference_ids"]
+                    item["missing_reference_ids"] = reference_manifest["missing_reference_ids"]
                     item["reference_assets"] = [
                         self._compact_reference_asset(asset)
                         for asset in reference_manifest["resolved_references"]
                     ]
-                    item["executed_reference_input"] = (
-                        video_state.get("reference_inputs", {}).get(
-                            f"vid_{segment_id_int:02d}", {}
-                        )
+                    item["executed_reference_input"] = video_state.get("reference_inputs", {}).get(
+                        f"vid_{segment_id_int:02d}", {}
                     )
             item["extracted_frames"] = self._extract_clip_frames(item, path, context)
             evidence.append(item)

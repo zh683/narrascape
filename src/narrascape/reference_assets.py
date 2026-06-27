@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
 
@@ -57,7 +56,9 @@ def build_reference_index(
     for character in design.get("characters", []) or []:
         char_id = character.get("char_id")
         ref = character.get("reference_image_url")
-        aliases = [value for value in [char_id, f"char_{char_id}_anchor" if char_id else ""] if value]
+        aliases = [
+            value for value in [char_id, f"char_{char_id}_anchor" if char_id else ""] if value
+        ]
         _add_reference(
             index,
             project_dir,
@@ -183,7 +184,9 @@ def _index_character(
 ) -> None:
     char_id = character.get("char_id")
     primary = character.get("primary_reference_path") or character.get("reference_image_url")
-    primary_aliases = [value for value in [char_id, f"char_{char_id}_anchor" if char_id else ""] if value]
+    primary_aliases = [
+        value for value in [char_id, f"char_{char_id}_anchor" if char_id else ""] if value
+    ]
     _add_reference(index, project_dir, primary_aliases, primary, role="character", source=source)
 
     image_fields = [
@@ -212,7 +215,9 @@ def _index_environment(
 ) -> None:
     scene_id = environment.get("scene_id")
     primary = environment.get("primary_reference_path")
-    primary_aliases = [value for value in [scene_id, f"scene_{scene_id}_mood" if scene_id else ""] if value]
+    primary_aliases = [
+        value for value in [scene_id, f"scene_{scene_id}_mood" if scene_id else ""] if value
+    ]
     _add_reference(index, project_dir, primary_aliases, primary, role="scene", source=source)
 
     for field in ("mood_images", "landmark_images", "detail_images"):
@@ -248,7 +253,9 @@ def _add_reference(
         path = local_path.as_posix()
         exists = local_path.exists()
 
-    alias_values = _dedupe_text([*aliases, Path(text).stem if text and not is_reference_uri(text) else ""])
+    alias_values = _dedupe_text(
+        [*aliases, Path(text).stem if text and not is_reference_uri(text) else ""]
+    )
     if not alias_values:
         return
     asset = {

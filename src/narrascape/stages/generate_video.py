@@ -332,9 +332,7 @@ class GenerateVideoStage(Stage):
             pre_production=pre_production,
             design=design,
         )
-        uploaded_reference_images = self._upload_reference_assets(
-            manifest["resolved_references"]
-        )
+        uploaded_reference_images = self._upload_reference_assets(manifest["resolved_references"])
         compact_resolved = [
             self._compact_reference_asset(asset) for asset in manifest["resolved_references"]
         ]
@@ -342,9 +340,7 @@ class GenerateVideoStage(Stage):
             "uploaded_reference_images": uploaded_reference_images,
             "state": {
                 "segment_id": seg.get("segment_id"),
-                "storyboard_reference_image_ids": manifest[
-                    "storyboard_reference_image_ids"
-                ],
+                "storyboard_reference_image_ids": manifest["storyboard_reference_image_ids"],
                 "expected_reference_ids": manifest["expected_reference_ids"],
                 "resolved_references": compact_resolved,
                 "missing_reference_ids": manifest["missing_reference_ids"],
