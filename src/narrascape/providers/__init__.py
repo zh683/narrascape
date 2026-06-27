@@ -1,6 +1,11 @@
-"""Provider discovery and selection helpers."""
+"""Provider discovery, selection, and runtime health helpers."""
 
-from narrascape.providers.execution import select_provider, selection_metadata
+from narrascape.providers.execution import (
+    record_provider_failure,
+    record_provider_success,
+    select_provider,
+    selection_metadata,
+)
 from narrascape.providers.registry import (
     ProviderCapability,
     ProviderRegistry,
@@ -16,6 +21,8 @@ __all__ = [
     "ProviderSelection",
     "ProviderSelector",
     "build_default_registry",
+    "record_provider_failure",
+    "record_provider_success",
     "select_provider",
     "selection_metadata",
 ]

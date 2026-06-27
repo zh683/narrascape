@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.api_keys import APIKeys
-from narrascape.providers import select_provider, selection_metadata
+from narrascape.providers import (
+    record_provider_failure,
+    record_provider_success,
+    select_provider,
+    selection_metadata,
+)
 from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
@@ -205,6 +210,14 @@ class GenerateVideoStage(Stage):
                 time.sleep(self.sleep_between)
 
         logger.info(f"Done: {ok_count} OK, {fail_count} failed")
+        if fail_count == 0:
+            record_provider_success(config, selection.tool.name)
+        else:
+            record_provider_failure(
+                config,
+                selection.tool.name,
+                f"{fail_count}/{len(segments)} video generations failed",
+            )
         return StageResult(
             self.name,
             fail_count == 0,

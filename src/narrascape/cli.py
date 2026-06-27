@@ -17,7 +17,7 @@ from rich.table import Table
 from narrascape import __version__
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_config
-from narrascape.logging import setup_logging
+from narrascape.log_setup import setup_logging
 from narrascape.pipeline import Pipeline
 
 app = typer.Typer(
@@ -1108,9 +1108,10 @@ def version_cmd() -> None:
     console.print(f"narrascape version {__version__}")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Installed console-script entry point."""
     app()
 
 
 if __name__ == "__main__":
-    app()
+    main()

@@ -23,11 +23,45 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from narrascape.llm.models import LLMResponse, Message, PromptTemplate
 
 logger = logging.getLogger("narrascape.llm.bridge")
+
+
+@contextmanager
+def _bridge_lock(lock_path: Path, timeout: float) -> Iterator[None]:
+    """Acquire a simple cross-process lock using atomic file creation."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    start = time.monotonic()
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(f"pid={os.getpid()}\ncreated={time.time()}\n")
+            break
+        except FileExistsError:
+            if time.monotonic() - start >= timeout:
+                raise RuntimeError(f"Bridge lock timeout: {lock_path}")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write text atomically so bridge readers never see partial JSON/Markdown."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
 
 
 class BridgeLLMClient:
@@ -54,6 +88,8 @@ class BridgeLLMClient:
         self.task_dir = Path(task_dir)
         self.pending_dir = self.task_dir / "pending"
         self.completed_dir = self.task_dir / "completed"
+        self.archive_dir = self.task_dir / "archive"
+        self.lock_path = self.task_dir / ".bridge.lock"
         self.timeout = int(os.environ.get("NARRASCAPE_BRIDGE_TIMEOUT", timeout))
         self._ensure_dirs()
 
@@ -61,6 +97,7 @@ class BridgeLLMClient:
         """Create bridge directories."""
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.completed_dir.mkdir(parents=True, exist_ok=True)
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
 
     def complete(self, prompt: str, **kwargs) -> LLMResponse:
         """Submit a task and wait for AI assistant response."""
@@ -87,7 +124,9 @@ class BridgeLLMClient:
         # Write task file
         task_file = self.pending_dir / f"task_{task_id}.md"
         task_content = self._format_task(task_id, conversation_text, json_mode, schema_hint)
-        task_file.write_text(task_content, encoding="utf-8")
+        with _bridge_lock(self.lock_path, min(float(self.timeout), 5.0)):
+            if not task_file.exists():
+                _atomic_write_text(task_file, task_content)
 
         logger.info(f"[bridge] Task created: {task_file}")
         logger.info(f"[bridge] Waiting for AI assistant response... (timeout={self.timeout}s)")
@@ -136,13 +175,18 @@ class BridgeLLMClient:
         """Read and archive a completed response if it exists."""
         if not response_file.exists():
             return None
+        if response_file.name.startswith(".") or response_file.suffix != ".json":
+            return None
         try:
-            data = json.loads(response_file.read_text(encoding="utf-8"))
-            archive_dir = self.task_dir / "archive"
-            archive_dir.mkdir(exist_ok=True)
-            if task_file.exists():
-                task_file.rename(archive_dir / task_file.name)
-            response_file.rename(archive_dir / response_file.name)
+            with _bridge_lock(self.lock_path, min(float(self.timeout), 5.0)):
+                if not response_file.exists():
+                    return None
+                data = json.loads(response_file.read_text(encoding="utf-8"))
+                if not isinstance(data.get("content"), str):
+                    raise KeyError("content must be a string")
+                if task_file.exists():
+                    task_file.replace(self.archive_dir / task_file.name)
+                response_file.replace(self.archive_dir / response_file.name)
 
             logger.info(f"[bridge] Response received for task {task_id}")
             return LLMResponse(

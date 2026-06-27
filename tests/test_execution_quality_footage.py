@@ -115,6 +115,55 @@ def test_generate_images_executes_provider_selected_by_selector(tmp_path):
     assert state["provider_selection"]["name"] == "local_image"
 
 
+def test_provider_selector_uses_health_circuit_breaker(tmp_path):
+    from narrascape.providers import record_provider_failure, select_provider
+
+    config = _config(tmp_path)
+    config.images.provider = ImageProvider.SEEDREAM
+    for _ in range(3):
+        record_provider_failure(config, "seedream_image", "temporary outage")
+
+    selection = select_provider(config, "image_generation", intent="creative")
+
+    assert selection.tool.name == "local_image"
+
+
+def test_generate_video_failure_records_provider_health(tmp_path, monkeypatch):
+    from narrascape.providers.health import health_store_for_project
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    config = _config(tmp_path)
+    config.pipeline_dir.mkdir(parents=True)
+    config.images_dir.mkdir(parents=True)
+    (config.images_dir / "img_01.png").write_bytes(b"not a real png")
+    stage = GenerateVideoStage(api_key="fake", sleep_between=0)
+    monkeypatch.setattr(stage, "_resolve_first_frame", lambda *args, **kwargs: None)
+    monkeypatch.setattr(stage, "_generate_one", lambda *args, **kwargs: False)
+
+    result = stage.run(_context(config))
+
+    assert not result.success
+    health = health_store_for_project(config.project_dir).snapshot()
+    assert health["seedance_video"].failure_count == 1
+
+
+def test_ffmpeg_media_args_resolve_dash_prefixed_paths(tmp_path):
+    from narrascape.utils.ffmpeg import _normalize_ffmpeg_args, safe_media_arg
+
+    media = tmp_path / "-clip.mp4"
+    media.write_bytes(b"video")
+    out = tmp_path / "-out.mp4"
+
+    assert safe_media_arg(media) == str(media.resolve())
+    args = _normalize_ffmpeg_args(["-i", str(media), "-c", "copy", str(out)])
+    assert args[1] == str(media.resolve())
+    assert args[-1] == str(out.resolve())
+
+    relative_args = _normalize_ffmpeg_args(["-i", "-clip.mp4", "-c", "copy", "-out.mp4"])
+    assert Path(relative_args[1]).is_absolute()
+    assert Path(relative_args[-1]).is_absolute()
+
+
 def test_generate_tts_executes_provider_selected_by_selector(tmp_path, monkeypatch):
     from narrascape.stages.generate_tts import GenerateTTSStage
 

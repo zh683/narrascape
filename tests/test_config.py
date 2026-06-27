@@ -68,6 +68,16 @@ class TestNarrascapeConfig:
         with pytest.raises(ValueError):
             PipelineConfig(video_generation="sometimes")
 
+    def test_project_dir_is_not_serialized(self):
+        cfg = NarrascapeConfig(
+            project=ProjectConfig(name="test-proj", title="Test", script_file="scripts/test.yaml"),
+            project_dir=Path("/tmp/test"),
+        )
+
+        dumped = cfg.model_dump()
+
+        assert "project_dir" not in dumped
+
 
 class TestScript:
     def test_basic(self):

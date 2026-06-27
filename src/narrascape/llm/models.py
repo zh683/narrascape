@@ -80,10 +80,15 @@ class LLMResponse:
     def extract_json(self) -> Any:
         """Extract JSON from response content, handling markdown fences."""
         raw = self.content.strip()
-        if "```json" in raw:
-            raw = raw.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw:
-            raw = raw.split("```")[1].split("```")[0].strip()
+        candidates = list(_json_candidates(raw))
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_error = e
+        if last_error:
+            raise last_error
         return json.loads(raw)
 
     def extract_json_safe(self, default: Any = None) -> Any:
@@ -92,6 +97,49 @@ class LLMResponse:
             return self.extract_json()
         except (json.JSONDecodeError, ValueError):
             return default
+
+
+def _json_candidates(text: str) -> list[str]:
+    """Return likely JSON substrings without assuming one exact fence format."""
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped:
+        candidates.append(stripped)
+
+    lines = text.splitlines()
+    in_fence = False
+    fence_lang = ""
+    block: list[str] = []
+    for line in lines:
+        marker = line.strip()
+        if marker.startswith("```"):
+            if in_fence:
+                if not fence_lang or "json" in fence_lang.lower():
+                    candidate = "\n".join(block).strip()
+                    if candidate:
+                        candidates.append(candidate)
+                in_fence = False
+                fence_lang = ""
+                block = []
+            else:
+                in_fence = True
+                fence_lang = marker[3:].strip()
+                block = []
+            continue
+        if in_fence:
+            block.append(line)
+
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = stripped.find(opener)
+        end = stripped.rfind(closer)
+        if start != -1 and end > start:
+            candidates.append(stripped[start : end + 1])
+
+    deduped: list[str] = []
+    for candidate in candidates:
+        if candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
 
 
 @dataclass

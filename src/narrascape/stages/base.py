@@ -34,7 +34,7 @@ class StageResult:
 
     stage_name: str
     success: bool
-    outputs: list[Path] | dict[str, Any] = field(default_factory=list)
+    outputs: list[str | Path] | dict[str, Any] = field(default_factory=list)
     message: str = ""
     duration_seconds: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -60,7 +60,7 @@ class Stage(ABC):
         ...
 
     @property
-    def outputs(self) -> list[Path]:
+    def outputs(self) -> list[str | Path]:
         """Expected output files for this stage."""
         return []
 

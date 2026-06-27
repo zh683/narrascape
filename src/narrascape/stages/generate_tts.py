@@ -18,7 +18,12 @@ from typing import Any
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_script
-from narrascape.providers import select_provider, selection_metadata
+from narrascape.providers import (
+    record_provider_failure,
+    record_provider_success,
+    select_provider,
+    selection_metadata,
+)
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import find_ffprobe
 from narrascape.utils.retry import retry_with_backoff
@@ -89,6 +94,7 @@ class GenerateTTSStage(Stage):
             state["provider_selection"] = provider_meta
             state["done"] = [seg.id for seg in segments]
             state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
                 True,
@@ -245,6 +251,14 @@ class GenerateTTSStage(Stage):
 
         total = sum(dur.values())
         errors = state.get("errors", [])
+        if len(errors) == 0:
+            record_provider_success(config, selection.tool.name)
+        else:
+            record_provider_failure(
+                config,
+                selection.tool.name,
+                f"{len(errors)}/{ns} TTS generations failed: {errors[-3:]}",
+            )
         logger.info(
             f"Done: {len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s ({total / 60:.1f}min)"
         )

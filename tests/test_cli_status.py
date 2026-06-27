@@ -10,3 +10,9 @@ def test_status_stage_names_include_film_timeline_default_path():
     assert "film_assemble" in names
     assert "qa" in names
     assert "director_review" in names
+
+
+def test_cli_exports_installed_entry_point():
+    from narrascape.cli import main
+
+    assert callable(main)

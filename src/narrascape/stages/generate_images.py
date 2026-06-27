@@ -19,7 +19,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_image_prompts
-from narrascape.providers import select_provider, selection_metadata
+from narrascape.providers import (
+    record_provider_failure,
+    record_provider_success,
+    select_provider,
+    selection_metadata,
+)
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import find_ffmpeg
@@ -107,6 +112,7 @@ class GenerateImagesStage(Stage):
             state["provider_selection"] = provider_meta
             state["done"] = [path.stem for path in generated]
             state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
                 True,
@@ -240,6 +246,14 @@ class GenerateImagesStage(Stage):
                     time.sleep(self.sleep_between)
 
         logger.info(f"Done: {ok_count} OK, {fail_count} failed")
+        if fail_count == 0:
+            record_provider_success(config, selection.tool.name)
+        else:
+            record_provider_failure(
+                config,
+                selection.tool.name,
+                f"{fail_count}/{len(targets)} image generations failed",
+            )
         return StageResult(
             self.name,
             fail_count == 0,

@@ -7,7 +7,7 @@ import pytest
 
 from narrascape.agent.models import BGMZoneSuggestion, DesignReport, SegmentAnalysis, ShotDesign
 from narrascape.config import MovementType, ShotType
-from narrascape.llm.models import LLMResponse
+from narrascape.llm.models import LLMResponse, Message
 
 
 class FakeLLMConfig:
@@ -87,6 +87,43 @@ class TestAssistantBridgeBatching:
         assert client.complete_calls == 1
         assert client.validated_calls == 0
         assert [a.segment_id for a in analyses] == [1, 2]
+
+    def test_bridge_archives_response_atomically(self, tmp_path):
+        import json
+
+        from narrascape.llm.bridge import BridgeLLMClient
+
+        task_dir = tmp_path / "bridge"
+        client = BridgeLLMClient(task_dir=task_dir, timeout=1)
+        task_id = client._task_id("## User\n\nhello", False, "")
+        response_file = task_dir / "completed" / f"response_{task_id}.json"
+        response_file.parent.mkdir(parents=True, exist_ok=True)
+        response_file.write_text(
+            json.dumps({"content": "done", "usage": {"prompt_tokens": 1}}),
+            encoding="utf-8",
+        )
+
+        response = client.chat([Message(role="user", content="hello")])
+
+        assert response.content == "done"
+        assert (task_dir / "archive" / f"response_{task_id}.json").exists()
+        assert not (task_dir / ".bridge.lock").exists()
+
+    def test_bridge_rejects_response_without_string_content(self, tmp_path):
+        import json
+
+        from narrascape.llm.bridge import BridgeLLMClient
+        from narrascape.llm.models import Message
+
+        task_dir = tmp_path / "bridge"
+        client = BridgeLLMClient(task_dir=task_dir, timeout=1)
+        task_id = client._task_id("## User\n\nhello", False, "")
+        response_file = task_dir / "completed" / f"response_{task_id}.json"
+        response_file.parent.mkdir(parents=True, exist_ok=True)
+        response_file.write_text(json.dumps({"content": 123}), encoding="utf-8")
+
+        with pytest.raises(RuntimeError, match="invalid"):
+            client.chat([Message(role="user", content="hello")])
 
     def test_script_analyzer_does_not_fallback_after_ai_assistant_timeout(self):
         from narrascape.agent.analyzer import ScriptAnalyzer
@@ -649,3 +686,18 @@ class TestPreProductionModels:
         assert report.to_scene_refs_dict() == {}
         assert report.to_storyboard_frames() == []
         assert report.to_pre_production_report()["characters"] == []
+
+
+class TestLLMResponseParsing:
+    def test_extract_json_handles_text_around_fenced_json(self):
+        response = LLMResponse(
+            content='Before\n```json\n{"ok": true, "items": [1, 2]}\n```\nAfter',
+            model="fake",
+        )
+
+        assert response.extract_json() == {"ok": True, "items": [1, 2]}
+
+    def test_extract_json_falls_back_to_embedded_object(self):
+        response = LLMResponse(content='prefix {"status": "ok"} suffix', model="fake")
+
+        assert response.extract_json() == {"status": "ok"}

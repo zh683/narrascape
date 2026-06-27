@@ -17,7 +17,12 @@ from typing import Any
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_script
-from narrascape.providers import select_provider, selection_metadata
+from narrascape.providers import (
+    record_provider_failure,
+    record_provider_success,
+    select_provider,
+    selection_metadata,
+)
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import find_ffprobe
 from narrascape.utils.retry import retry_with_backoff
@@ -118,6 +123,7 @@ class GenerateMusicStage(Stage):
             state["provider_selection"] = provider_meta
             state["done"] = [zone.id for zone in zones]
             state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+            record_provider_success(config, selection.tool.name)
             return StageResult(
                 self.name,
                 True,
@@ -191,7 +197,12 @@ class GenerateMusicStage(Stage):
                 per_zone = budget_tracker.get_cost_estimate("music", 1)
                 budget_tracker.record(per_zone)
             else:
-                logger.error("FAILED — stopping")
+                logger.error("FAILED - stopping")
+                record_provider_failure(
+                    config,
+                    selection.tool.name,
+                    f"music zone {zone.id} generation failed",
+                )
                 return StageResult(self.name, False, message=f"Zone {zone.id} generation failed")
             if i < len(zones) - 1:
                 time.sleep(2)
@@ -219,6 +230,7 @@ class GenerateMusicStage(Stage):
         logger.info(
             f"Done: {len(generated)}/{len(zones)} OK, {total_dur:.0f}s ({total_dur / 60:.1f}min)"
         )
+        record_provider_success(config, selection.tool.name)
         return StageResult(
             self.name,
             True,

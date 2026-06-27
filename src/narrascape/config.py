@@ -419,7 +419,7 @@ class NarrascapeConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
     # Runtime-derived paths (not in YAML)
-    project_dir: Path = Field(default=Path("."))
+    project_dir: Path = Field(default=Path("."), exclude=True)
 
     @model_validator(mode="after")
     def derive_project_dir(self) -> NarrascapeConfig:

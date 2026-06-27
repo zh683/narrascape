@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from narrascape.providers.health import ProviderHealth
 from narrascape.providers.registry import ProviderTool
 
 
@@ -31,10 +32,13 @@ class ProviderSelector:
         candidates: list[ProviderTool],
         task_context: dict[str, Any] | None = None,
     ) -> ProviderSelection:
+        health = task_context.get("provider_health", {}) if task_context else {}
         usable = [
             tool
             for tool in candidates
-            if tool.capability.value == capability and tool.status == "available"
+            if tool.capability.value == capability
+            and tool.status == "available"
+            and self._is_healthy(tool, health)
         ]
         if not usable:
             raise ValueError(f"No available providers for capability: {capability}")
@@ -59,3 +63,13 @@ class ProviderSelector:
             + tool.latency * self.weights["latency"]
             + tool.continuity * self.weights["continuity"]
         )
+
+    def _is_healthy(self, tool: ProviderTool, health: dict[str, Any]) -> bool:
+        status = health.get(tool.name)
+        if status is None:
+            return True
+        if isinstance(status, ProviderHealth):
+            return status.available
+        if isinstance(status, dict):
+            return bool(status.get("available", True))
+        return True

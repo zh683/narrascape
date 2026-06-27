@@ -25,6 +25,35 @@ logger = logging.getLogger("narrascape.ffmpeg")
 
 _FFMPEG_EXE: Path | None = None
 _FFPROBE_EXE: Path | None = None
+_MEDIA_EXTENSIONS = (".mp4", ".mp3", ".wav", ".mov", ".mkv", ".m4a", ".aac", ".flac")
+
+
+def safe_media_arg(path: str | Path) -> str:
+    """Return a media path argument that cannot be mistaken for an ffmpeg option."""
+    p = Path(path)
+    if str(path).startswith("-") or p.name.startswith("-"):
+        return str(p.resolve())
+    return str(p)
+
+
+def _normalize_ffmpeg_args(args: list[str]) -> list[str]:
+    normalized: list[str] = []
+    input_next = False
+    for arg in args:
+        if input_next:
+            normalized.append(safe_media_arg(arg))
+            input_next = False
+            continue
+        normalized.append(arg)
+        if arg == "-i":
+            input_next = True
+    if normalized and _is_media_path(normalized[-1]):
+        normalized[-1] = safe_media_arg(normalized[-1])
+    return normalized
+
+
+def _is_media_path(value: str) -> bool:
+    return Path(value).suffix.lower() in _MEDIA_EXTENSIONS
 
 
 def find_ffmpeg() -> Path:
@@ -97,6 +126,7 @@ def find_ffprobe() -> Path:
 def get_duration(path: Path) -> float:
     """Get media duration in seconds using ffprobe."""
     probe = find_ffprobe()
+    media_path = safe_media_arg(path)
     r = subprocess.run(
         [
             str(probe),
@@ -106,7 +136,7 @@ def get_duration(path: Path) -> float:
             "format=duration",
             "-of",
             "csv=p=0",
-            str(path),
+            media_path,
         ],
         capture_output=True,
         text=True,
@@ -119,6 +149,7 @@ def get_duration(path: Path) -> float:
 def get_media_info(path: Path) -> dict[str, Any]:
     """Get comprehensive media metadata as JSON."""
     probe = find_ffprobe()
+    media_path = safe_media_arg(path)
     r = subprocess.run(
         [
             str(probe),
@@ -128,7 +159,7 @@ def get_media_info(path: Path) -> dict[str, Any]:
             "json",
             "-show_format",
             "-show_streams",
-            str(path),
+            media_path,
         ],
         capture_output=True,
         text=True,
@@ -188,15 +219,14 @@ def run_ffmpeg(
         True if successful, False otherwise
     """
     ffmpeg = find_ffmpeg()
-    cmd = [str(ffmpeg), "-y"] + args
+    normalized_args = _normalize_ffmpeg_args(args)
+    cmd = [str(ffmpeg), "-y"] + normalized_args
 
     # Detect output file path from args
     output_path: Path | None = None
-    for i in range(len(args) - 1, -1, -1):
-        a = args[i]
-        if not a.startswith("-") and any(
-            a.endswith(ext) for ext in [".mp4", ".mp3", ".wav", ".mov", ".mkv"]
-        ):
+    for i in range(len(normalized_args) - 1, -1, -1):
+        a = normalized_args[i]
+        if not a.startswith("-") and _is_media_path(a):
             output_path = Path(a)
             break
 
@@ -248,7 +278,7 @@ def run_ffmpeg(
 def run_ffmpeg_silent(args: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
     """Run ffmpeg silently, returning the full result. For internal use."""
     ffmpeg = find_ffmpeg()
-    cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + args
+    cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + _normalize_ffmpeg_args(args)
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
