@@ -42,13 +42,27 @@ class ReworkExecuteStage(Stage):
                 regen_queue.append(action)
             elif action_type == "recut":
                 recut_queue.append(action)
-                executed.append({"segment_id": int(action["segment_id"]), "operation": "queue_recut", "reason": action.get("reason")})
+                executed.append(
+                    {
+                        "segment_id": int(action["segment_id"]),
+                        "operation": "queue_recut",
+                        "reason": action.get("reason"),
+                    }
+                )
             elif action_type == "replace_source_media":
                 replacement_queue.append(action)
-                executed.append({"segment_id": int(action["segment_id"]), "operation": "queue_source_media_replacement", "reason": action.get("reason")})
+                executed.append(
+                    {
+                        "segment_id": int(action["segment_id"]),
+                        "operation": "queue_source_media_replacement",
+                        "reason": action.get("reason"),
+                    }
+                )
 
         queues = {
-            "video_regen_queue": self._write_queue(config.pipeline_dir / "video_regen_queue.yaml", regen_queue),
+            "video_regen_queue": self._write_queue(
+                config.pipeline_dir / "video_regen_queue.yaml", regen_queue
+            ),
             "recut_queue": self._write_queue(config.pipeline_dir / "recut_queue.yaml", recut_queue),
             "source_media_replacement_queue": self._write_queue(
                 config.pipeline_dir / "source_media_replacement_queue.yaml",
@@ -77,11 +91,15 @@ class ReworkExecuteStage(Stage):
             metadata={"executed_count": len(executed), "queues": queues},
         )
 
-    def _invalidate_generated_video(self, context: StageContext, action: dict[str, Any]) -> dict[str, Any]:
+    def _invalidate_generated_video(
+        self, context: StageContext, action: dict[str, Any]
+    ) -> dict[str, Any]:
         segment_id = int(action["segment_id"])
         video_id = f"vid_{segment_id:02d}"
         videos_dir = context.config.project_dir / "assets" / "videos"
-        candidates = list(videos_dir.glob(f"{video_id}.mp4")) + list(videos_dir.glob(f"{video_id}_take_*.mp4"))
+        candidates = list(videos_dir.glob(f"{video_id}.mp4")) + list(
+            videos_dir.glob(f"{video_id}_take_*.mp4")
+        )
         quarantined: list[str] = []
         quarantine_dir = context.config.pipeline_dir / "rework_quarantine" / "videos"
         quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +111,10 @@ class ReworkExecuteStage(Stage):
                 target.unlink()
             shutil.move(str(path), str(target))
             quarantined.append(target.as_posix())
-        self._remove_done_ids(context.config.pipeline_dir / "video_gen_state.json", [path.stem for path in candidates] + [video_id])
+        self._remove_done_ids(
+            context.config.pipeline_dir / "video_gen_state.json",
+            [path.stem for path in candidates] + [video_id],
+        )
         return {
             "segment_id": segment_id,
             "operation": "invalidate_generated_video",
@@ -128,7 +149,21 @@ class ReworkExecuteStage(Stage):
         if recut_queue:
             stages.extend(["film_timeline", "film_assemble"])
         if stages:
-            stages.extend(["film_assemble", "audio", "subtitles", "qa", "continuity_bible", "editing_review", "director_review", "rework_plan", "creative_review", "visual_semantic_qa", "film_supervisor"])
+            stages.extend(
+                [
+                    "film_assemble",
+                    "audio",
+                    "subtitles",
+                    "qa",
+                    "continuity_bible",
+                    "editing_review",
+                    "director_review",
+                    "rework_plan",
+                    "creative_review",
+                    "visual_semantic_qa",
+                    "film_supervisor",
+                ]
+            )
         return self._dedupe(stages)
 
     def _mark_stages_pending(self, state_path: Path, stages: list[str]) -> None:

@@ -3,28 +3,31 @@
 Pydantic configuration models for narrascape.
 Replaces raw YAML dicts with validated, typed, auto-completed configs.
 """
+
 from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
 
 # ───────────────────────────────────────────
 # Enums
 # ───────────────────────────────────────────
 
+
 class SupersampleMode(str, Enum):
     """Ken Burns zoom rendering quality mode."""
-    NORMAL = "normal"    # 2x pre-scale + zoompan (fast, painterly images)
+
+    NORMAL = "normal"  # 2x pre-scale + zoompan (fast, painterly images)
     EXTREME = "extreme"  # PIL float-pixel affine (slow, 100% smooth)
-    AUTO = "auto"        # Auto-detect hard edges, switch per image
+    AUTO = "auto"  # Auto-detect hard edges, switch per image
 
 
 class ShotType(str, Enum):
     """Cinematic shot type — drives image size and default motion."""
+
     WIDE_ENV = "wide_env"
     WIDE_ANGLE = "wide_angle"
     AERIAL = "aerial"
@@ -43,6 +46,7 @@ class ShotType(str, Enum):
 
 class MovementType(str, Enum):
     """Ken Burns motion types."""
+
     STILL = "still"
     ZOOM_IN = "zoom_in"
     ZOOM_SLOW = "zoom_slow"
@@ -62,6 +66,7 @@ class MovementType(str, Enum):
 
 class TTSProvider(str, Enum):
     """Supported TTS providers."""
+
     MINIMAX = "minimax"
     OPENAI = "openai"
     ELEVENLABS = "elevenlabs"
@@ -71,6 +76,7 @@ class TTSProvider(str, Enum):
 
 class ImageProvider(str, Enum):
     """Supported image generation providers."""
+
     SEEDREAM = "seedream"
     FLUX = "flux"
     OPENAI = "openai"
@@ -79,6 +85,7 @@ class ImageProvider(str, Enum):
 
 class MusicProvider(str, Enum):
     """Supported music generation providers."""
+
     MINIMAX = "minimax"
     SUNO = "suno"
     ELEVENLABS = "elevenlabs"
@@ -87,15 +94,19 @@ class MusicProvider(str, Enum):
 
 class SubtitleEngine(str, Enum):
     """Subtitle rendering engine."""
+
     SRT = "srt"
     VTT = "vtt"
 
 
 class LLMConfig(BaseModel):
     """LLM configuration for the project."""
+
     mode: str = Field("auto", description="LLM mode: auto, ai_assistant, api, bridge, none")
     timeout: int = Field(300, description="Bridge mode timeout in seconds")
-    provider: str = Field("", description="API provider: openai, anthropic, deepseek, volcengine, ai_assistant")
+    provider: str = Field(
+        "", description="API provider: openai, anthropic, deepseek, volcengine, ai_assistant"
+    )
     model: str = Field("", description="Model name for API mode")
     api_key: str = Field("", description="API key (or use env var)")
     base_url: str = Field("", description="Custom API base URL")
@@ -115,24 +126,31 @@ class LLMConfig(BaseModel):
 # Project & Pipeline
 # ───────────────────────────────────────────
 
+
 class ProjectConfig(BaseModel):
     """Project identity and metadata."""
-    name: str = Field(..., description="Project slug, used for pipeline subdirs and output filenames")
+
+    name: str = Field(
+        ..., description="Project slug, used for pipeline subdirs and output filenames"
+    )
     title: str = Field(..., description="Human-readable video title")
-    subtitle: Optional[str] = Field(None, description="Video subtitle / tagline")
-    author: Optional[str] = Field(None, description="Content author / narrator name")
-    year: Optional[int] = Field(None, description="Production year")
-    series: Optional[str] = Field(None, description="Series name if part of a series")
-    episode: Optional[int] = Field(None, description="Episode number in series")
+    subtitle: str | None = Field(None, description="Video subtitle / tagline")
+    author: str | None = Field(None, description="Content author / narrator name")
+    year: int | None = Field(None, description="Production year")
+    series: str | None = Field(None, description="Series name if part of a series")
+    episode: int | None = Field(None, description="Episode number in series")
     script_file: str = Field(..., description="Path to script YAML file")
-    segment_count: Optional[int] = Field(12, description="Default number of segments for script generation")
-    style: Optional[str] = Field("documentary", description="Default video style")
+    segment_count: int | None = Field(
+        12, description="Default number of segments for script generation"
+    )
+    style: str | None = Field("documentary", description="Default video style")
 
 
 class PipelineConfig(BaseModel):
     """Pipeline identity."""
+
     name: str = Field("animated-explainer", description="Pipeline type identifier")
-    category: Optional[str] = Field(None, description="Pipeline category")
+    category: str | None = Field(None, description="Pipeline category")
     version: str = Field("2.0", description="Pipeline version string")
 
 
@@ -140,57 +158,68 @@ class PipelineConfig(BaseModel):
 # TTS
 # ───────────────────────────────────────────
 
+
 class PronunciationEntry(BaseModel):
     """A single pronunciation override."""
+
     original: str = Field(..., description="Original text to replace")
     replacement: str = Field(..., description="Phonetic replacement")
 
 
 class TTSConfig(BaseModel):
     """Text-to-speech configuration."""
+
     provider: TTSProvider = Field(TTSProvider.MINIMAX, description="TTS provider")
-    engine: Optional[str] = Field(None, description="Engine override")
+    engine: str | None = Field(None, description="Engine override")
     model: str = Field("speech-2.8-hd", description="TTS model name")
     voice_id: str = Field("male-qn-jingying", description="Voice identifier")
     speed: float = Field(0.9, ge=0.5, le=2.0, description="Speech speed multiplier")
     pitch: int = Field(0, ge=-10, le=10, description="Pitch shift in semitones")
     vol: float = Field(1.0, ge=0.0, le=2.0, description="Volume multiplier")
     sample_rate: int = Field(32000, description="Output sample rate in Hz")
-    segments: Optional[int] = Field(None, description="Number of segments (auto-detected)")
+    segments: int | None = Field(None, description="Number of segments (auto-detected)")
     continuous_sound: bool = Field(True, description="Clause-level smoothing (MiniMax 2.8+)")
     text_normalization: bool = Field(True, description="Normalize numbers and punctuation")
     language_boost: str = Field("Chinese", description="Language hint for TTS engine")
     add_pauses: bool = Field(False, description="Auto-insert pause markers at sentence boundaries")
-    pronunciation_dict: list[str] = Field(default_factory=list, description="Pronunciation overrides")
+    pronunciation_dict: list[str] = Field(
+        default_factory=list, description="Pronunciation overrides"
+    )
 
 
 # ───────────────────────────────────────────
 # Images
 # ───────────────────────────────────────────
 
+
 class ImageConfig(BaseModel):
     """Image generation configuration."""
+
     provider: ImageProvider = Field(ImageProvider.SEEDREAM)
-    engine: Optional[str] = Field(None)
+    engine: str | None = Field(None)
     model: str = Field("doubao-seedream-5-0-260128")
     style: str = Field("", description="Global style prompt prefix")
     aspect_ratio: str = Field("16:9")
     width: int = Field(2560, ge=640, le=8192)
     height: int = Field(1440, ge=480, le=8192)
-    count: Optional[int] = Field(None, description="Number of images (auto-detected)")
+    count: int | None = Field(None, description="Number of images (auto-detected)")
 
 
 # ───────────────────────────────────────────
 # Visual / Ken Burns
 # ───────────────────────────────────────────
 
+
 class VisualConfig(BaseModel):
     """Visual rendering configuration."""
+
     type: str = Field("ken_burns", description="Motion type identifier")
     zoom_rate: float = Field(0.001, ge=0.0, le=0.1, description="Base zoom rate per frame")
     zoom_cap: float = Field(1.20, ge=1.0, le=2.0, description="Maximum zoom factor")
-    vignette: Optional[str] = Field(None, description="Vignette strength expression")
-    fade_in_duration: float = Field(3.0, ge=0.0, le=10.0, description="Segment fade-in duration in seconds")
+    vignette: str | None = Field(None, description="Vignette strength expression")
+    fade_in_duration: float = Field(
+        3.0, ge=0.0, le=10.0, description="Segment fade-in duration in seconds"
+    )
     supersample: SupersampleMode = Field(SupersampleMode.AUTO, description="Zoom rendering quality")
     segment_gap: float = Field(1.5, ge=0.0, le=10.0, description="Default gap between segments")
     gap_map: dict[int, float] = Field(default_factory=dict, description="Per-segment gap overrides")
@@ -210,14 +239,18 @@ class VisualConfig(BaseModel):
 # Subtitles
 # ───────────────────────────────────────────
 
+
 class SubtitleConfig(BaseModel):
     """Subtitle rendering configuration."""
+
     engine: SubtitleEngine = Field(SubtitleEngine.SRT)
     font: str = Field("Microsoft YaHei")
     font_size: int = Field(24, ge=8, le=96)
     max_chars_per_line: int = Field(18, ge=4, le=80)
     strip_punctuation: bool = Field(True)
-    alignment: int = Field(2, ge=1, le=9, description="ASS alignment: 1=bottom-left, 2=bottom-center, 3=bottom-right")
+    alignment: int = Field(
+        2, ge=1, le=9, description="ASS alignment: 1=bottom-left, 2=bottom-center, 3=bottom-right"
+    )
     primary_color: str = Field("&H00FFFFFF")
     outline_color: str = Field("&H00000000")
     outline: int = Field(2, ge=0, le=8)
@@ -229,15 +262,18 @@ class SubtitleConfig(BaseModel):
 # Audio
 # ───────────────────────────────────────────
 
+
 class NarrationAudioConfig(BaseModel):
     """Narration track audio settings."""
-    provider: Optional[str] = Field(None)
+
+    provider: str | None = Field(None)
     format: str = Field("mp3")
     sample_rate: int = Field(32000)
 
 
 class MusicAudioConfig(BaseModel):
     """Background music audio settings."""
+
     provider: MusicProvider = Field(MusicProvider.MINIMAX)
     model: str = Field("music-2.6-free")
     sample_rate: int = Field(44100)
@@ -255,6 +291,7 @@ class MusicAudioConfig(BaseModel):
 
 class AudioConfig(BaseModel):
     """Combined audio configuration."""
+
     narration: NarrationAudioConfig = Field(default_factory=NarrationAudioConfig)
     music: MusicAudioConfig = Field(default_factory=MusicAudioConfig)
 
@@ -263,18 +300,25 @@ class AudioConfig(BaseModel):
 # BGM Zones
 # ───────────────────────────────────────────
 
+
 class BGMZone(BaseModel):
     """A single background music zone."""
+
     id: str = Field(..., description="Zone identifier, used for filename")
     covers: list[int] = Field(..., description="Segment IDs this zone covers [start, end]")
     label: str = Field(..., description="Human-readable zone label")
-    prompt: str = Field(..., description="Music generation prompt (English, with instruments/BPM/key)")
+    prompt: str = Field(
+        ..., description="Music generation prompt (English, with instruments/BPM/key)"
+    )
     min_duration: int = Field(120, ge=10, description="Minimum generated duration in seconds")
 
 
 class BGMMap(BaseModel):
     """Background music zone mapping."""
-    zone_crossfade: float = Field(1.5, ge=0.0, le=10.0, description="Crossfade duration between zones")
+
+    zone_crossfade: float = Field(
+        1.5, ge=0.0, le=10.0, description="Crossfade duration between zones"
+    )
     zones: list[BGMZone] = Field(default_factory=list)
 
 
@@ -282,8 +326,10 @@ class BGMMap(BaseModel):
 # Encoding
 # ───────────────────────────────────────────
 
+
 class EncodeConfig(BaseModel):
     """Video encoding parameters."""
+
     width: int = Field(1920, ge=360, le=7680)
     height: int = Field(1080, ge=240, le=4320)
     fps: int = Field(25, ge=1, le=120)
@@ -298,19 +344,22 @@ class EncodeConfig(BaseModel):
 # Ending Card
 # ───────────────────────────────────────────
 
+
 class EndingLine(BaseModel):
     """A single line of text on the ending card."""
+
     text: str
     size: int = Field(36, ge=8, le=120)
 
 
 class EndingConfig(BaseModel):
     """Ending card configuration."""
+
     enabled: bool = Field(True)
     duration: float = Field(15.0, ge=1.0, le=60.0)
-    template: Optional[str] = Field(None)
+    template: str | None = Field(None)
     lines: list[EndingLine] = Field(default_factory=list)
-    quote: Optional[str] = Field(None)
+    quote: str | None = Field(None)
     quote_size: int = Field(28, ge=8, le=120)
 
 
@@ -318,13 +367,15 @@ class EndingConfig(BaseModel):
 # Budget
 # ───────────────────────────────────────────
 
+
 class BudgetConfig(BaseModel):
     """Cost estimation and budget controls."""
+
     total_usd: float = Field(10.0, ge=0.0)
-    tts_estimated: Optional[float] = Field(None)
-    images_estimated: Optional[float] = Field(None)
-    music_estimated: Optional[float] = Field(None)
-    total_estimated: Optional[float] = Field(None)
+    tts_estimated: float | None = Field(None)
+    images_estimated: float | None = Field(None)
+    music_estimated: float | None = Field(None)
+    total_estimated: float | None = Field(None)
     mode: Literal["observe", "warn", "cap"] = Field("warn")
     per_action_threshold: float = Field(0.5, ge=0.0)
 
@@ -333,8 +384,10 @@ class BudgetConfig(BaseModel):
 # Root Config
 # ───────────────────────────────────────────
 
+
 class NarrascapeConfig(BaseModel):
     """Root configuration model — validates entire config.yaml."""
+
     project: ProjectConfig
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -352,7 +405,7 @@ class NarrascapeConfig(BaseModel):
     project_dir: Path = Field(default=Path("."))
 
     @model_validator(mode="after")
-    def derive_project_dir(self) -> "NarrascapeConfig":
+    def derive_project_dir(self) -> NarrascapeConfig:
         if self.project_dir == Path("."):
             self.project_dir = Path.cwd()
         return self
@@ -400,23 +453,27 @@ class NarrascapeConfig(BaseModel):
 # Script Models (script.yaml)
 # ───────────────────────────────────────────
 
+
 class PauseMarker(BaseModel):
     """Explicit pause marker for a segment."""
+
     after: str = Field(..., description="Text after which to insert pause")
     seconds: float = Field(..., ge=0.01, le=99.99, description="Pause duration in seconds")
 
 
 class ScriptSegment(BaseModel):
     """A single segment in the script."""
+
     id: int = Field(..., ge=1, description="Segment sequence number")
     text: str = Field(..., description="Narration text for this segment")
-    shot_type: Optional[ShotType] = Field(None, description="Override shot type for this segment")
+    shot_type: ShotType | None = Field(None, description="Override shot type for this segment")
     pause_markers: list[PauseMarker] = Field(default_factory=list)
     pronunciation: list[str] = Field(default_factory=list)
 
 
 class Script(BaseModel):
     """Complete script model."""
+
     segments: list[ScriptSegment] = Field(..., min_length=1)
 
     @property
@@ -427,7 +484,7 @@ class Script(BaseModel):
     def segment_ids(self) -> list[int]:
         return [s.id for s in self.segments]
 
-    def get_segment(self, seg_id: int) -> Optional[ScriptSegment]:
+    def get_segment(self, seg_id: int) -> ScriptSegment | None:
         for seg in self.segments:
             if seg.id == seg_id:
                 return seg
@@ -442,23 +499,35 @@ class Script(BaseModel):
 # Image Prompt Models (image_prompts.yaml)
 # ───────────────────────────────────────────
 
+
 class ImagePrompt(BaseModel):
     """A single image generation prompt."""
+
     id: str = Field(..., description="Image identifier (e.g., img_01)")
     shot_type: ShotType = Field(ShotType.MEDIUM, description="Cinematic shot type")
-    movement: Optional[MovementType] = Field(None, description="Override Ken Burns movement")
-    size: Optional[str] = Field(None, description="Override image dimensions (e.g., 4704x2016)")
+    movement: MovementType | None = Field(None, description="Override Ken Burns movement")
+    size: str | None = Field(None, description="Override image dimensions (e.g., 4704x2016)")
     description: str = Field(..., description="Full image generation prompt")
-    strategy: Optional[str] = Field(None, description="Generation strategy hint")
-    reference_image_url: Optional[str] = Field(None, description="URL or path to a single reference image for Seedream (legacy, use reference_images for multi)")
-    reference_images: list[str] = Field(default_factory=list, description="Multiple reference image URLs/paths for Seedream multi-reference (max 14)")
-    seedream_model: Optional[str] = Field(None, description="Override Seedream model for this prompt")
-    seedream_sample_strength: Optional[float] = Field(None, ge=0.0, le=1.0, description="Reference influence strength")
-    negative_prompt: Optional[str] = Field(None, description="Negative prompt to prevent unwanted elements")
+    strategy: str | None = Field(None, description="Generation strategy hint")
+    reference_image_url: str | None = Field(
+        None,
+        description="URL or path to a single reference image for Seedream (legacy, use reference_images for multi)",
+    )
+    reference_images: list[str] = Field(
+        default_factory=list,
+        description="Multiple reference image URLs/paths for Seedream multi-reference (max 14)",
+    )
+    seedream_model: str | None = Field(None, description="Override Seedream model for this prompt")
+    seedream_sample_strength: float | None = Field(
+        None, ge=0.0, le=1.0, description="Reference influence strength"
+    )
+    negative_prompt: str | None = Field(
+        None, description="Negative prompt to prevent unwanted elements"
+    )
 
     @field_validator("size")
     @classmethod
-    def validate_size(cls, v: Optional[str]) -> Optional[str]:
+    def validate_size(cls, v: str | None) -> str | None:
         if v is None:
             return v
         parts = v.split("x")
@@ -482,9 +551,10 @@ class ImagePrompt(BaseModel):
 
 class ImagePrompts(BaseModel):
     """Complete image prompts collection."""
+
     prompts: list[ImagePrompt] = Field(..., min_length=1)
 
-    def get_prompt(self, prompt_id: str) -> Optional[ImagePrompt]:
+    def get_prompt(self, prompt_id: str) -> ImagePrompt | None:
         for p in self.prompts:
             if p.id == prompt_id:
                 return p
@@ -499,15 +569,21 @@ class ImagePrompts(BaseModel):
 # Image Map Models (image_map.yaml)
 # ───────────────────────────────────────────
 
+
 class ImageMapEntry(BaseModel):
     """Maps a segment to its image(s) and timing."""
+
     id: int = Field(..., ge=1, description="Segment ID")
-    images: list[str] = Field(default_factory=list, description="List of image IDs for this segment")
-    timing: Optional[list[float]] = Field(None, description="Time allocation ratios for multi-image segments")
+    images: list[str] = Field(
+        default_factory=list, description="List of image IDs for this segment"
+    )
+    timing: list[float] | None = Field(
+        None, description="Time allocation ratios for multi-image segments"
+    )
 
     @field_validator("timing")
     @classmethod
-    def validate_timing(cls, v: Optional[list[float]], info: Any) -> Optional[list[float]]:
+    def validate_timing(cls, v: list[float] | None, info: Any) -> list[float] | None:
         if v is None:
             return v
         images = info.data.get("images", [])
@@ -521,9 +597,10 @@ class ImageMapEntry(BaseModel):
 
 class ImageMap(BaseModel):
     """Complete segment-to-image mapping."""
+
     segments: list[ImageMapEntry] = Field(...)
 
-    def get_entry(self, seg_id: int) -> Optional[ImageMapEntry]:
+    def get_entry(self, seg_id: int) -> ImageMapEntry | None:
         for entry in self.segments:
             if entry.id == seg_id:
                 return entry
@@ -533,7 +610,7 @@ class ImageMap(BaseModel):
         entry = self.get_entry(seg_id)
         return entry.images if entry else []
 
-    def get_timing(self, seg_id: int) -> Optional[list[float]]:
+    def get_timing(self, seg_id: int) -> list[float] | None:
         entry = self.get_entry(seg_id)
         return entry.timing if entry else None
 
@@ -542,9 +619,11 @@ class ImageMap(BaseModel):
 # Loader helpers
 # ───────────────────────────────────────────
 
+
 def load_config(path: Path) -> NarrascapeConfig:
     """Load and validate config.yaml from a project directory or file path."""
     import yaml
+
     # If path is a directory, look for config.yaml inside it
     if path.is_dir():
         path = path / "config.yaml"
@@ -557,6 +636,7 @@ def load_config(path: Path) -> NarrascapeConfig:
 def load_script(path: Path) -> Script:
     """Load and validate script.yaml."""
     import yaml
+
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return Script(**data)
 
@@ -564,6 +644,7 @@ def load_script(path: Path) -> Script:
 def load_image_prompts(path: Path) -> ImagePrompts:
     """Load and validate image_prompts.yaml."""
     import yaml
+
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return ImagePrompts(**data)
 
@@ -571,5 +652,6 @@ def load_image_prompts(path: Path) -> ImagePrompts:
 def load_image_map(path: Path) -> ImageMap:
     """Load and validate image_map.yaml."""
     import yaml
+
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return ImageMap(**data)

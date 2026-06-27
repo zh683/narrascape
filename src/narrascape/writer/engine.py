@@ -3,16 +3,16 @@
 Uses structured LLM prompting with Chain-of-Thought reasoning and
 automatic output validation. Falls back to templates when LLM is unavailable.
 """
+
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from narrascape.config import Script, ScriptSegment
 from narrascape.llm import LLMClient, OutputValidator
 from narrascape.llm.prompts import get_prompt
-from narrascape.research.engine import ResearchResult, ResearchEngine
+from narrascape.research.engine import ResearchEngine, ResearchResult
 
 logger = logging.getLogger("narrascape.writer")
 
@@ -97,7 +97,7 @@ class ScriptWriter:
 
                 resp = self.llm_client.run_template(
                     template,
-                    topic=getattr(script, 'topic', ''),
+                    topic=getattr(script, "topic", ""),
                     segments=segments_text,
                     tone=tone,
                 )
@@ -130,50 +130,36 @@ class ScriptWriter:
 
         # Opening: overview
         overview = findings.get("主题概述", findings.get("Overview", "这是一个值得探讨的主题。"))
-        segments.append(ScriptSegment(
-            id=1,
-            text=f"{overview}今天，我们将一起走进这个故事。"
-        ))
+        segments.append(ScriptSegment(id=1, text=f"{overview}今天，我们将一起走进这个故事。"))
 
         # Timeline segments
         timeline = findings.get("时间线", findings.get("Timeline", []))
-        for i, event in enumerate(timeline[:max(1, segment_count - 4)]):
-            segments.append(ScriptSegment(
-                id=len(segments) + 1,
-                text=f"{event}。"
-            ))
+        for i, event in enumerate(timeline[: max(1, segment_count - 4)]):
+            segments.append(ScriptSegment(id=len(segments) + 1, text=f"{event}。"))
 
         # Key figures
         figures = findings.get("关键人物", findings.get("Key Figures", []))
         if figures:
-            segments.append(ScriptSegment(
-                id=len(segments) + 1,
-                text=f"在他身边，{figures[0]}扮演着重要的角色。"
-            ))
+            segments.append(
+                ScriptSegment(
+                    id=len(segments) + 1, text=f"在他身边，{figures[0]}扮演着重要的角色。"
+                )
+            )
 
         # Social context
         context = findings.get("时代背景", findings.get("Social Context", ""))
         if context:
-            segments.append(ScriptSegment(
-                id=len(segments) + 1,
-                text=f"那是{context}的时代。"
-            ))
+            segments.append(ScriptSegment(id=len(segments) + 1, text=f"那是{context}的时代。"))
 
         # Personal insights
         insights = findings.get("个人感悟", findings.get("Personal Insights", ""))
         if insights:
-            segments.append(ScriptSegment(
-                id=len(segments) + 1,
-                text=f"{insights}"
-            ))
+            segments.append(ScriptSegment(id=len(segments) + 1, text=f"{insights}"))
 
         # Fill remaining segments
         while len(segments) < segment_count:
             idx = len(segments) + 1
-            segments.append(ScriptSegment(
-                id=idx,
-                text=f"第{idx}段文案。请根据主题补充具体内容。"
-            ))
+            segments.append(ScriptSegment(id=idx, text=f"第{idx}段文案。请根据主题补充具体内容。"))
 
         # Trim and reassign IDs
         segments = segments[:segment_count]

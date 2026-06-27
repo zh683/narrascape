@@ -3,6 +3,7 @@
 Reads script.yaml, calls MiniMax speech API, outputs to assets/tts/seg_*.mp3.
 Generates timing.json for downstream stages.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,12 +11,10 @@ import logging
 import re
 import subprocess
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_script
@@ -104,6 +103,7 @@ class GenerateTTSStage(Stage):
 
         # Budget check
         from narrascape.utils.budget import BudgetTracker
+
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
         est_cost = budget_tracker.get_cost_estimate("tts", ns)
         can_spend, budget_msg = budget_tracker.can_spend(est_cost)
@@ -124,7 +124,9 @@ class GenerateTTSStage(Stage):
         done = set(state.get("done", []))
 
         logger.info(f"TTS: {ns} segments, model={tts_cfg.model}, voice={tts_cfg.voice_id}")
-        logger.info(f"     speed={tts_cfg.speed}, pitch={tts_cfg.pitch}, rate={tts_cfg.sample_rate}Hz")
+        logger.info(
+            f"     speed={tts_cfg.speed}, pitch={tts_cfg.pitch}, rate={tts_cfg.sample_rate}Hz"
+        )
 
         global_dict = list(tts_cfg.pronunciation_dict) if tts_cfg.pronunciation_dict else []
 
@@ -172,9 +174,7 @@ class GenerateTTSStage(Stage):
 
             try:
                 data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{self.base_url}/v1/t2a_v2", data=data, method="POST"
-                )
+                req = urllib.request.Request(f"{self.base_url}/v1/t2a_v2", data=data, method="POST")
                 req.add_header("Authorization", f"Bearer {self.api_key}")
                 req.add_header("Content-Type", "application/json")
 
@@ -189,7 +189,13 @@ class GenerateTTSStage(Stage):
                     logger.error(f"FAIL: {r['base_resp']}")
                     state["errors"].append(f"seg_{sid}: {r['base_resp']}")
                 else:
-                    raw_hex = r["data"]["audio"].replace(" ", "").replace("\n", "").replace("\r", "").strip()
+                    raw_hex = (
+                        r["data"]["audio"]
+                        .replace(" ", "")
+                        .replace("\n", "")
+                        .replace("\r", "")
+                        .strip()
+                    )
                     raw = bytes.fromhex(raw_hex)
                     out.write_bytes(raw)
                     done.add(sid)
@@ -214,9 +220,18 @@ class GenerateTTSStage(Stage):
             mp3 = tts_dir / f"seg_{sid:02d}.mp3"
             if mp3.exists():
                 r = subprocess.run(
-                    [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
-                     "-of", "csv=p=0", str(mp3)],
-                    capture_output=True, text=True
+                    [
+                        ffprobe,
+                        "-v",
+                        "quiet",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "csv=p=0",
+                        str(mp3),
+                    ],
+                    capture_output=True,
+                    text=True,
                 )
                 try:
                     dur[str(sid)] = float(r.stdout.strip())
@@ -230,13 +245,19 @@ class GenerateTTSStage(Stage):
 
         total = sum(dur.values())
         errors = state.get("errors", [])
-        logger.info(f"Done: {len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s ({total / 60:.1f}min)")
+        logger.info(
+            f"Done: {len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s ({total / 60:.1f}min)"
+        )
 
         return StageResult(
             self.name,
             len(errors) == 0,
             message=f"{len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s",
-            metadata={"provider_selection": provider_meta, "total_seconds": total, "errors": errors},
+            metadata={
+                "provider_selection": provider_meta,
+                "total_seconds": total,
+                "errors": errors,
+            },
         )
 
     # ── Helpers ───────────────────────────
@@ -257,11 +278,16 @@ class GenerateTTSStage(Stage):
         frequency = 330 + (seg_id % 5) * 55
         run_ffmpeg(
             [
-                "-f", "lavfi",
-                "-i", f"sine=frequency={frequency}:duration={duration}:sample_rate=44100",
-                "-af", "volume=0.08",
-                "-c:a", "libmp3lame",
-                "-b:a", "128k",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency={frequency}:duration={duration}:sample_rate=44100",
+                "-af",
+                "volume=0.08",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
                 str(out),
             ],
             desc=f"local tts seg {seg_id}",
@@ -274,10 +300,10 @@ class GenerateTTSStage(Stage):
                 text = text.replace(pm.after, f"{pm.after}<#{pm.seconds}#>", 1)
             return text
         if tts_cfg.add_pauses:
-            text = re.sub(r'([。！？])\s*', r'\1<#1.0#>', text)
-            text = re.sub(r'(──|——)\s*', r'\1<#0.8#>', text)
-            text = re.sub(r'([；;])\s*', r'\1<#0.6#>', text)
-            text = re.sub(r'<#[\d.]+#>\s*$', '', text)
+            text = re.sub(r"([。！？])\s*", r"\1<#1.0#>", text)
+            text = re.sub(r"(──|——)\s*", r"\1<#0.8#>", text)
+            text = re.sub(r"([；;])\s*", r"\1<#0.6#>", text)
+            text = re.sub(r"<#[\d.]+#>\s*$", "", text)
         return text
 
     def _merge_pronunciations(self, global_dict: list[str], segment_dict: list[str]) -> list[str]:

@@ -4,16 +4,17 @@ Two modes:
 1. LLM mode (preferred): LLM deeply understands text, extracts emotion, scene, entities, visuals
 2. Rule-based fallback: keyword matching when no LLM is available
 """
+
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any
 
-from narrascape.llm import LLMClient, OutputValidator, is_assistant_bridge_provider
-from narrascape.llm.prompts import get_prompt
 from narrascape.agent.models import SegmentAnalysis
+from narrascape.config import Script, ScriptSegment
+from narrascape.llm import OutputValidator, is_assistant_bridge_provider
+from narrascape.llm.prompts import get_prompt
 
 logger = logging.getLogger("narrascape.agent.analyzer")
 
@@ -21,23 +22,127 @@ logger = logging.getLogger("narrascape.agent.analyzer")
 # ── Rule-based emotion lexicon (fallback only) ───────────────────────────
 
 EMOTION_WORDS = {
-    "calm": {"平静", "宁静", "安详", "柔和", "温暖", "calm", "peaceful", "serene", "gentle", "warm"},
-    "tense": {"紧张", "焦虑", "不安", "危机", "冲突", "tense", "anxious", "uneasy", "crisis", "conflict", "danger"},
-    "sad": {"悲伤", "痛苦", "绝望", "孤独", "凄凉", "sad", "pain", "despair", "lonely", "desolate", "mourn"},
-    "hopeful": {"希望", "光明", "未来", "重生", "期待", "hope", "light", "future", "rebirth", "expect", "new"},
-    "dramatic": {"戏剧", "震撼", "巨变", "转折", "高潮", "dramatic", "shock", "upheaval", "turning", "climax"},
-    "nostalgic": {"回忆", "过去", "童年", "旧时光", "nostalgic", "memory", "past", "childhood", "old days", "long ago"},
-    "awe": {"伟大", "崇高", "神圣", "敬畏", "震撼", "awe", "grand", "sublime", "sacred", "reverence", "magnificent"},
-    "mysterious": {"神秘", "未知", "迷雾", "秘密", "mysterious", "unknown", "mist", "secret", "enigma", "obscure"},
+    "calm": {
+        "平静",
+        "宁静",
+        "安详",
+        "柔和",
+        "温暖",
+        "calm",
+        "peaceful",
+        "serene",
+        "gentle",
+        "warm",
+    },
+    "tense": {
+        "紧张",
+        "焦虑",
+        "不安",
+        "危机",
+        "冲突",
+        "tense",
+        "anxious",
+        "uneasy",
+        "crisis",
+        "conflict",
+        "danger",
+    },
+    "sad": {
+        "悲伤",
+        "痛苦",
+        "绝望",
+        "孤独",
+        "凄凉",
+        "sad",
+        "pain",
+        "despair",
+        "lonely",
+        "desolate",
+        "mourn",
+    },
+    "hopeful": {
+        "希望",
+        "光明",
+        "未来",
+        "重生",
+        "期待",
+        "hope",
+        "light",
+        "future",
+        "rebirth",
+        "expect",
+        "new",
+    },
+    "dramatic": {
+        "戏剧",
+        "震撼",
+        "巨变",
+        "转折",
+        "高潮",
+        "dramatic",
+        "shock",
+        "upheaval",
+        "turning",
+        "climax",
+    },
+    "nostalgic": {
+        "回忆",
+        "过去",
+        "童年",
+        "旧时光",
+        "nostalgic",
+        "memory",
+        "past",
+        "childhood",
+        "old days",
+        "long ago",
+    },
+    "awe": {
+        "伟大",
+        "崇高",
+        "神圣",
+        "敬畏",
+        "震撼",
+        "awe",
+        "grand",
+        "sublime",
+        "sacred",
+        "reverence",
+        "magnificent",
+    },
+    "mysterious": {
+        "神秘",
+        "未知",
+        "迷雾",
+        "秘密",
+        "mysterious",
+        "unknown",
+        "mist",
+        "secret",
+        "enigma",
+        "obscure",
+    },
     "urgent": {"紧急", "迫切", " hurry", "urgent", "rush", "haste", "immediate", "pressing"},
 }
 
 SCENE_WORDS = {
-    "indoor": {"室内", "房间", "书房", "卧室", "教堂", "indoor", "room", "study", "bedroom", "church", "house"},
+    "indoor": {
+        "室内",
+        "房间",
+        "书房",
+        "卧室",
+        "教堂",
+        "indoor",
+        "room",
+        "study",
+        "bedroom",
+        "church",
+        "house",
+    },
     "outdoor": {"户外", "田野", "街道", "花园", "outdoor", "field", "street", "garden", "park"},
     "landscape": {"风景", "自然", "山水", "landscape", "nature", "mountain", "forest", "river"},
     "urban": {"城市", "街道", "建筑", "urban", "city", "building", "street", "architecture"},
-    "portrait": {"人物", "肖像", "肖像", "portrait", "person", "figure", "character"},
+    "portrait": {"人物", "肖像", "portrait", "person", "figure", "character"},
 }
 
 PACING_WORDS = {
@@ -87,13 +192,17 @@ class ScriptAnalyzer:
     def analyze(self, script: Script) -> list[SegmentAnalysis]:
         """Analyze all segments. LLM-first, one API call per segment (or batch in bridge mode)."""
         # Bridge mode: analyze all segments in one batch to reduce task files
-        if self.llm_client and getattr(self.llm_client, 'config', None) and is_assistant_bridge_provider(self.llm_client.config.provider):
+        if (
+            self.llm_client
+            and getattr(self.llm_client, "config", None)
+            and is_assistant_bridge_provider(self.llm_client.config.provider)
+        ):
             try:
                 return self._llm_analyze_batch(script)
             except Exception as e:
                 logger.error(f"Batch bridge analysis failed: {e}")
                 raise
-        
+
         results = []
         for seg in script.segments:
             analysis = self._analyze_segment(seg)
@@ -102,10 +211,8 @@ class ScriptAnalyzer:
 
     def _llm_analyze_batch(self, script: Script) -> list[SegmentAnalysis]:
         """Analyze all segments in a single LLM call (bridge mode optimization)."""
-        segments_text = "\n\n".join([
-            f"Segment {seg.id}: {seg.text}" for seg in script.segments
-        ])
-        
+        segments_text = "\n\n".join([f"Segment {seg.id}: {seg.text}" for seg in script.segments])
+
         prompt = f"""You are a cinematographer analyzing narration script segments for a documentary video.
 
 Analyze ALL segments below and return a JSON array with one analysis object per segment.
@@ -131,27 +238,27 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
 
         resp = self.llm_client.complete(prompt, json_mode=True)
         data = resp.extract_json()
-        
+
         if not isinstance(data, list):
             raise ValueError(f"Expected JSON array, got {type(data)}")
-        
+
         results = []
         for item in data:
-            results.append(SegmentAnalysis(
-                segment_id=item.get("segment_id", 0),
-                emotion=item.get("emotion", "calm"),
-                intensity=float(item.get("intensity", 0.5)),
-                scene_type=item.get("scene_type", "outdoor"),
-                key_entities=item.get("key_entities", []) or [],
-                visual_keywords=item.get("visual_keywords", []) or [],
-                pacing=item.get("pacing", "normal"),
-            ))
+            results.append(
+                SegmentAnalysis(
+                    segment_id=item.get("segment_id", 0),
+                    emotion=item.get("emotion", "calm"),
+                    intensity=float(item.get("intensity", 0.5)),
+                    scene_type=item.get("scene_type", "outdoor"),
+                    key_entities=item.get("key_entities", []) or [],
+                    visual_keywords=item.get("visual_keywords", []) or [],
+                    pacing=item.get("pacing", "normal"),
+                )
+            )
         return results
 
     def _analyze_segment(self, seg: ScriptSegment) -> SegmentAnalysis:
         """Analyze a single segment. LLM-first, fallback to rules."""
-        text = seg.text
-
         # ── LLM Analysis (preferred) ──
         if self.llm_client:
             try:
@@ -170,8 +277,13 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
         # Build validator
         validator = OutputValidator.combine(
             OutputValidator.has_keys(
-                "emotion", "intensity", "scene_type", "key_entities",
-                "visual_keywords", "pacing", "narrative_function"
+                "emotion",
+                "intensity",
+                "scene_type",
+                "key_entities",
+                "visual_keywords",
+                "pacing",
+                "narrative_function",
             ),
             OutputValidator.range_check("intensity", 0.0, 1.0),
             OutputValidator.non_empty("emotion"),
@@ -222,6 +334,7 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
 
 # ── Rule-based helpers (fallback) ───────────────────────────
 
+
 def _count_keywords(text: str, keyword_set: set[str]) -> int:
     text_lower = text.lower()
     count = 0
@@ -267,19 +380,46 @@ def _detect_pacing(text: str) -> str:
 
 
 def _extract_entities(text: str) -> list[str]:
-    cleaned = re.sub(r'[，。！？；：""''（）、\n\r\t]', ' ', text)
+    cleaned = re.sub(r'[，。！？；：""' "（）、\n\r\t]", " ", text)
     # Try word/phrase extraction: Chinese 2-4 chars, English 2-12 chars
-    words = re.findall(r'[\u4e00-\u9fff]{2,4}|\w{2,12}', cleaned)
+    words = re.findall(r"[\u4e00-\u9fff]{2,4}|\w{2,12}", cleaned)
     return [w.strip() for w in words if 2 <= len(w.strip()) <= 12][:5]
 
 
 def _extract_visual_keywords(text: str) -> list[str]:
     visual_words = {
-        "黄昏", "dusk", "golden", "golden hour", "sunset", "sunrise",
-        "雾", "fog", "mist", "雨", "rain", "雪", "snow",
-        "月光", "moonlight", "烛光", "candlelight", "火焰", "fire",
-        "阴影", "shadow", "光线", "light", "光束", "beam",
-        "寒冷", "cold", "温暖", "warm", "黑暗", "dark", "光明", "light",
+        "黄昏",
+        "dusk",
+        "golden",
+        "golden hour",
+        "sunset",
+        "sunrise",
+        "雾",
+        "fog",
+        "mist",
+        "雨",
+        "rain",
+        "雪",
+        "snow",
+        "月光",
+        "moonlight",
+        "烛光",
+        "candlelight",
+        "火焰",
+        "fire",
+        "阴影",
+        "shadow",
+        "光线",
+        "light",
+        "光束",
+        "beam",
+        "寒冷",
+        "cold",
+        "温暖",
+        "warm",
+        "黑暗",
+        "dark",
+        "光明",
     }
     found = []
     text_lower = text.lower()

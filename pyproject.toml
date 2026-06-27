@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "narrascape"
 dynamic = ["version"]
-description = "Production-grade video pipeline for book explainer and documentary content. Ken Burns, parallel rendering, content-hash caching, provider plugins."
+description = "Staged AI film-production pipeline with AI Director, film timeline assembly, QA, and rework loops."
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 authors = [
@@ -57,11 +57,10 @@ dev = [
 narrascape = "narrascape.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/calesthio/narrascape"
-Documentation = "https://narrascape.dev"
-Repository = "https://github.com/calesthio/narrascape"
-Issues = "https://github.com/calesthio/narrascape/issues"
-Discussions = "https://github.com/calesthio/narrascape/discussions"
+Homepage = "https://github.com/zh683/narrascape"
+Documentation = "https://github.com/zh683/narrascape/tree/main/docs"
+Repository = "https://github.com/zh683/narrascape"
+Issues = "https://github.com/zh683/narrascape/issues"
 
 [tool.hatch.version]
 path = "src/narrascape/__init__.py"
@@ -76,6 +75,8 @@ target-version = ["py310", "py311", "py312", "py313"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "F",   # Pyflakes
@@ -87,7 +88,21 @@ select = [
     "C4",  # flake8-comprehensions
     "SIM", # flake8-simplify
 ]
-ignore = ["E501"]
+ignore = [
+    "B007",   # allow descriptive loop variables in prototype diagnostics
+    "B017",   # broad exception assertions are used in compatibility tests
+    "B023",   # retry closures intentionally capture request objects
+    "B904",   # CLI raises typer.Exit after printing user-facing errors
+    "E501",
+    "E402",   # CLI keeps some imports near command helpers
+    "E741",   # keep legacy local naming until broader cleanup
+    "F841",   # allow in-progress diagnostic locals in prototype code
+    "N806",   # keep established math-style local names in motion code
+    "SIM102",
+    "SIM105",
+    "SIM108",
+    "SIM211",
+]
 
 [tool.mypy]
 python_version = "3.10"

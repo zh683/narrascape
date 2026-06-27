@@ -67,7 +67,7 @@ class EditingReviewStage(Stage):
         ]
 
     def _pacing(self, visual: list[dict[str, Any]], checks: dict[str, Any]) -> dict[str, Any]:
-        risk_segments = set(int(item) for item in checks.get("pacing_risk_segments", []) or [])
+        risk_segments = {int(item) for item in checks.get("pacing_risk_segments", []) or []}
         durations: list[dict[str, Any]] = []
         for clip in visual:
             try:

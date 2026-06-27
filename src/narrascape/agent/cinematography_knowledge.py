@@ -6,8 +6,8 @@ informed creative decisions rather than template-filling.
 
 Key principle: The LLM is the director. This file is the director's library.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 # ═══════════════════════════════════════════════════════════════════
 # Shot Type Knowledge
@@ -295,11 +295,17 @@ When designing images that will become keyframes for video generation (Sora, Run
 # ═══════════════════════════════════════════════════════════════════
 
 FULL_CINEMATOGRAPHY_KNOWLEDGE = (
-    SHOT_TYPE_KNOWLEDGE +
-    "\n" + CAMERA_LENS_KNOWLEDGE +
-    "\n" + LIGHTING_KNOWLEDGE +
-    "\n" + COMPOSITION_KNOWLEDGE +
-    "\n" + COLOR_ATMOSPHERE_KNOWLEDGE +
-    "\n" + NEGATIVE_PROMPT_KNOWLEDGE +
-    "\n" + VIDEO_FIRST_KNOWLEDGE
+    SHOT_TYPE_KNOWLEDGE
+    + "\n"
+    + CAMERA_LENS_KNOWLEDGE
+    + "\n"
+    + LIGHTING_KNOWLEDGE
+    + "\n"
+    + COMPOSITION_KNOWLEDGE
+    + "\n"
+    + COLOR_ATMOSPHERE_KNOWLEDGE
+    + "\n"
+    + NEGATIVE_PROMPT_KNOWLEDGE
+    + "\n"
+    + VIDEO_FIRST_KNOWLEDGE
 )

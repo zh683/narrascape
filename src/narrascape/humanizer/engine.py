@@ -7,11 +7,13 @@ Two modes:
 The LLM approach understands context and preserves meaning while removing AI
 patterns. The rule-based approach is a faster but less nuanced fallback.
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from narrascape.llm import LLMClient
 from narrascape.llm.prompts import get_prompt
@@ -31,7 +33,6 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"值得注意的是", ""),
     (r"系统具有处理的能力", "系统可以处理"),
     (r"可以潜在地可能被认为", ""),
-
     # 2. AI vocabulary
     (r"此外，", ""),
     (r"此外", ""),
@@ -50,7 +51,6 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"展示", "展现"),
     (r"宝贵的", "珍贵"),
     (r"充满活力的", "有活力的"),
-
     # 3. Grandiose symbolism
     (r"标志着.*?关键时刻", "是一个重要时刻"),
     (r"是.*?的体现", "体现了"),
@@ -67,7 +67,6 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"标志着.*?转变", "标志"),
     (r"不可磨灭的印记", "深刻印象"),
     (r"深深植根于", "根植于"),
-
     # 4. Propaganda language
     (r"拥有丰富的", "有"),
     (r"充满活力的", "有活力的"),
@@ -79,32 +78,27 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"位于.*?的中心", "在"),
     (r"开创性的", "创新的"),
     (r"著名的", "有名的"),
-
     # 5. Vague attribution
     (r"行业报告显示", ""),
     (r"观察者指出", ""),
     (r"专家认为", ""),
     (r"一些批评者认为", ""),
     (r"多个来源指出", ""),
-
     # 6. Challenge formula
     (r"尽管.*?面临若干挑战", ""),
     (r"尽管存在这些挑战", ""),
     (r"挑战与遗产", ""),
     (r"未来展望", ""),
-
     # 7. Copula avoidance
     (r"作为.*?的", "是"),
     (r"充当.*?的", "是"),
     (r"代表.*?的", "是"),
     (r"拥有", "有"),
     (r"设有", "有"),
-
     # 8. Negative parallelism
     (r"这不仅仅.*?而是", ""),
     (r"不仅.*?而且", ""),
     (r"不只是.*?更是", ""),
-
     # 9. Overused connectives
     (r"然而，", "不过"),
     (r"因此，", "所以"),
@@ -112,15 +106,12 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"总而言之", ""),
     (r"从这个角度来看", ""),
     (r"就.*?而言", ""),
-
     # 10. Dashes overuse
     (r"——", "，"),
     (r"—", "，"),
-
     # 11. Three-part lists (generic)
     (r"无缝、直观和强大", ""),
     (r"创新、灵感和行业洞察", ""),
-
     # 12. -ing superficial analysis
     (r"突出.*?了", "表现了"),
     (r"强调.*?了", "说明了"),
@@ -129,31 +120,26 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
     (r"培养.*?了", "培养了"),
     (r"涵盖.*?了", "涵盖"),
     (r"展示.*?了", "展示"),
-
     # 13. Collaboration traces
     (r"希望这对您有帮助", ""),
     (r"当然！", ""),
     (r"请告诉我", ""),
     (r"这是一个.*", ""),
-
     # 14. Knowledge cutoff
     (r"截至.*?，", ""),
     (r"根据我最后的训练更新", ""),
     (r"虽然具体细节有限", ""),
     (r"基于可用信息", ""),
-
     # 15. Flattery
     (r"好问题！", ""),
     (r"您说得完全正确", ""),
     (r"这是一个很好的观点", ""),
-
     # 16. Generic positive conclusion
     (r"未来看起来光明", ""),
     (r"激动人心的时代即将到来", ""),
     (r"向正确方向迈出的重要一步", ""),
     (r"继续追求卓越", ""),
     (r"不可或缺的一部分", ""),
-
     # 17. Empty intensifiers
     (r"非常地", "很"),
     (r"相当地", "比较"),
@@ -166,6 +152,7 @@ AI_PATTERNS: list[tuple[str, str | Callable]] = [
 # ═══════════════════════════════════════════════════════════
 # Humanizer Engine
 # ═══════════════════════════════════════════════════════════
+
 
 class HumanizerEngine:
     """AI pattern remover with LLM-first and rule-based fallback.
@@ -285,7 +272,7 @@ class HumanizerEngine:
                 comma = s.find("，", mid - 10, mid + 10)
                 if comma > 0:
                     result.append(s[:comma] + "。")
-                    result.append(s[comma + 1:])
+                    result.append(s[comma + 1 :])
                 else:
                     result.append(s)
             else:
@@ -297,7 +284,7 @@ class HumanizerEngine:
         # Remove leading/trailing punctuation
         text = text.strip("，。！？ \n")
         # Ensure text ends with proper punctuation
-        if text and not text[-1] in "。！？":
+        if text and text[-1] not in "。！？":
             text += "。"
         return text
 

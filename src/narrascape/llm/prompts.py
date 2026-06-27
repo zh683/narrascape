@@ -17,10 +17,10 @@ Research foundations:
 - XML structuring: OpenAI prompt engineering best practices 2025
 - Positive framing: Google Prompt Engineering Whitepaper 2024
 """
+
 from __future__ import annotations
 
 from narrascape.llm.models import PromptTemplate
-
 
 # ═══════════════════════════════════════════════════════════════════
 # RESEARCH STAGE PROMPTS
@@ -1131,5 +1131,7 @@ PROMPT_REGISTRY = {
 def get_prompt(name: str) -> PromptTemplate:
     """Get a prompt template by name."""
     if name not in PROMPT_REGISTRY:
-        raise ValueError(f"Unknown prompt template: {name}. Available: {list(PROMPT_REGISTRY.keys())}")
+        raise ValueError(
+            f"Unknown prompt template: {name}. Available: {list(PROMPT_REGISTRY.keys())}"
+        )
     return PROMPT_REGISTRY[name]

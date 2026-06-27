@@ -41,7 +41,9 @@ class TakeSelectStage(Stage):
         llm_used = False
         llm_errors: list[str] = []
         for segment_id, takes in candidates.items():
-            selection, used_llm, error = self._select_for_segment(segment_id, takes, qa_report, context)
+            selection, used_llm, error = self._select_for_segment(
+                segment_id, takes, qa_report, context
+            )
             selections.append(selection)
             llm_used = llm_used or used_llm
             if error:
@@ -139,21 +141,25 @@ class TakeSelectStage(Stage):
         else:
             reason = "highest QA proxy score; ready for LLM judge override"
 
-        return {
-            "segment_id": segment_id,
-            "selected_take": selected["id"],
-            "selected_path": f"assets/videos/{selected['id']}.mp4",
-            "reason": reason,
-            "candidates": [
-                {
-                    "take": item["id"],
-                    "path": f"assets/videos/{item['id']}.mp4",
-                    "score": item["score"],
-                    "bytes": item["bytes"],
-                }
-                for item in scored
-            ],
-        }, llm_used, llm_error
+        return (
+            {
+                "segment_id": segment_id,
+                "selected_take": selected["id"],
+                "selected_path": f"assets/videos/{selected['id']}.mp4",
+                "reason": reason,
+                "candidates": [
+                    {
+                        "take": item["id"],
+                        "path": f"assets/videos/{item['id']}.mp4",
+                        "score": item["score"],
+                        "bytes": item["bytes"],
+                    }
+                    for item in scored
+                ],
+            },
+            llm_used,
+            llm_error,
+        )
 
     def _ask_llm(
         self,

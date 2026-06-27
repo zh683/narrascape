@@ -33,14 +33,14 @@ from narrascape.config import (
     VisualConfig,
 )
 from narrascape.llm import LLMClient
-from narrascape.stages.base import StageContext
+from narrascape.stages.base import Stage
 from narrascape.stages.design import DesignStage
 from narrascape.stages.pre_production import PreProductionStage
-
 
 # ───────────────────────────────────────────────────────────────────
 # Test Fixtures
 # ───────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def temp_project():
@@ -83,6 +83,7 @@ def temp_project():
 # LLM Architecture Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestLLMArchitecture:
     """Test AI Assistant as built-in LLM."""
 
@@ -108,15 +109,17 @@ class TestLLMArchitecture:
         client = LLMClient.from_env()
         client.config.provider = "ai_assistant"
 
-        with patch.dict(
-            "os.environ",
-            {
-                "NARRASCAPE_BRIDGE_DIR": str(task_dir),
-                "NARRASCAPE_BRIDGE_TIMEOUT": "0",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "NARRASCAPE_BRIDGE_DIR": str(task_dir),
+                    "NARRASCAPE_BRIDGE_TIMEOUT": "0",
+                },
+            ),
+            pytest.raises(RuntimeError, match="Bridge timeout"),
         ):
-            with pytest.raises(RuntimeError, match="Bridge timeout"):
-                client.complete("Return JSON", json_mode=True)
+            client.complete("Return JSON", json_mode=True)
 
         pending_tasks = list((task_dir / "pending").glob("task_*.md"))
         assert len(pending_tasks) == 1
@@ -135,13 +138,13 @@ class TestLLMArchitecture:
         task_id = pending_tasks[0].stem.removeprefix("task_")
         response_file = tmp_path / "bridge" / "completed" / f"response_{task_id}.json"
         response_file.write_text(
-            json.dumps({"content": "[{\"ok\": true}]", "usage": {}}),
+            json.dumps({"content": '[{"ok": true}]', "usage": {}}),
             encoding="utf-8",
         )
 
         response = client.complete("Return a compact JSON array", json_mode=True)
 
-        assert response.content == "[{\"ok\": true}]"
+        assert response.content == '[{"ok": true}]'
         assert not pending_tasks[0].exists()
         assert not response_file.exists()
         assert (tmp_path / "bridge" / "archive" / pending_tasks[0].name).exists()
@@ -153,12 +156,13 @@ class TestLLMArchitecture:
         with patch.dict("os.environ", {}, clear=True):
             client = _get_llm_client(config=temp_project)
             assert client.config.provider == "ai_assistant"
-            assert (
-                __import__("os").environ["NARRASCAPE_BRIDGE_DIR"]
-                == str(temp_project.project_dir / ".narrascape" / "bridge")
+            assert __import__("os").environ["NARRASCAPE_BRIDGE_DIR"] == str(
+                temp_project.project_dir / ".narrascape" / "bridge"
             )
 
-    def test_cli_llm_client_uses_config_when_first_positional_argument_is_config(self, temp_project):
+    def test_cli_llm_client_uses_config_when_first_positional_argument_is_config(
+        self, temp_project
+    ):
         """Stage commands should not accidentally pass config as an API key."""
         from narrascape.cli import _get_llm_client
 
@@ -188,6 +192,7 @@ class TestLLMArchitecture:
 # Style Anchor Propagation Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestStyleAnchorPropagation:
     """Test style anchor propagation through the pipeline."""
 
@@ -201,7 +206,6 @@ class TestStyleAnchorPropagation:
 
     def test_to_image_prompts_includes_style_anchor(self):
         """to_image_prompts includes style_anchor in reference_images."""
-        from narrascape.agent.models import CharacterProfile
 
         report = DesignReport(
             project_title="test",
@@ -243,12 +247,12 @@ class TestStyleAnchorPropagation:
         )
         result = report.to_image_prompts()
         prompt = result["prompts"][0]
-        
+
         # Check reference_image_url (singular) when only style anchor
         # or reference_images (plural) when multiple refs
         has_ref = "reference_image_url" in prompt or "reference_images" in prompt
         assert has_ref, "No reference image field in prompt"
-        
+
         if "reference_images" in prompt:
             refs = prompt["reference_images"]
             assert refs[0] == "/anchor.png"
@@ -270,12 +274,14 @@ class TestStyleAnchorPropagation:
 # Stage Interface Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestStageInterfaceConsistency:
     """Test all Stage classes have consistent interface."""
 
     def test_all_stages_have_name_attribute(self):
         """All Stage subclasses have name as str."""
         import inspect
+
         import narrascape.stages
 
         for mod_name in dir(narrascape.stages):
@@ -301,6 +307,7 @@ class TestStageInterfaceConsistency:
     def test_all_stages_have_depends_on_attribute(self):
         """All Stage subclasses have depends_on as list."""
         import inspect
+
         import narrascape.stages
 
         for mod_name in dir(narrascape.stages):
@@ -317,7 +324,9 @@ class TestStageInterfaceConsistency:
                     ):
                         try:
                             instance = obj()
-                            assert isinstance(instance.depends_on, list), f"{name}.depends_on is not list"
+                            assert isinstance(
+                                instance.depends_on, list
+                            ), f"{name}.depends_on is not list"
                         except Exception:
                             pass
             except Exception:
@@ -328,12 +337,14 @@ class TestStageInterfaceConsistency:
 # Pipeline Dependency Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestPipelineDependencies:
     """Test pipeline dependency graph has no cycles."""
 
     def test_no_circular_dependencies(self):
         """Pipeline dependency graph has no cycles."""
         import inspect
+
         import narrascape.stages
 
         # Collect all stages and their dependencies
@@ -344,11 +355,7 @@ class TestPipelineDependencies:
             try:
                 mod = __import__(f"narrascape.stages.{mod_name}", fromlist=[""])
                 for name, obj in inspect.getmembers(mod):
-                    if (
-                        isinstance(obj, type)
-                        and issubclass(obj, Stage)
-                        and obj is not Stage
-                    ):
+                    if isinstance(obj, type) and issubclass(obj, Stage) and obj is not Stage:
                         try:
                             instance = obj()
                             stage_map[instance.name] = instance.depends_on
@@ -381,6 +388,7 @@ class TestPipelineDependencies:
 # Configuration Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestConfiguration:
     """Test configuration validation."""
 
@@ -412,6 +420,7 @@ class TestConfiguration:
 # ───────────────────────────────────────────────────────────────────
 # Data Model Tests
 # ───────────────────────────────────────────────────────────────────
+
 
 class TestDataModels:
     """Test core data models."""
@@ -460,6 +469,7 @@ class TestDataModels:
 # Style Consistency Seedream 5.0 Tests
 # ───────────────────────────────────────────────────────────────────
 
+
 class TestSeedream50StyleConsistency:
     """Test Seedream 5.0 style consistency mechanics."""
 
@@ -505,6 +515,7 @@ class TestSeedream50StyleConsistency:
 # ───────────────────────────────────────────────────────────────────
 # End-to-End Data Flow Test
 # ───────────────────────────────────────────────────────────────────
+
 
 class TestEndToEndDataFlow:
     """Test complete data flow from script to image prompts."""
@@ -558,14 +569,12 @@ class TestEndToEndDataFlow:
 
     def test_full_pipeline_stages(self, temp_project):
         """All pipeline stages can be instantiated."""
-        from narrascape.stages.pre_production import PreProductionStage
-        from narrascape.stages.design import DesignStage
-        from narrascape.stages.generate_images import GenerateImagesStage
-        from narrascape.stages.generate_video import GenerateVideoStage
-        from narrascape.stages.generate_tts import GenerateTTSStage
-        from narrascape.stages.kenburns import KenBurnsStage
-        from narrascape.stages.concat import ConcatStage
         from narrascape.stages.audio import AudioStage
+        from narrascape.stages.concat import ConcatStage
+        from narrascape.stages.generate_images import GenerateImagesStage
+        from narrascape.stages.generate_tts import GenerateTTSStage
+        from narrascape.stages.generate_video import GenerateVideoStage
+        from narrascape.stages.kenburns import KenBurnsStage
         from narrascape.stages.subtitles import SubtitleStage
 
         stages = [

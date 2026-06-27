@@ -17,6 +17,7 @@ Usage:
     PreProductionStage is automatically run before DesignStage in the pipeline.
     It can also be run standalone: narrascape pre_production
 """
+
 from __future__ import annotations
 
 import json
@@ -26,21 +27,19 @@ from typing import Any
 
 import yaml
 
+from narrascape.agent.models import (
+    CharacterReferenceImage,
+    CharacterReferenceSheet,
+    EnvironmentReference,
+    EnvironmentReferenceImage,
+    PreProductionReport,
+    Storyboard,
+    StoryboardFrame,
+)
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, Script, load_script
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_images import GenerateImagesStage
-from narrascape.agent import PromptDirector
-from narrascape.agent.models import (
-    CharacterReferenceImage,
-    CharacterReferenceSheet,
-    EnvironmentReferenceImage,
-    EnvironmentReference,
-    StoryboardFrame,
-    Storyboard,
-    PreProductionReport,
-)
-from narrascape.llm import LLMClient
 
 logger = logging.getLogger("narrascape.stages.pre_production")
 
@@ -48,6 +47,7 @@ logger = logging.getLogger("narrascape.stages.pre_production")
 # ═══════════════════════════════════════════════════════════════════
 # PreProductionStage
 # ═══════════════════════════════════════════════════════════════════
+
 
 class PreProductionStage(Stage):
     """Pre-production stage: character refs, environment refs, storyboard.
@@ -94,7 +94,6 @@ class PreProductionStage(Stage):
             return False, "ARK_API_KEY not found. Required for reference image generation."
         return True, ""
 
-
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         script = load_script(config.script_path)
@@ -112,22 +111,25 @@ class PreProductionStage(Stage):
         if config.images.provider.value == "local":
             storyboard = Storyboard(project_title=config.project.title)
             for seg in script.segments:
-                storyboard.frames.append(StoryboardFrame(
-                    frame_id=f"sb_{seg.id:02d}_01",
-                    segment_id=seg.id,
-                    frame_index=0,
-                    description=seg.text[:200],
-                    shot_type=(seg.shot_type.value if seg.shot_type else "medium"),
-                    camera_movement="static",
-                    camera_angle="eye-level",
-                    emotion="neutral",
-                    duration_hint=3.0,
-                ))
+                storyboard.frames.append(
+                    StoryboardFrame(
+                        frame_id=f"sb_{seg.id:02d}_01",
+                        segment_id=seg.id,
+                        frame_index=0,
+                        description=seg.text[:200],
+                        shot_type=(seg.shot_type.value if seg.shot_type else "medium"),
+                        camera_movement="static",
+                        camera_angle="eye-level",
+                        emotion="neutral",
+                        duration_hint=3.0,
+                    )
+                )
             storyboard.total_frames = len(storyboard.frames)
             storyboard.total_segments = len(script.segments)
             report = PreProductionReport(
                 project_title=config.project.title,
-                style_template=self.style_template or (config.images.style if config.images else "cinematic documentary"),
+                style_template=self.style_template
+                or (config.images.style if config.images else "cinematic documentary"),
                 storyboard=storyboard,
             )
             report_path = pipe_dir / "pre_production.yaml"
@@ -151,38 +153,52 @@ class PreProductionStage(Stage):
             )
 
         # ── Step 0: Generate unified style anchor (BEFORE any character or scene) ──
-        unified_style = self.style_template or (config.images.style if config.images else "cinematic documentary")
+        unified_style = self.style_template or (
+            config.images.style if config.images else "cinematic documentary"
+        )
         style_anchor_path, _ = self._generate_style_anchor(refs_dir, config)
         if style_anchor_path:
             logger.info(f"[pre_production] Style anchor: {style_anchor_path}")
         else:
-            logger.warning("[pre_production] No style anchor generated, character and scene references may have inconsistent styles")
+            logger.warning(
+                "[pre_production] No style anchor generated, character and scene references may have inconsistent styles"
+            )
 
         # ── Step 1: Extract characters and scenes from script via LLM ──
         characters_data, scenes_data = self._extract_characters_and_scenes(script, config)
-        logger.info(f"[pre_production] Extracted {len(characters_data)} characters, {len(scenes_data)} scenes")
+        logger.info(
+            f"[pre_production] Extracted {len(characters_data)} characters, {len(scenes_data)} scenes"
+        )
 
         # ── Step 2: Generate character reference images (with style anchor) ──
         character_sheets = []
         for char_data in characters_data:
             sheet = self._generate_character_reference(
-                char_data, refs_dir, config,
+                char_data,
+                refs_dir,
+                config,
                 style_anchor_path=style_anchor_path,
                 unified_style=unified_style,
             )
             character_sheets.append(sheet)
-            logger.info(f"[pre_production] Character reference: {sheet.char_id} -> {sheet.primary_reference_path}")
+            logger.info(
+                f"[pre_production] Character reference: {sheet.char_id} -> {sheet.primary_reference_path}"
+            )
 
         # ── Step 3: Generate environment reference images (with style anchor) ──
         environment_refs = []
         for scene_data in scenes_data:
             env = self._generate_environment_reference(
-                scene_data, refs_dir, config,
+                scene_data,
+                refs_dir,
+                config,
                 style_anchor_path=style_anchor_path,
                 unified_style=unified_style,
             )
             environment_refs.append(env)
-            logger.info(f"[pre_production] Environment reference: {env.scene_id} -> {env.primary_reference_path}")
+            logger.info(
+                f"[pre_production] Environment reference: {env.scene_id} -> {env.primary_reference_path}"
+            )
 
         # ── Step 4: Generate storyboard ──
         storyboard = Storyboard(project_title=config.project.title)
@@ -190,12 +206,15 @@ class PreProductionStage(Stage):
             storyboard = self._generate_storyboard(
                 script, character_sheets, environment_refs, config
             )
-            logger.info(f"[pre_production] Storyboard: {storyboard.total_frames} frames across {storyboard.total_segments} segments")
+            logger.info(
+                f"[pre_production] Storyboard: {storyboard.total_frames} frames across {storyboard.total_segments} segments"
+            )
 
         # ── Build report ──
         report = PreProductionReport(
             project_title=config.project.title,
-            style_template=self.style_template or (config.images.style if config.images else "cinematic documentary"),
+            style_template=self.style_template
+            or (config.images.style if config.images else "cinematic documentary"),
             characters=character_sheets,
             environments=environment_refs,
             storyboard=storyboard,
@@ -231,11 +250,11 @@ class PreProductionStage(Stage):
     ) -> tuple[list[dict], list[dict]]:
         """Extract characters and key scenes from the script using the configured LLM."""
         # Build script text for LLM analysis
-        script_text = "\n\n".join(
-            f"Segment {seg.id}:\n{seg.text}" for seg in script.segments
-        )
+        script_text = "\n\n".join(f"Segment {seg.id}:\n{seg.text}" for seg in script.segments)
 
-        style = self.style_template or (config.images.style if config.images else "cinematic documentary")
+        style = self.style_template or (
+            config.images.style if config.images else "cinematic documentary"
+        )
 
         prompt = f"""Analyze the following narration script and extract:
 1. CHARACTERS: All distinct characters/entities with visual descriptions
@@ -291,18 +310,21 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             content = response.content if hasattr(response, "content") else str(response)
             # Try to find JSON block
             import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
             else:
                 data = json.loads(content)
 
-            characters = data.get("characters", [])[:self.max_characters]
-            scenes = data.get("scenes", [])[:self.max_scenes]
+            characters = data.get("characters", [])[: self.max_characters]
+            scenes = data.get("scenes", [])[: self.max_scenes]
             return characters, scenes
         except Exception as e:
             logger.error(f"Failed to extract characters/scenes via LLM: {e}")
-            raise RuntimeError(f"LLM extraction failed: {e}. An LLM or AI Assistant bridge response is required for character/scene extraction.") from e
+            raise RuntimeError(
+                f"LLM extraction failed: {e}. An LLM or AI Assistant bridge response is required for character/scene extraction."
+            ) from e
 
     # ── Step 0: Generate unified style anchor ───────────────────────────
 
@@ -316,7 +338,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         - The reference image defines the overall visual style (tone, lighting, rendering quality)
         - Prompt must explicitly reference the image (e.g., "reference image 1's style")
         - Low sample_strength (0.2-0.4) for style-only migration, high (0.6-0.8) for content+style
-        
+
         This image is a simple still-life/nature scene without characters. It establishes:
         - Art style (realistic, painterly, anime, etc.)
         - Color palette
@@ -324,8 +346,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         - Texture level
         - Rendering style
         """
-        style = self.style_template or (config.images.style if config.images else "cinematic documentary")
-        
+        style = self.style_template or (
+            config.images.style if config.images else "cinematic documentary"
+        )
+
         # CRITICAL: The prompt must be a complete, self-contained image description.
         # Seedream 5.0 uses the reference image for style migration, but the prompt
         # must still describe a coherent image. Avoid "style-only" prompts that
@@ -340,7 +364,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             f"no people, no characters, no text, no logos, "
             f"clean background, subtle shadows, warm and cool color balance"
         )
-        
+
         anchor_name = "style_anchor"
         anchor_path = refs_dir / f"{anchor_name}.png"
 
@@ -353,7 +377,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             model=self.image_model,
             uploader_backend="base64",
         )
-        
+
         # Seedream 5.0: no reference for the anchor itself, but use seed for consistency
         # Use a fixed seed for reproducibility if possible (seedream 5.0 supports seed)
         anchor_ok = img_gen._generate_one(
@@ -371,14 +395,20 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             logger.info(f"[pre_production] Generated style anchor: {anchor_path}")
             return str(anchor_path), style
         else:
-            logger.warning(f"[pre_production] Failed to generate style anchor, proceeding without it")
+            logger.warning(
+                "[pre_production] Failed to generate style anchor, proceeding without it"
+            )
             return None, style
 
     # ── Step 2: Generate character references ───────────────────────────
 
     def _generate_character_reference(
-        self, char_data: dict, refs_dir: Path, config: NarrascapeConfig,
-        style_anchor_path: str | None = None, unified_style: str = "cinematic documentary"
+        self,
+        char_data: dict,
+        refs_dir: Path,
+        config: NarrascapeConfig,
+        style_anchor_path: str | None = None,
+        unified_style: str = "cinematic documentary",
     ) -> CharacterReferenceSheet:
         """Generate a complete reference sheet for a single character.
 
@@ -466,10 +496,14 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                 turn_name = f"char_{char_id}_{turn_type}"
                 turn_path = refs_dir / f"{turn_name}.png"
                 if turn_path.exists():
-                    sheet.turn_images.append(CharacterReferenceImage(
-                        image_id=turn_name, image_type=turn_type,
-                        local_path=str(turn_path), description=f"{view_desc} for {name}",
-                    ))
+                    sheet.turn_images.append(
+                        CharacterReferenceImage(
+                            image_id=turn_name,
+                            image_type=turn_type,
+                            local_path=str(turn_path),
+                            description=f"{view_desc} for {name}",
+                        )
+                    )
                     continue
 
                 # CRITICAL: Use BOTH style_anchor + character_anchor for consistency
@@ -479,7 +513,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     turn_refs.append(style_anchor_path)
                 if sheet.primary_reference_path:
                     turn_refs.append(sheet.primary_reference_path)
-                
+
                 turn_prompt = (
                     f"参考图1的风格和色调，"
                     f"参考图2中的同一个人，{identity}，"
@@ -499,12 +533,17 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     sample_strength=0.7,  # Higher: keep character identity + style
                 )
                 if turn_ok:
-                    sheet.turn_images.append(CharacterReferenceImage(
-                        image_id=turn_name, image_type=turn_type,
-                        local_path=str(turn_path), prompt=turn_prompt,
-                        model=sheet.seedream_model, sample_strength=sheet.seedream_sample_strength,
-                        description=f"{view_desc} for {name}",
-                    ))
+                    sheet.turn_images.append(
+                        CharacterReferenceImage(
+                            image_id=turn_name,
+                            image_type=turn_type,
+                            local_path=str(turn_path),
+                            prompt=turn_prompt,
+                            model=sheet.seedream_model,
+                            sample_strength=sheet.seedream_sample_strength,
+                            description=f"{view_desc} for {name}",
+                        )
+                    )
 
         # ── 2.3 Key expressions (表情图) ──
         if self.generate_expressions and sheet.primary_reference_path:
@@ -513,10 +552,14 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                 expr_name = f"char_{char_id}_expr_{expr}"
                 expr_path = refs_dir / f"{expr_name}.png"
                 if expr_path.exists():
-                    sheet.expression_images.append(CharacterReferenceImage(
-                        image_id=expr_name, image_type=f"expression_{expr}",
-                        local_path=str(expr_path), description=f"{expr} expression for {name}",
-                    ))
+                    sheet.expression_images.append(
+                        CharacterReferenceImage(
+                            image_id=expr_name,
+                            image_type=f"expression_{expr}",
+                            local_path=str(expr_path),
+                            description=f"{expr} expression for {name}",
+                        )
+                    )
                     continue
 
                 # CRITICAL: Use BOTH style_anchor + character_anchor
@@ -525,7 +568,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     expr_refs.append(style_anchor_path)
                 if sheet.primary_reference_path:
                     expr_refs.append(sheet.primary_reference_path)
-                
+
                 expr_prompt = (
                     f"参考图1的风格和色调，"
                     f"参考图2中的同一个人，{identity}，"
@@ -546,20 +589,29 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     sample_strength=0.7,  # Higher: keep character identity + style
                 )
                 if expr_ok:
-                    sheet.expression_images.append(CharacterReferenceImage(
-                        image_id=expr_name, image_type=f"expression_{expr}",
-                        local_path=str(expr_path), prompt=expr_prompt,
-                        model=sheet.seedream_model, sample_strength=sheet.seedream_sample_strength,
-                        description=f"{expr} expression for {name}",
-                    ))
+                    sheet.expression_images.append(
+                        CharacterReferenceImage(
+                            image_id=expr_name,
+                            image_type=f"expression_{expr}",
+                            local_path=str(expr_path),
+                            prompt=expr_prompt,
+                            model=sheet.seedream_model,
+                            sample_strength=sheet.seedream_sample_strength,
+                            description=f"{expr} expression for {name}",
+                        )
+                    )
 
         return sheet
 
     # ── Step 3: Generate environment references ───────────────────────────
 
     def _generate_environment_reference(
-        self, scene_data: dict, refs_dir: Path, config: NarrascapeConfig,
-        style_anchor_path: str | None = None, unified_style: str = "cinematic documentary"
+        self,
+        scene_data: dict,
+        refs_dir: Path,
+        config: NarrascapeConfig,
+        style_anchor_path: str | None = None,
+        unified_style: str = "cinematic documentary",
     ) -> EnvironmentReference:
         """Generate reference images for a single environment/scene.
 
@@ -625,11 +677,16 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             )
 
         if mood_ok:
-            env.mood_images.append(EnvironmentReferenceImage(
-                image_id=mood_name, image_type="mood",
-                local_path=str(mood_path), prompt=mood_prompt,
-                model=self.image_model, description=f"氛围图 for {scene_name}",
-            ))
+            env.mood_images.append(
+                EnvironmentReferenceImage(
+                    image_id=mood_name,
+                    image_type="mood",
+                    local_path=str(mood_path),
+                    prompt=mood_prompt,
+                    model=self.image_model,
+                    description=f"氛围图 for {scene_name}",
+                )
+            )
             env.primary_reference_path = str(mood_path)
 
         # ── 3.2 Landmark image (地标图) ──
@@ -660,16 +717,25 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     sample_strength=0.3,  # Low: only extract style, not content
                 )
                 if landmark_ok:
-                    env.landmark_images.append(EnvironmentReferenceImage(
-                        image_id=landmark_name, image_type="landmark",
-                        local_path=str(landmark_path), prompt=landmark_prompt,
-                        model=self.image_model, description=f"地标图 for {scene_name}",
-                    ))
+                    env.landmark_images.append(
+                        EnvironmentReferenceImage(
+                            image_id=landmark_name,
+                            image_type="landmark",
+                            local_path=str(landmark_path),
+                            prompt=landmark_prompt,
+                            model=self.image_model,
+                            description=f"地标图 for {scene_name}",
+                        )
+                    )
             else:
-                env.landmark_images.append(EnvironmentReferenceImage(
-                    image_id=landmark_name, image_type="landmark",
-                    local_path=str(landmark_path), description=f"地标图 for {scene_name}",
-                ))
+                env.landmark_images.append(
+                    EnvironmentReferenceImage(
+                        image_id=landmark_name,
+                        image_type="landmark",
+                        local_path=str(landmark_path),
+                        description=f"地标图 for {scene_name}",
+                    )
+                )
 
         return env
 
@@ -687,31 +753,37 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         For each script segment, generate 1-3 storyboard frames that describe
         the visual composition, camera movement, and character positions.
         """
-        style = self.style_template or (config.images.style if config.images else "cinematic documentary")
+        style = self.style_template or (
+            config.images.style if config.images else "cinematic documentary"
+        )
 
         # Build character reference summary for LLM
         char_summary = []
         for sheet in character_sheets:
-            char_summary.append({
-                "char_id": sheet.char_id,
-                "name": sheet.name,
-                "identity": sheet.identity_block,
-                "reference_path": sheet.primary_reference_path,
-            })
+            char_summary.append(
+                {
+                    "char_id": sheet.char_id,
+                    "name": sheet.name,
+                    "identity": sheet.identity_block,
+                    "reference_path": sheet.primary_reference_path,
+                }
+            )
 
         # Build scene reference summary for LLM
         scene_summary = []
         for env in environment_refs:
-            scene_summary.append({
-                "scene_id": env.scene_id,
-                "scene_name": env.scene_name,
-                "scene_type": env.scene_type,
-                "reference_path": env.primary_reference_path,
-                "time_of_day": env.time_of_day,
-                "weather": env.weather,
-                "lighting": env.lighting_signature,
-                "color_palette": env.color_palette,
-            })
+            scene_summary.append(
+                {
+                    "scene_id": env.scene_id,
+                    "scene_name": env.scene_name,
+                    "scene_type": env.scene_type,
+                    "reference_path": env.primary_reference_path,
+                    "time_of_day": env.time_of_day,
+                    "weather": env.weather,
+                    "lighting": env.lighting_signature,
+                    "color_palette": env.color_palette,
+                }
+            )
 
         storyboard = Storyboard(project_title=config.project.title)
         total_frames = 0
@@ -769,7 +841,8 @@ Guidelines:
                 response = self.llm_client.complete(prompt)
                 content = response.content if hasattr(response, "content") else str(response)
                 import re
-                json_match = re.search(r'\{{.*?\}}', content, re.DOTALL)
+
+                json_match = re.search(r"\{{.*?\}}", content, re.DOTALL)
                 if json_match:
                     data = json.loads(json_match.group())
                 else:
@@ -799,15 +872,17 @@ Guidelines:
             except Exception as e:
                 logger.error(f"Failed to generate storyboard for segment {seg_id}: {e}")
                 # Fallback: create a single frame with the segment text
-                storyboard.frames.append(StoryboardFrame(
-                    frame_id=f"sb_{seg_id:02d}_01",
-                    segment_id=seg_id,
-                    frame_index=0,
-                    description=seg_text[:200],
-                    shot_type="medium",
-                    emotion="neutral",
-                    duration_hint=3.0,
-                ))
+                storyboard.frames.append(
+                    StoryboardFrame(
+                        frame_id=f"sb_{seg_id:02d}_01",
+                        segment_id=seg_id,
+                        frame_index=0,
+                        description=seg_text[:200],
+                        shot_type="medium",
+                        emotion="neutral",
+                        duration_hint=3.0,
+                    )
+                )
                 total_frames += 1
 
         storyboard.total_frames = total_frames

@@ -4,12 +4,23 @@ import logging
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
 
-from narrascape.config import ImageMap, ImagePrompts, NarrascapeConfig, MovementType, Script, ShotType, SupersampleMode, VisualConfig
-from narrascape.motion import MotionParams, MotionResult, build_motion_engine, compute_zoom_range, derive_movement, derive_size, derive_zoom_magnitude
+from narrascape.config import (
+    ImagePrompts,
+    NarrascapeConfig,
+    ShotType,
+    SupersampleMode,
+)
+from narrascape.motion import (
+    MotionParams,
+    MotionResult,
+    build_motion_engine,
+    compute_zoom_range,
+    derive_movement,
+    derive_zoom_magnitude,
+)
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
+from narrascape.utils.ffmpeg import run_ffmpeg
 
 logger = logging.getLogger("narrascape.stages.kenburns")
 
@@ -34,10 +45,18 @@ def _render_segment(
     if not img_ids:
         ok = run_ffmpeg(
             [
-                "-f", "lavfi",
-                "-i", f"color=c=black:s={config.encode.width}x{config.encode.height}:d={dur}:r={config.encode.fps}",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-                "-pix_fmt", "yuv420p",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s={config.encode.width}x{config.encode.height}:d={dur}:r={config.encode.fps}",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
                 str(seg_video),
             ],
             desc=f"black seg {seg_id}",
@@ -58,9 +77,7 @@ def _render_segment(
         )
 
     # Multi-image segment: render each part, then concat
-    return _render_multi_image(
-        seg_id, img_ids, timing, dur, prompts, config, supersample, seg_dir
-    )
+    return _render_multi_image(seg_id, img_ids, timing, dur, prompts, config, supersample, seg_dir)
 
 
 def _render_single_image(
@@ -241,6 +258,7 @@ class KenBurnsStage(Stage):
         durations: dict[str, float] = {}
         if timing_path.exists():
             import json
+
             durations = json.loads(timing_path.read_text(encoding="utf-8"))
         else:
             logger.warning("timing.json not found, using default 30s per segment")
@@ -272,8 +290,7 @@ class KenBurnsStage(Stage):
         with ProcessPoolExecutor(max_workers=max(1, min(4, len(work_items)))) as executor:
             futures = {
                 executor.submit(
-                    _render_segment,
-                    seg_id, images, timing, durations, prompts, config, supersample
+                    _render_segment, seg_id, images, timing, durations, prompts, config, supersample
                 ): seg_id
                 for seg_id, images, timing in work_items
             }

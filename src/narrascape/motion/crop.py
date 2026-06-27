@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from narrascape.motion.base import MotionEngine, MotionParams, MotionResult
 from narrascape.utils.ffmpeg import run_ffmpeg
@@ -22,8 +21,14 @@ class CropEngine(MotionEngine):
 
     def can_handle(self, params: MotionParams) -> bool:
         return params.movement in (
-            "pan_left", "pan_right", "pan_up", "pan_down",
-            "tilt_up", "tilt_down", "drift", "still",
+            "pan_left",
+            "pan_right",
+            "pan_up",
+            "pan_down",
+            "tilt_up",
+            "tilt_down",
+            "drift",
+            "still",
         )
 
     def generate(self, params: MotionParams) -> MotionResult:
@@ -33,27 +38,19 @@ class CropEngine(MotionEngine):
 
         if params.movement == "pan_left":
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})*t/{params.duration:.3f}':"
-                f"y='(in_h-{h})/2'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})*t/{params.duration:.3f}':" f"y='(in_h-{h})/2'"
             )
         elif params.movement == "pan_right":
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})*(1-t/{params.duration:.3f})':"
-                f"y='(in_h-{h})/2'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})*(1-t/{params.duration:.3f})':" f"y='(in_h-{h})/2'"
             )
         elif params.movement == "pan_up":
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})/2':"
-                f"y='(in_h-{h})*(1-t/{params.duration:.3f})'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*(1-t/{params.duration:.3f})'"
             )
         elif params.movement == "pan_down":
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})/2':"
-                f"y='(in_h-{h})*t/{params.duration:.3f}'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*t/{params.duration:.3f}'"
             )
         elif params.movement == "tilt_up":
             # Tilt-up: more dramatic vertical pan + slight zoom (start lower, end higher)
@@ -77,21 +74,33 @@ class CropEngine(MotionEngine):
                 f"y='(in_h-{h})*(0.15*(1-t/{params.duration:.3f}))'"
             )
         else:  # still
-            crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})/2':y='(in_h-{h})/2'"
-            )
+            crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})/2':y='(in_h-{h})/2'"
 
         vf = f"{pre_scale}{crop_expr},{self._build_fade_vf(params)}"
 
-        ok = run_ffmpeg([
-            "-loop", "1", "-i", str(params.image_path),
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-t", str(params.duration),
-            str(params.output_path),
-        ], desc=f"crop {params.movement.value}", validate_output=True)
+        ok = run_ffmpeg(
+            [
+                "-loop",
+                "1",
+                "-i",
+                str(params.image_path),
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                str(params.duration),
+                str(params.output_path),
+            ],
+            desc=f"crop {params.movement.value}",
+            validate_output=True,
+        )
 
         return MotionResult(
             output_path=params.output_path,

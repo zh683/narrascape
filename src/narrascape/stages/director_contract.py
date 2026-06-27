@@ -33,7 +33,10 @@ class DirectorContractStage(Stage):
         output = config.pipeline_dir / "director_contract.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
         design = self._load_yaml(
-            self._first_existing(config.project_dir / "design_report.yaml", config.pipeline_dir / "design_report.yaml")
+            self._first_existing(
+                config.project_dir / "design_report.yaml",
+                config.pipeline_dir / "design_report.yaml",
+            )
         )
         structure = self._load_yaml(config.pipeline_dir / "screenplay_structure.yaml")
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
@@ -45,7 +48,9 @@ class DirectorContractStage(Stage):
         llm_error = ""
         if self.llm_client:
             try:
-                shots = self._shots_from_llm(design, structure, continuity, storyboard_by_segment, context)
+                shots = self._shots_from_llm(
+                    design, structure, continuity, storyboard_by_segment, context
+                )
                 llm_status = "used"
             except Exception as exc:
                 shots = self._compile_locally(design_by_segment, storyboard_by_segment, context)
@@ -58,7 +63,11 @@ class DirectorContractStage(Stage):
             "schema_version": "director_contract.v1",
             "project": {"name": config.project.name, "title": config.project.title},
             "compile_process": {
-                "mode": "llm_prompt_compiler" if llm_status == "used" else "deterministic_prompt_compiler",
+                "mode": (
+                    "llm_prompt_compiler"
+                    if llm_status == "used"
+                    else "deterministic_prompt_compiler"
+                ),
                 "llm_status": llm_status,
                 "llm_error": llm_error,
             },
@@ -126,8 +135,15 @@ class DirectorContractStage(Stage):
         for segment in context.script.segments:
             segment_id = int(segment.id)
             design_item = design_by_segment.get(segment_id, {})
-            metadata = design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
-            story_reason = design_item.get("director_vision") or f"Translate the narration into a clear cinematic beat: {segment.text}"
+            metadata = (
+                design_item.get("metadata", {})
+                if isinstance(design_item.get("metadata"), dict)
+                else {}
+            )
+            story_reason = (
+                design_item.get("director_vision")
+                or f"Translate the narration into a clear cinematic beat: {segment.text}"
+            )
             emotional_target = design_item.get("emotion") or "focused"
             shot_type = design_item.get("shot_type") or "medium"
             movement = design_item.get("movement") or "still"
@@ -136,7 +152,10 @@ class DirectorContractStage(Stage):
             location = design_item.get("location_id") or "story location"
             characters = self._characters_from_design(design_item)
             image_prompt = design_item.get("image_prompt") or segment.text
-            negative = metadata.get("negative_prompt") or "text, watermark, low quality, inconsistent character, extra characters"
+            negative = (
+                metadata.get("negative_prompt")
+                or "text, watermark, low quality, inconsistent character, extra characters"
+            )
             storyboard_binding = self._storyboard_binding(
                 segment_id,
                 design_item,
@@ -161,7 +180,8 @@ class DirectorContractStage(Stage):
                         "shot_type": shot_type,
                         "camera_motion": movement,
                         "lighting": lighting,
-                        "composition": metadata.get("composition") or "composition serves the story beat",
+                        "composition": metadata.get("composition")
+                        or "composition serves the story beat",
                     },
                     "continuity_constraints": {
                         "characters": characters,
@@ -195,13 +215,23 @@ class DirectorContractStage(Stage):
         design_item = design_by_segment.get(segment_id, {})
         generation = shot.get("generation", {}) if isinstance(shot.get("generation"), dict) else {}
         qa = shot.get("qa", {}) if isinstance(shot.get("qa"), dict) else {}
-        film_language = shot.get("film_language", {}) if isinstance(shot.get("film_language"), dict) else {}
-        continuity = shot.get("continuity_constraints", {}) if isinstance(shot.get("continuity_constraints"), dict) else {}
+        film_language = (
+            shot.get("film_language", {}) if isinstance(shot.get("film_language"), dict) else {}
+        )
+        continuity = (
+            shot.get("continuity_constraints", {})
+            if isinstance(shot.get("continuity_constraints"), dict)
+            else {}
+        )
         storyboard_binding = self._storyboard_binding(
             segment_id,
             design_item,
             storyboard_by_segment.get(segment_id, []),
-            shot.get("storyboard_binding", {}) if isinstance(shot.get("storyboard_binding"), dict) else {},
+            (
+                shot.get("storyboard_binding", {})
+                if isinstance(shot.get("storyboard_binding"), dict)
+                else {}
+            ),
         )
         return {
             "segment_id": segment_id,
@@ -253,7 +283,9 @@ class DirectorContractStage(Stage):
     def _characters_from_design(self, design_item: dict[str, Any]) -> list[str]:
         return list(design_item.get("character_ids") or design_item.get("character_refs") or [])
 
-    def _storyboard_by_segment(self, pre_production: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    def _storyboard_by_segment(
+        self, pre_production: dict[str, Any]
+    ) -> dict[int, list[dict[str, Any]]]:
         frames = pre_production.get("storyboard", {}).get("frames", []) or []
         result: dict[int, list[dict[str, Any]]] = {}
         for frame in frames:
@@ -273,7 +305,9 @@ class DirectorContractStage(Stage):
         frames: list[dict[str, Any]],
         existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        metadata = design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+        metadata = (
+            design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+        )
         existing = existing or {}
         frame_ids = self._list_or(
             existing.get("storyboard_frame_ids"),
@@ -283,7 +317,9 @@ class DirectorContractStage(Stage):
             existing.get("character_positions"),
             [pos for frame in frames for pos in (frame.get("character_positions") or [])],
         )
-        scene_ref = existing.get("scene_ref") or self._first_value(frame.get("scene_ref") for frame in frames)
+        scene_ref = existing.get("scene_ref") or self._first_value(
+            frame.get("scene_ref") for frame in frames
+        )
         composition_requirements = self._list_or(
             existing.get("composition_requirements"),
             [
@@ -319,7 +355,9 @@ class DirectorContractStage(Stage):
         if binding.get("character_positions"):
             parts.append(f"Character positions: {', '.join(binding['character_positions'])}.")
         if binding.get("composition_requirements"):
-            parts.append(f"Composition requirements: {', '.join(binding['composition_requirements'])}.")
+            parts.append(
+                f"Composition requirements: {', '.join(binding['composition_requirements'])}."
+            )
         return " ".join(part for part in parts if part).strip()
 
     def _list_or(self, value: Any, fallback: list[Any]) -> list[str]:

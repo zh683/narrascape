@@ -139,9 +139,7 @@ class QAStage(Stage):
             checks["duration_within_tolerance"] = abs(actual - expected) <= tolerance
             checks["duration_delta_seconds"] = round(actual - expected, 3)
             if not checks["duration_within_tolerance"]:
-                errors.append(
-                    f"duration mismatch: expected {expected:.1f}s, got {actual:.1f}s"
-                )
+                errors.append(f"duration mismatch: expected {expected:.1f}s, got {actual:.1f}s")
 
         audio = self._detect_silence(final)
         checks["audio_analysis"] = audio
@@ -179,7 +177,9 @@ class QAStage(Stage):
             total = sum(float(value) for value in durations.values())
             segments = list(context.script.segments)
             for seg in segments[:-1]:
-                total += context.config.visual.gap_map.get(seg.id, context.config.visual.segment_gap)
+                total += context.config.visual.gap_map.get(
+                    seg.id, context.config.visual.segment_gap
+                )
             if context.config.ending.enabled:
                 total += context.config.ending.duration
             return round(total, 3)
@@ -333,7 +333,9 @@ class QAStage(Stage):
             if clip.get("segment_id") is not None
         }
         missing_visual = sorted(set(segment_ids) - covered_segments)
-        generated_video_segments = set(timeline.get("coverage", {}).get("generated_video_segments", []))
+        generated_video_segments = set(
+            timeline.get("coverage", {}).get("generated_video_segments", [])
+        )
         missing_generated_video = sorted(set(segment_ids) - generated_video_segments)
         missing_video_clips = self._missing_video_clip_segments(context, visual_clips)
         continuity_segments = self._continuity_risk_segments(visual_clips)
@@ -350,7 +352,9 @@ class QAStage(Stage):
             "pacing_risk_segments": pacing_segments,
         }
 
-    def _missing_video_clip_segments(self, context: StageContext, clips: list[dict[str, Any]]) -> list[int]:
+    def _missing_video_clip_segments(
+        self, context: StageContext, clips: list[dict[str, Any]]
+    ) -> list[int]:
         missing: list[int] = []
         for clip in clips:
             if clip.get("source") not in ("generated_video", "source_media"):
@@ -371,8 +375,14 @@ class QAStage(Stage):
             if previous:
                 previous_chars = set(previous.get("character_ids") or [])
                 current_chars = set(clip.get("character_ids") or [])
-                same_characters = previous_chars and current_chars and previous_chars == current_chars
-                location_changed = previous.get("location_id") and clip.get("location_id") and previous.get("location_id") != clip.get("location_id")
+                same_characters = (
+                    previous_chars and current_chars and previous_chars == current_chars
+                )
+                location_changed = (
+                    previous.get("location_id")
+                    and clip.get("location_id")
+                    and previous.get("location_id") != clip.get("location_id")
+                )
                 if same_characters and location_changed:
                     risks.append(int(clip.get("segment_id")))
             previous = clip

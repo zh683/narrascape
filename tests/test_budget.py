@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Tests for budget tracker."""
+
 from __future__ import annotations
 
 import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from narrascape.config import BudgetConfig
-from narrascape.utils.budget import BudgetTracker, DEFAULT_COSTS
+from narrascape.utils.budget import DEFAULT_COSTS, BudgetTracker
 
 
 class TestBudgetTracker:
@@ -108,7 +107,9 @@ class TestBudgetTracker:
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "budget_state.json"
             budget = BudgetTracker(
-                BudgetConfig(total_usd=10.0, images_estimated=0.1, tts_estimated=0.002, music_estimated=0.05),
+                BudgetConfig(
+                    total_usd=10.0, images_estimated=0.1, tts_estimated=0.002, music_estimated=0.05
+                ),
                 state_path,
             )
             assert budget.get_cost_estimate("image", 5) == 0.5

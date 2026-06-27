@@ -91,7 +91,9 @@ class FilmAssembleStage(Stage):
                 message=f"{len(rendered)} timeline clip(s) assembled",
                 metadata={"clip_count": len(rendered), "timeline": timeline_path.as_posix()},
             )
-        return StageResult(self.name, False, outputs=rendered, message="film timeline assemble failed")
+        return StageResult(
+            self.name, False, outputs=rendered, message="film timeline assemble failed"
+        )
 
     def _render_clip(self, clip: dict[str, Any], context: StageContext, out: Path) -> bool:
         config = context.config

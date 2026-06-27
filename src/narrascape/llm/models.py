@@ -2,6 +2,7 @@
 
 Unified data structures for LLM interactions across all providers.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from typing import Any, Literal
 @dataclass
 class Message:
     """A single message in the conversation."""
+
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: str | None = None  # For tool messages
@@ -26,7 +28,10 @@ class Message:
 @dataclass
 class LLMConfig:
     """Configuration for LLM client."""
-    provider: Literal["openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"] = "openai"
+
+    provider: Literal[
+        "openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"
+    ] = "openai"
     model: str = "gpt-4o"
     api_key: str | None = None
     base_url: str | None = None
@@ -60,6 +65,7 @@ class LLMConfig:
 @dataclass
 class LLMResponse:
     """Structured response from LLM."""
+
     content: str
     model: str
     usage: dict[str, int] = field(default_factory=dict)
@@ -91,6 +97,7 @@ class LLMResponse:
 @dataclass
 class PromptTemplate:
     """A structured prompt template with variable substitution."""
+
     system: str | None = None
     user: str = ""
     few_shot_examples: list[tuple[str, str]] = field(default_factory=list)
@@ -134,10 +141,21 @@ class PromptTemplate:
             print(f"MODELS DEBUG: local_vars keys={sorted(local_vars.keys())}")
             for k in sorted(local_vars.keys()):
                 v = local_vars[k]
-                print(f"MODELS DEBUG: {k} type={type(v).__name__} len={len(str(v))} has_brace={('{' in str(v) or '}' in str(v))}")
+                print(
+                    f"MODELS DEBUG: {k} type={type(v).__name__} len={len(str(v))} has_brace={('{' in str(v) or '}' in str(v))}"
+                )
             # Compare with all known templates
-            from narrascape.llm.prompts import SHOT_DESIGN_PROMPT, COMPACT_SHOT_DESIGN_PROMPT, ANALYZER_PROMPT
-            for name, tmpl in [("SHOT", SHOT_DESIGN_PROMPT), ("COMPACT", COMPACT_SHOT_DESIGN_PROMPT), ("ANALYZER", ANALYZER_PROMPT)]:
+            from narrascape.llm.prompts import (
+                ANALYZER_PROMPT,
+                COMPACT_SHOT_DESIGN_PROMPT,
+                SHOT_DESIGN_PROMPT,
+            )
+
+            for name, tmpl in [
+                ("SHOT", SHOT_DESIGN_PROMPT),
+                ("COMPACT", COMPACT_SHOT_DESIGN_PROMPT),
+                ("ANALYZER", ANALYZER_PROMPT),
+            ]:
                 print(f"MODELS DEBUG: {name} id={id(tmpl)} self is {name}: {self is tmpl}")
                 print(f"MODELS DEBUG: {name}.user len={len(tmpl.user)}")
             raise
@@ -145,7 +163,9 @@ class PromptTemplate:
         if self.chain_of_thought and self.reasoning_steps:
             # Only append if reasoning_steps wasn't already embedded in user template
             if "{reasoning_steps}" not in self.user:
-                user_text += "\n\nBefore giving your final answer, think through this step by step:\n"
+                user_text += (
+                    "\n\nBefore giving your final answer, think through this step by step:\n"
+                )
                 for i, step in enumerate(self.reasoning_steps, 1):
                     user_text += f"\n{i}. {step.format(**local_vars)}"
 
@@ -182,6 +202,7 @@ class PromptTemplate:
 @dataclass
 class LLMCallLog:
     """Log of an LLM call for debugging and optimization."""
+
     timestamp: str
     template_name: str
     messages: list[dict]

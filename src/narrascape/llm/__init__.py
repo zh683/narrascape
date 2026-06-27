@@ -42,11 +42,12 @@ Usage:
     )
     resp = client.run_template(template, topic="AI", schema="...")
 """
+
+from narrascape.llm.bridge import BridgeLLMClient, get_bridge_client, is_bridge_mode
 from narrascape.llm.client import LLMClient, is_assistant_bridge_provider
-from narrascape.llm.models import LLMConfig, LLMResponse, Message, PromptTemplate, LLMCallLog
-from narrascape.llm.output_parser import OutputValidator, JSONRepair
-from narrascape.llm.prompts import get_prompt, PROMPT_REGISTRY
-from narrascape.llm.bridge import BridgeLLMClient, is_bridge_mode, get_bridge_client
+from narrascape.llm.models import LLMCallLog, LLMConfig, LLMResponse, Message, PromptTemplate
+from narrascape.llm.output_parser import JSONRepair, OutputValidator
+from narrascape.llm.prompts import PROMPT_REGISTRY, get_prompt
 
 __all__ = [
     "LLMClient",

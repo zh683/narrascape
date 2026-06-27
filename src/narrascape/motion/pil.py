@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
 
 from PIL import Image
 
@@ -25,9 +24,13 @@ class PILEngine(MotionEngine):
 
     def can_handle(self, params: MotionParams) -> bool:
         return params.movement in (
-            "zoom_in", "zoom_slow", "zoom_out",
-            "zoom_in_slow", "zoom_out_slow",
-            "push_in", "pull_out",
+            "zoom_in",
+            "zoom_slow",
+            "zoom_out",
+            "zoom_in_slow",
+            "zoom_out_slow",
+            "push_in",
+            "pull_out",
         )
 
     def generate(self, params: MotionParams) -> MotionResult:
@@ -56,14 +59,32 @@ class PILEngine(MotionEngine):
         ffmpeg = find_ffmpeg()
         proc = subprocess.Popen(
             [
-                str(ffmpeg), "-y", "-loglevel", "error",
-                "-f", "rawvideo", "-pix_fmt", "rgb24",
-                "-s", f"{W}x{H}", "-r", str(params.fps),
-                "-i", "-",
-                "-vf", fade_vf,
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-                "-pix_fmt", "yuv420p",
-                "-t", str(params.duration),
+                str(ffmpeg),
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-s",
+                f"{W}x{H}",
+                "-r",
+                str(params.fps),
+                "-i",
+                "-",
+                "-vf",
+                fade_vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                str(params.duration),
                 str(params.output_path),
             ],
             stdin=subprocess.PIPE,
@@ -93,7 +114,7 @@ class PILEngine(MotionEngine):
                 data = frame.tobytes()
                 CHUNK = 1_048_576
                 for offset in range(0, len(data), CHUNK):
-                    proc.stdin.write(data[offset:offset + CHUNK])
+                    proc.stdin.write(data[offset : offset + CHUNK])
         finally:
             proc.stdin.close()
             proc.wait()

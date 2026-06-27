@@ -27,7 +27,10 @@ class ContinuityBibleStage(Stage):
         output.parent.mkdir(parents=True, exist_ok=True)
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
         design = self._load_yaml(
-            self._first_existing(config.project_dir / "design_report.yaml", config.pipeline_dir / "design_report.yaml")
+            self._first_existing(
+                config.project_dir / "design_report.yaml",
+                config.pipeline_dir / "design_report.yaml",
+            )
         )
         structure = self._load_yaml(config.pipeline_dir / "screenplay_structure.yaml")
         design_by_segment = {
@@ -92,9 +95,9 @@ class ContinuityBibleStage(Stage):
                 "name": config.project.name,
                 "title": config.project.title,
             },
-            "source_structure": (config.pipeline_dir / "screenplay_structure.yaml").as_posix()
-            if structure
-            else "",
+            "source_structure": (
+                (config.pipeline_dir / "screenplay_structure.yaml").as_posix() if structure else ""
+            ),
             "characters": characters,
             "locations": locations,
             "continuity_risks": self._dedupe_risks(risks),
@@ -119,11 +122,17 @@ class ContinuityBibleStage(Stage):
             if clip.get("segment_id") is not None
         ]
 
-    def _continuity_record(self, clip: dict[str, Any], design_item: dict[str, Any]) -> dict[str, Any]:
-        metadata = design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+    def _continuity_record(
+        self, clip: dict[str, Any], design_item: dict[str, Any]
+    ) -> dict[str, Any]:
+        metadata = (
+            design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+        )
         return {
             "segment_id": int(clip["segment_id"]),
-            "character_ids": list(clip.get("character_ids") or design_item.get("character_ids") or []),
+            "character_ids": list(
+                clip.get("character_ids") or design_item.get("character_ids") or []
+            ),
             "location_id": clip.get("location_id")
             or design_item.get("location_id")
             or "unspecified_location",
@@ -131,7 +140,9 @@ class ContinuityBibleStage(Stage):
             "lighting_scheme": clip.get("lighting_scheme")
             or metadata.get("lighting_scheme")
             or "unspecified_lighting",
-            "screen_axis": clip.get("screen_axis") or metadata.get("screen_axis") or "unspecified_axis",
+            "screen_axis": clip.get("screen_axis")
+            or metadata.get("screen_axis")
+            or "unspecified_axis",
         }
 
     def _compare_records(

@@ -4,13 +4,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from narrascape.config import MovementType, ShotType, SupersampleMode, VisualConfig
+from narrascape.config import MovementType, ShotType, SupersampleMode
 from narrascape.utils.ffmpeg import validate_video
 
 
 @dataclass(frozen=True)
 class MotionParams:
     """Parameters for a single motion segment."""
+
     image_path: Path
     output_path: Path
     duration: float
@@ -29,6 +30,7 @@ class MotionParams:
 @dataclass
 class MotionResult:
     """Result of a motion segment generation."""
+
     output_path: Path
     success: bool
     engine_used: str

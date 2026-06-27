@@ -2,17 +2,17 @@
 """
 Narrascape Pipeline CLI — typer-based command-line interface.
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich.tree import Tree
 
 from narrascape import __version__
 from narrascape.api_keys import APIKeys
@@ -46,8 +46,8 @@ def _status_stage_names() -> list[str]:
 # LLM Client Factory
 # ═══════════════════════════════════════════
 
-from narrascape.llm import LLMClient, LLMConfig as LLMClientConfig
-from narrascape.config import NarrascapeConfig
+from narrascape.llm import LLMClient
+from narrascape.llm import LLMConfig as LLMClientConfig
 
 
 def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None = None):
@@ -55,7 +55,7 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
 
     Priority: config.llm.mode > env NARRASCAPE_LLM_MODE > explicit key > env vars > auto-detection
     Supports: AI Assistant/Bridge (project-local file tasks), OpenAI, Anthropic, DeepSeek, Volcengine/Ark, local
-    
+
     AI Assistant mode is the default when no external API keys are configured.
     The AI assistant (e.g., Kimi, Codex) processes project-local bridge tasks without needing external API keys.
     """
@@ -74,41 +74,47 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
         if config.llm.mode == "ai_assistant":
             console.print("[bold green]AI Assistant Mode[/] - using project-local assistant bridge")
             os.environ["NARRASCAPE_LLM_MODE"] = "ai_assistant"
-            return LLMClient(LLMClientConfig(
-                provider="ai_assistant",
-                temperature=config.llm.temperature,
-                max_tokens=config.llm.max_tokens,
-                max_retries=3,
-                retry_delay=2.0,
-                json_mode=True,
-            ))
-        elif config.llm.mode == "bridge":
-            console.print("[bold cyan]Bridge Mode[/] — delegating to AI assistant via file tasks")
-            os.environ["NARRASCAPE_LLM_MODE"] = "bridge"
-            if config.llm.timeout:
-                os.environ["NARRASCAPE_BRIDGE_TIMEOUT"] = str(config.llm.timeout)
-            return LLMClient(LLMClientConfig(
-                provider="bridge",
-                temperature=config.llm.temperature,
-                max_tokens=config.llm.max_tokens,
-                max_retries=3,
-                retry_delay=2.0,
-                json_mode=True,
-            ))
-        elif config.llm.mode == "api":
-            # Use config API settings
-            if config.llm.api_key:
-                return LLMClient(LLMClientConfig(
-                    provider=config.llm.provider or "openai",
-                    model=config.llm.model or "gpt-4o",
-                    api_key=config.llm.api_key,
-                    base_url=config.llm.base_url or None,
+            return LLMClient(
+                LLMClientConfig(
+                    provider="ai_assistant",
                     temperature=config.llm.temperature,
                     max_tokens=config.llm.max_tokens,
                     max_retries=3,
                     retry_delay=2.0,
                     json_mode=True,
-                ))
+                )
+            )
+        elif config.llm.mode == "bridge":
+            console.print("[bold cyan]Bridge Mode[/] — delegating to AI assistant via file tasks")
+            os.environ["NARRASCAPE_LLM_MODE"] = "bridge"
+            if config.llm.timeout:
+                os.environ["NARRASCAPE_BRIDGE_TIMEOUT"] = str(config.llm.timeout)
+            return LLMClient(
+                LLMClientConfig(
+                    provider="bridge",
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens,
+                    max_retries=3,
+                    retry_delay=2.0,
+                    json_mode=True,
+                )
+            )
+        elif config.llm.mode == "api":
+            # Use config API settings
+            if config.llm.api_key:
+                return LLMClient(
+                    LLMClientConfig(
+                        provider=config.llm.provider or "openai",
+                        model=config.llm.model or "gpt-4o",
+                        api_key=config.llm.api_key,
+                        base_url=config.llm.base_url or None,
+                        temperature=config.llm.temperature,
+                        max_tokens=config.llm.max_tokens,
+                        max_retries=3,
+                        retry_delay=2.0,
+                        json_mode=True,
+                    )
+                )
         elif config.llm.mode == "none":
             console.print("[bold yellow]Offline LLM Mode[/] - using deterministic/template stages")
             return None
@@ -116,68 +122,79 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
     # Try env var ai_assistant mode
     if os.environ.get("NARRASCAPE_LLM_MODE", "").lower() == "ai_assistant":
         console.print("[bold green]AI Assistant Mode[/] - using project-local assistant bridge")
-        return LLMClient(LLMClientConfig(
-            provider="ai_assistant",
-            temperature=0.7,
-            max_tokens=4000,
-            max_retries=3,
-            retry_delay=2.0,
-            json_mode=True,
-        ))
+        return LLMClient(
+            LLMClientConfig(
+                provider="ai_assistant",
+                temperature=0.7,
+                max_tokens=4000,
+                max_retries=3,
+                retry_delay=2.0,
+                json_mode=True,
+            )
+        )
 
     # Try env var bridge mode
     if os.environ.get("NARRASCAPE_LLM_MODE", "").lower() == "bridge":
         console.print("[bold cyan]Bridge Mode[/] — delegating to AI assistant via file tasks")
-        return LLMClient(LLMClientConfig(
-            provider="bridge",
-            temperature=0.7,
-            max_tokens=4000,
-            max_retries=3,
-            retry_delay=2.0,
-            json_mode=True,
-        ))
+        return LLMClient(
+            LLMClientConfig(
+                provider="bridge",
+                temperature=0.7,
+                max_tokens=4000,
+                max_retries=3,
+                retry_delay=2.0,
+                json_mode=True,
+            )
+        )
 
     # Try explicit API key
     key = api_key or APIKeys.openai()
     if key:
-        return LLMClient(LLMClientConfig(
-            provider="openai",
-            model="gpt-4o",
-            api_key=key,
-            temperature=0.7,
-            max_tokens=2000,
-            max_retries=3,
-            retry_delay=2.0,
-            json_mode=True,
-        ))
+        return LLMClient(
+            LLMClientConfig(
+                provider="openai",
+                model="gpt-4o",
+                api_key=key,
+                temperature=0.7,
+                max_tokens=2000,
+                max_retries=3,
+                retry_delay=2.0,
+                json_mode=True,
+            )
+        )
 
     # Try Ark (Volcengine)
     key = APIKeys.ark()
     if key:
         base = os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
         model = os.environ.get("ARK_MODEL_ID", "doubao-pro-32k")
-        return LLMClient(LLMClientConfig(
-            provider="openai",
-            model=model,
-            api_key=key,
-            base_url=base,
-            temperature=0.7,
-            max_tokens=2000,
-            max_retries=3,
-            retry_delay=2.0,
-            json_mode=True,
-        ))
+        return LLMClient(
+            LLMClientConfig(
+                provider="openai",
+                model=model,
+                api_key=key,
+                base_url=base,
+                temperature=0.7,
+                max_tokens=2000,
+                max_retries=3,
+                retry_delay=2.0,
+                json_mode=True,
+            )
+        )
 
     # Auto-detect from environment (defaults to AI Assistant mode if no API keys)
     client = LLMClient.from_env(allow_bridge=True)
     if client and client.config.provider == "ai_assistant":
-        console.print("[bold green]AI Assistant Mode[/] - using project-local assistant bridge (no API keys needed)")
+        console.print(
+            "[bold green]AI Assistant Mode[/] - using project-local assistant bridge (no API keys needed)"
+        )
     return client
 
 
 # ═══════════════════════════════════════════
 # Global options
 # ═══════════════════════════════════════════
+
 
 @app.callback()
 def global_options(
@@ -193,14 +210,11 @@ def global_options(
 # Init command
 # ═══════════════════════════════════════════
 
+
 @app.command("init")
 def init_cmd(
-    project_name: Annotated[
-        str, typer.Argument(help="Project directory name")
-    ],
-    title: Annotated[
-        str, typer.Option("--title", "-t", help="Video title")
-    ] = "",
+    project_name: Annotated[str, typer.Argument(help="Project directory name")],
+    title: Annotated[str, typer.Option("--title", "-t", help="Video title")] = "",
     script_file: Annotated[
         str, typer.Option("--script", help="Script file path")
     ] = "scripts/script.yaml",
@@ -256,9 +270,11 @@ def init_cmd(
     console.print("  - pipeline/")
     console.print("  - output/")
 
+
 # ═══════════════════════════════════════════
 # Dashboard command
 # ═══════════════════════════════════════════
+
 
 @app.command("dashboard")
 def dashboard_cmd(
@@ -279,12 +295,19 @@ def dashboard_cmd(
     try:
         subprocess.run(
             [
-                sys.executable, "-m", "streamlit", "run",
+                sys.executable,
+                "-m",
+                "streamlit",
+                "run",
                 str(dashboard_path),
-                "--server.port", str(port),
-                "--server.address", host,
-                "--browser.serverAddress", host,
-                "--theme.base", "dark",
+                "--server.port",
+                str(port),
+                "--server.address",
+                host,
+                "--browser.serverAddress",
+                host,
+                "--theme.base",
+                "dark",
             ],
             check=True,
         )
@@ -299,13 +322,17 @@ def dashboard_cmd(
 # Research command
 # ═══════════════════════════════════════════
 
+
 @app.command("research")
 def research_cmd(
     topic: Annotated[
         str, typer.Argument(help="Topic to research (e.g. 'AI history', 'Ancient Rome')")
     ],
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     depth: Annotated[
         str, typer.Option("--depth", "-d", help="Research depth: brief, standard, deep")
@@ -326,9 +353,9 @@ def research_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.stages.research import ResearchStage
-    from narrascape.stages.base import StageContext
     from narrascape.cache import BuildCache
+    from narrascape.stages.base import StageContext
+    from narrascape.stages.research import ResearchStage
 
     stage = ResearchStage(llm_client=_get_llm_client(config=config), topic=topic, depth=depth)
     context = StageContext(
@@ -349,22 +376,30 @@ def research_cmd(
 # Write command (AI script writer)
 # ═══════════════════════════════════════════
 
+
 @app.command("write")
 def write_cmd(
     topic: Annotated[
-        Optional[str], typer.Argument(help="Topic to write about (optional if using existing research)")
+        str | None,
+        typer.Argument(help="Topic to write about (optional if using existing research)"),
     ] = None,
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     segments: Annotated[
         int, typer.Option("--segments", "-n", help="Number of segments to write")
     ] = 12,
     style: Annotated[
-        str, typer.Option("--style", "-s", help="Writing style: documentary, narrative, educational, poetic")
+        str,
+        typer.Option(
+            "--style", "-s", help="Writing style: documentary, narrative, educational, poetic"
+        ),
     ] = "documentary",
     research_report: Annotated[
-        Optional[str], typer.Option("--research", "-r", help="Path to existing research report")
+        str | None, typer.Option("--research", "-r", help="Path to existing research report")
     ] = None,
     skip_humanize: Annotated[
         bool, typer.Option("--skip-humanize", help="Skip AI de-humanization pass")
@@ -391,9 +426,9 @@ def write_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.stages.write import WriteStage
-    from narrascape.stages.base import StageContext
     from narrascape.cache import BuildCache
+    from narrascape.stages.base import StageContext
+    from narrascape.stages.write import WriteStage
 
     stage = WriteStage(
         llm_client=_get_llm_client(config=config),
@@ -421,10 +456,14 @@ def write_cmd(
 # Humanize command
 # ═══════════════════════════════════════════
 
+
 @app.command("humanize")
 def humanize_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     aggressive: Annotated[
         bool, typer.Option("--aggressive", "-a", help="Aggressive mode (more changes)")
@@ -448,11 +487,13 @@ def humanize_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.stages.humanize import HumanizeStage
-    from narrascape.stages.base import StageContext
     from narrascape.cache import BuildCache
+    from narrascape.stages.base import StageContext
+    from narrascape.stages.humanize import HumanizeStage
 
-    stage = HumanizeStage(llm_client=_get_llm_client(config=config), aggressive=aggressive, score_only=score_only)
+    stage = HumanizeStage(
+        llm_client=_get_llm_client(config=config), aggressive=aggressive, score_only=score_only
+    )
     context = StageContext(
         config=config,
         script=None,
@@ -471,19 +512,24 @@ def humanize_cmd(
 # Approve command
 # ═══════════════════════════════════════════
 
+
 @app.command("approve")
 def approve_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     stage: Annotated[
-        Optional[str], typer.Option("--stage", "-s", help="Stage name to approve (omit to approve script)")
+        str | None,
+        typer.Option("--stage", "-s", help="Stage name to approve (omit to approve script)"),
     ] = None,
     message: Annotated[
-        Optional[str], typer.Option("--message", "-m", help="Approval message (script approval only)")
+        str | None, typer.Option("--message", "-m", help="Approval message (script approval only)")
     ] = None,
     notes: Annotated[
-        Optional[str], typer.Option("--notes", "-n", help="Approval notes (stage approval only)")
+        str | None, typer.Option("--notes", "-n", help="Approval notes (stage approval only)")
     ] = None,
 ) -> None:
     """Approve a pending script or pipeline stage.
@@ -504,10 +550,13 @@ def approve_cmd(
             console.print(f"[bold red]Config error:[/] {e}")
             raise typer.Exit(1)
         from narrascape.pipeline_approval import PipelineApproval
+
         approval = PipelineApproval(config.pipeline_dir)
         approval.approve(stage, reviewer="human", notes=notes or "")
         console.print(f"[bold green]Stage '{stage}' approved[/]")
-        console.print(f"[dim]  You can now continue the pipeline: narrascape build -p {project_dir}[/]")
+        console.print(
+            f"[dim]  You can now continue the pipeline: narrascape build -p {project_dir}[/]"
+        )
         return
 
     # Script approval
@@ -521,12 +570,13 @@ def approve_cmd(
         raise typer.Exit(1)
 
     import shutil
+
     shutil.copy(script_path, approved_path)
 
     if marker_path.exists():
         marker_path.unlink()
 
-    console.print(f"[bold green]Script approved![/]")
+    console.print("[bold green]Script approved![/]")
     console.print(f"  [cyan]→[/] {approved_path}")
     if message:
         console.print(f"  [dim]Message: {message}[/]")
@@ -537,21 +587,31 @@ def approve_cmd(
 # Pre-production command (Character & Environment References + Storyboard)
 # ═══════════════════════════════════════════
 
+
 @app.command("pre_production")
 def pre_production_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
-    style: Annotated[
-        str, typer.Option("--style", "-s", help="Global image style prefix")
-    ] = "",
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Preview without generating images")] = False,
+    style: Annotated[str, typer.Option("--style", "-s", help="Global image style prefix")] = "",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", "-n", help="Preview without generating images")
+    ] = False,
     llm_api_key: Annotated[
-        Optional[str], typer.Option("--llm-api-key", help="LLM API key for character/scene extraction")
+        str | None, typer.Option("--llm-api-key", help="LLM API key for character/scene extraction")
     ] = None,
-    skip_turns: Annotated[bool, typer.Option("--skip-turns", help="Skip character turn-view generation")] = False,
-    skip_expressions: Annotated[bool, typer.Option("--skip-expressions", help="Skip character expression generation")] = False,
-    skip_storyboard: Annotated[bool, typer.Option("--skip-storyboard", help="Skip storyboard generation")] = False,
+    skip_turns: Annotated[
+        bool, typer.Option("--skip-turns", help="Skip character turn-view generation")
+    ] = False,
+    skip_expressions: Annotated[
+        bool, typer.Option("--skip-expressions", help="Skip character expression generation")
+    ] = False,
+    skip_storyboard: Annotated[
+        bool, typer.Option("--skip-storyboard", help="Skip storyboard generation")
+    ] = False,
 ) -> None:
     """Run visual pre-production: character references, environment references, and storyboard.
 
@@ -583,12 +643,15 @@ def pre_production_cmd(
     console.print(f"[bold green]🎬 Pre-Production[/] for: [bold]{config.project.title}[/]")
 
     import yaml
+
     script_data = yaml.safe_load(script_path.read_text(encoding="utf-8"))
     segment_count = len(script_data.get("segments", []))
     console.print(f"  Script: {segment_count} segments")
 
     if dry_run:
-        console.print(f"[bold cyan]Dry run[/] — would extract characters/scenes and generate reference images")
+        console.print(
+            "[bold cyan]Dry run[/] — would extract characters/scenes and generate reference images"
+        )
         return
 
     # Build LLM client (AI Assistant is built-in, no API keys needed)
@@ -605,8 +668,8 @@ def pre_production_cmd(
         generate_expressions=not skip_expressions,
         generate_storyboard=not skip_storyboard,
     )
-    from narrascape.stages.base import StageContext
     from narrascape.cache import BuildCache
+    from narrascape.stages.base import StageContext
 
     context = StageContext(
         config=config,
@@ -619,7 +682,7 @@ def pre_production_cmd(
     result = stage.run(context)
 
     if result.success:
-        console.print(f"[bold green]✅ Pre-production complete[/]")
+        console.print("[bold green]✅ Pre-production complete[/]")
         console.print(f"  Characters: {result.metadata.get('character_count', 0)}")
         console.print(f"  Scenes: {result.metadata.get('scene_count', 0)}")
         console.print(f"  Storyboard frames: {result.metadata.get('storyboard_frames', 0)}")
@@ -633,21 +696,39 @@ def pre_production_cmd(
 # Design command (AI Director)
 # ═══════════════════════════════════════════
 
+
 @app.command("design")
 def design_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     style: Annotated[
-        str, typer.Option("--style", "-s", help="Global image style prefix (e.g. 'oil painting, 19th century')")
+        str,
+        typer.Option(
+            "--style", "-s", help="Global image style prefix (e.g. 'oil painting, 19th century')"
+        ),
     ] = "",
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Preview design without writing files")] = False,
-    review: Annotated[bool, typer.Option("--review", "-r", help="Open design report for review before proceeding")] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", "-n", help="Preview design without writing files")
+    ] = False,
+    review: Annotated[
+        bool, typer.Option("--review", "-r", help="Open design report for review before proceeding")
+    ] = False,
     auto_approve: Annotated[
-        bool, typer.Option("--auto-approve", "-a", help="Auto-approve pending scripts without human review")
+        bool,
+        typer.Option(
+            "--auto-approve", "-a", help="Auto-approve pending scripts without human review"
+        ),
     ] = False,
     llm_api_key: Annotated[
-        Optional[str], typer.Option("--llm-api-key", help="OpenAI API key for PromptDirector (or set OPENAI_API_KEY env/.env)")
+        str | None,
+        typer.Option(
+            "--llm-api-key",
+            help="OpenAI API key for PromptDirector (or set OPENAI_API_KEY env/.env)",
+        ),
     ] = None,
 ) -> None:
     """Run AI director to design shots from narration script.
@@ -682,26 +763,32 @@ def design_cmd(
     if marker_path.exists() and not approved_path.exists():
         if auto_approve:
             import shutil
+
             shutil.copy(script_path, approved_path)
             marker_path.unlink()
-            console.print(f"[bold green]✅ Auto-approved script[/]")
+            console.print("[bold green]✅ Auto-approved script[/]")
         else:
-            console.print(f"[bold yellow]⚠️ Script pending approval![/]")
+            console.print("[bold yellow]⚠️ Script pending approval![/]")
             console.print(f"  Please review and edit: {script_path}")
             console.print(f"  Then run: [bold]narrascape approve -p {project_dir}[/]")
             console.print(f"  Or use: [bold]narrascape design -p {project_dir} --auto-approve[/]")
             raise typer.Exit(1)
 
-    console.print(f"[bold green]🎬 AI Director[/] designing shots for: [bold]{config.project.title}[/]")
+    console.print(
+        f"[bold green]🎬 AI Director[/] designing shots for: [bold]{config.project.title}[/]"
+    )
 
     # Read script
     import yaml
+
     script_data = yaml.safe_load(script_path.read_text(encoding="utf-8"))
     segment_count = len(script_data.get("segments", []))
     console.print(f"  Script: {segment_count} segments")
 
     if dry_run:
-        console.print(f"[bold cyan]Dry run[/] — would analyze {segment_count} segments and generate design files")
+        console.print(
+            f"[bold cyan]Dry run[/] — would analyze {segment_count} segments and generate design files"
+        )
         return
 
     # Build LLM client (AI Assistant is built-in, no API keys needed)
@@ -712,8 +799,8 @@ def design_cmd(
     from narrascape.stages.design import DesignStage
 
     stage = DesignStage(llm_client=llm_client, style_template=style)
-    from narrascape.stages.base import StageContext
     from narrascape.cache import BuildCache
+    from narrascape.stages.base import StageContext
 
     context = StageContext(
         config=config,
@@ -726,7 +813,7 @@ def design_cmd(
     result = stage.run(context)
 
     if result.success:
-        console.print(f"[bold green]✅ Design complete[/]")
+        console.print("[bold green]✅ Design complete[/]")
         console.print(f"  Outputs: {result.outputs}")
     else:
         console.print(f"[bold red]❌ Design failed:[/] {result.message}")
@@ -736,17 +823,16 @@ def design_cmd(
 @app.command("build")
 def build_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
     stages: Annotated[
-        Optional[list[str]], typer.Option("--stage", help="Specific stages to run")
+        list[str] | None, typer.Option("--stage", help="Specific stages to run")
     ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Ignore cache and rebuild")
-    ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Preview without executing")
-    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="Ignore cache and rebuild")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview without executing")] = False,
     parallel: Annotated[
         int, typer.Option("--parallel", help="Max parallel workers", min=1, max=16)
     ] = 4,
@@ -778,21 +864,36 @@ def build_cmd(
         return
 
     if interactive and auto_approve:
-        console.print(f"[bold yellow]Warning:[/] --interactive and --approve are mutually exclusive. Using --interactive.")
+        console.print(
+            "[bold yellow]Warning:[/] --interactive and --approve are mutually exclusive. Using --interactive."
+        )
         auto_approve = False
 
     if interactive:
-        console.print(f"[bold yellow]🎬 Interactive Mode[/] — Pipeline will pause after each stage for human review.")
+        console.print(
+            "[bold yellow]🎬 Interactive Mode[/] — Pipeline will pause after each stage for human review."
+        )
     elif auto_approve:
-        console.print(f"[bold dim]🤖 Auto-Approve Mode[/] — All stages will be approved automatically.")
+        console.print(
+            "[bold dim]🤖 Auto-Approve Mode[/] — All stages will be approved automatically."
+        )
     else:
-        console.print(f"[bold cyan]⚡ Non-Interactive Mode[/] — Stages will pause after completion for review.")
-        console.print(f"[dim]  Use --interactive to review in real-time, or --approve to skip reviews.")
-        console.print(f"[dim]  You can also approve individual stages later: narrascape approve -p . -s <stage>")
+        console.print(
+            "[bold cyan]⚡ Non-Interactive Mode[/] — Stages will pause after completion for review."
+        )
+        console.print(
+            "[dim]  Use --interactive to review in real-time, or --approve to skip reviews."
+        )
+        console.print(
+            "[dim]  You can also approve individual stages later: narrascape approve -p . -s <stage>"
+        )
 
     pipeline = Pipeline(
-        config, dry_run=dry_run, force=force,
-        interactive=interactive, auto_approve=auto_approve,
+        config,
+        dry_run=dry_run,
+        force=force,
+        interactive=interactive,
+        auto_approve=auto_approve,
         console=console,
         llm_client=_get_llm_client(config=config),
         image_api_key=APIKeys.ark(),
@@ -813,7 +914,7 @@ def build_cmd(
     console.print(table)
 
     if all(r.success for r in results.values()):
-        console.print(f"[bold green]✅ Build complete[/]")
+        console.print("[bold green]✅ Build complete[/]")
         for stage_name, result in results.items():
             if isinstance(result.outputs, dict):
                 for key, path in result.outputs.items():
@@ -821,14 +922,17 @@ def build_cmd(
     else:
         failed = [name for name, r in results.items() if not r.success]
         console.print(f"[bold red]❌ Build stopped:[/] {', '.join(failed)}")
-        console.print(f"[dim]  Review pending approvals: narrascape status -p .[/]")
+        console.print("[dim]  Review pending approvals: narrascape status -p .[/]")
         raise typer.Exit(1)
 
 
 @app.command("status")
 def status_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
 ) -> None:
     """Show pipeline status including approval states for a project."""
@@ -844,9 +948,11 @@ def status_cmd(
         raise typer.Exit(1)
 
     from narrascape.pipeline import PipelineState
+
     state = PipelineState(config.pipeline_dir / "state.json")
 
     from narrascape.pipeline_approval import PipelineApproval
+
     approval = PipelineApproval(config.pipeline_dir)
 
     # ── Pipeline stages table ──
@@ -857,7 +963,9 @@ def status_cmd(
 
     for stage_name in _status_stage_names():
         exec_status = state.get_stage_status(stage_name)
-        exec_emoji = "✅" if exec_status == "completed" else "⏳" if exec_status == "pending" else "❌"
+        exec_emoji = (
+            "✅" if exec_status == "completed" else "⏳" if exec_status == "pending" else "❌"
+        )
 
         appr_status = approval.get_status(stage_name)
         appr_emoji = {
@@ -887,20 +995,19 @@ def status_cmd(
         console.print(f"[bold red]❌ Rejected Stages ({len(rejected)}):[/]")
         for stage_name in rejected:
             console.print(f"  {stage_name}")
-        console.print(f"[dim]  Fix and retry: narrascape build -p . --stage <stage> --force[/]")
+        console.print("[dim]  Fix and retry: narrascape build -p . --stage <stage> --force[/]")
 
 
 @app.command("clean")
 def clean_cmd(
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
-    all: Annotated[
-        bool, typer.Option("--all", help="Clean everything")
-    ] = False,
-    stage: Annotated[
-        Optional[str], typer.Option("--stage", help="Specific stage to clean")
-    ] = None,
+    all: Annotated[bool, typer.Option("--all", help="Clean everything")] = False,
+    stage: Annotated[str | None, typer.Option("--stage", help="Specific stage to clean")] = None,
 ) -> None:
     """Clean pipeline artifacts."""
     config_path = project_dir / "config.yaml"
@@ -916,32 +1023,31 @@ def clean_cmd(
 
     if all:
         import shutil
+
         if config.pipeline_dir.exists():
             shutil.rmtree(config.pipeline_dir)
-        console.print(f"[bold green]✅ Cleaned all pipeline artifacts[/]")
+        console.print("[bold green]✅ Cleaned all pipeline artifacts[/]")
     elif stage:
         stage_dir = config.pipeline_dir / stage
         if stage_dir.exists():
             import shutil
+
             shutil.rmtree(stage_dir)
         console.print(f"[bold green]✅ Cleaned {stage}[/]")
     else:
-        console.print(f"[bold yellow]Use --all or --stage <name>[/]")
-
-
+        console.print("[bold yellow]Use --all or --stage <name>[/]")
 
 
 @app.command("reject")
 def reject_cmd(
-    stage: Annotated[
-        str, typer.Option("--stage", "-s", help="Stage name to reject")
-    ],
+    stage: Annotated[str, typer.Option("--stage", "-s", help="Stage name to reject")],
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
-    notes: Annotated[
-        Optional[str], typer.Option("--notes", "-n", help="Rejection notes")
-    ] = None,
+    notes: Annotated[str | None, typer.Option("--notes", "-n", help="Rejection notes")] = None,
 ) -> None:
     """Reject a pipeline stage. Requires fixing and re-running."""
     config_path = project_dir / "config.yaml"
@@ -956,23 +1062,25 @@ def reject_cmd(
         raise typer.Exit(1)
 
     from narrascape.pipeline_approval import PipelineApproval
+
     approval = PipelineApproval(config.pipeline_dir)
     approval.reject(stage, reviewer="human", notes=notes or "")
     console.print(f"[bold red]❌ Stage '{stage}' rejected[/]")
-    console.print(f"[dim]  Fix the issue, then run: narrascape build -p . --stage {stage} --force[/]")
+    console.print(
+        f"[dim]  Fix the issue, then run: narrascape build -p . --stage {stage} --force[/]"
+    )
 
 
 @app.command("skip")
 def skip_cmd(
-    stage: Annotated[
-        str, typer.Option("--stage", "-s", help="Stage name to skip")
-    ],
+    stage: Annotated[str, typer.Option("--stage", "-s", help="Stage name to skip")],
     project_dir: Annotated[
-        Path, typer.Option("--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True)
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
     ] = Path("."),
-    notes: Annotated[
-        Optional[str], typer.Option("--notes", "-n", help="Skip notes")
-    ] = None,
+    notes: Annotated[str | None, typer.Option("--notes", "-n", help="Skip notes")] = None,
 ) -> None:
     """Skip a pipeline stage (mark as approved without review)."""
     config_path = project_dir / "config.yaml"
@@ -987,10 +1095,11 @@ def skip_cmd(
         raise typer.Exit(1)
 
     from narrascape.pipeline_approval import PipelineApproval
+
     approval = PipelineApproval(config.pipeline_dir)
     approval.skip(stage, reviewer="human", notes=notes or "")
     console.print(f"[bold dim]⏭️ Stage '{stage}' skipped[/]")
-    console.print(f"[dim]  You can now continue the pipeline: narrascape build -p .[/]")
+    console.print("[dim]  You can now continue the pipeline: narrascape build -p .[/]")
 
 
 @app.command("version")

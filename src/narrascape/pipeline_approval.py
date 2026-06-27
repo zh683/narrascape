@@ -30,13 +30,13 @@ Usage in Pipeline.run():
             logger.error(f"Stage {stage_name} not approved. Run: narrascape approve -p . -s {stage_name}")
             break
 """
+
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
-from typing import Any, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 from narrascape.stages.base import StageResult
 
@@ -87,7 +87,7 @@ class PipelineApproval:
         self,
         stage_name: str,
         stage_result: StageResult,
-        assets: Optional[list[dict]] = None,
+        assets: list[dict] | None = None,
     ) -> None:
         """Create a review request file after stage completion.
 
@@ -110,7 +110,7 @@ class PipelineApproval:
         self,
         stage_name: str,
         stage_result: StageResult,
-        assets: Optional[list[dict]] = None,
+        assets: list[dict] | None = None,
     ) -> str:
         """Format a human-readable review request."""
         lines = [
@@ -176,7 +176,7 @@ class PipelineApproval:
         approved_file = self.approvals_dir / f"{stage_name}.approved"
         with open(approved_file, "w", encoding="utf-8") as f:
             f.write(f"stage: {stage_name}\n")
-            f.write(f"status: approved\n")
+            f.write("status: approved\n")
             f.write(f"reviewer: {reviewer}\n")
             f.write(f"timestamp: {datetime.now().isoformat()}\n")
             if notes:
@@ -189,7 +189,7 @@ class PipelineApproval:
         rejected_file = self.approvals_dir / f"{stage_name}.rejected"
         with open(rejected_file, "w", encoding="utf-8") as f:
             f.write(f"stage: {stage_name}\n")
-            f.write(f"status: rejected\n")
+            f.write("status: rejected\n")
             f.write(f"reviewer: {reviewer}\n")
             f.write(f"timestamp: {datetime.now().isoformat()}\n")
             if notes:
@@ -202,7 +202,7 @@ class PipelineApproval:
         skipped_file = self.approvals_dir / f"{stage_name}.skipped"
         with open(skipped_file, "w", encoding="utf-8") as f:
             f.write(f"stage: {stage_name}\n")
-            f.write(f"status: skipped\n")
+            f.write("status: skipped\n")
             f.write(f"reviewer: {reviewer}\n")
             f.write(f"timestamp: {datetime.now().isoformat()}\n")
             if notes:
@@ -228,18 +228,20 @@ class PipelineApproval:
 
         Returns one of: 'approved', 'rejected', 'retry', 'skipped'
         """
-        from rich.table import Table
         from rich.panel import Panel
+        from rich.table import Table
 
         # Display review panel
         console.print()
-        console.print(Panel(
-            f"[bold yellow]⏸️ Stage Complete: {stage_name}[/]\n"
-            f"[dim]Status: {'SUCCESS' if stage_result.success else 'FAILED'}[/]\n"
-            f"[dim]Message: {stage_result.message or 'N/A'}[/]",
-            title="Review Required",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                f"[bold yellow]⏸️ Stage Complete: {stage_name}[/]\n"
+                f"[dim]Status: {'SUCCESS' if stage_result.success else 'FAILED'}[/]\n"
+                f"[dim]Message: {stage_result.message or 'N/A'}[/]",
+                title="Review Required",
+                border_style="yellow",
+            )
+        )
 
         # Display outputs
         if stage_result.outputs:

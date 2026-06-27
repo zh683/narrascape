@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 from narrascape.cache import BuildCache
-from narrascape.config import NarrascapeConfig, ProjectConfig, Script, load_script
+from narrascape.config import NarrascapeConfig, ProjectConfig, load_script
 from narrascape.pipeline import _resolve_dependencies, get_stage_map
 from narrascape.stages.base import StageContext
 
@@ -209,14 +209,19 @@ def test_film_timeline_prefers_generated_video_over_source_and_image(tmp_path):
     result = FilmTimelineStage().run(_context(config))
 
     assert result.success
-    timeline = yaml.safe_load((config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8"))
-    assert timeline["strategy"]["visual_priority"] == ["generated_video", "source_media", "generated_image"]
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
+    assert timeline["strategy"]["visual_priority"] == [
+        "generated_video",
+        "source_media",
+        "generated_image",
+    ]
     assert timeline["coverage"]["generated_video_segments"] == [1, 2]
     assert timeline["coverage"]["source_media_segments"] == []
     assert timeline["coverage"]["generated_image_segments"] == []
     story_clips = [
-        clip for clip in timeline["tracks"]["visual"]
-        if clip.get("segment_id") is not None
+        clip for clip in timeline["tracks"]["visual"] if clip.get("segment_id") is not None
     ]
     assert [clip["source"] for clip in story_clips] == ["generated_video", "generated_video"]
     assert timeline["tracks"]["visual"][0]["asset_ref"] == "vid_01"

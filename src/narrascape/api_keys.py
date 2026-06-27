@@ -3,11 +3,11 @@
 Reads API keys from environment variables or .env file.
 Supports: MINIMAX_API_KEY, ARK_API_KEY (Volcengine), OPENAI_API_KEY, etc.
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 
 def load_env_file(path: Path | None = None) -> dict[str, str]:
@@ -28,7 +28,7 @@ def load_env_file(path: Path | None = None) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, val = line.split("=", 1)
-        env[key.strip()] = val.strip().strip('"\'')
+        env[key.strip()] = val.strip().strip("\"'")
     return env
 
 

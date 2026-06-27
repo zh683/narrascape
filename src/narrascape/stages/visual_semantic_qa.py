@@ -31,7 +31,10 @@ class VisualSemanticQAStage(Stage):
         output.parent.mkdir(parents=True, exist_ok=True)
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
         design = self._load_yaml(
-            self._first_existing(config.project_dir / "design_report.yaml", config.pipeline_dir / "design_report.yaml")
+            self._first_existing(
+                config.project_dir / "design_report.yaml",
+                config.pipeline_dir / "design_report.yaml",
+            )
         )
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
         render_report = self._load_yaml(config.pipeline_dir / "render_report.yaml")
@@ -41,7 +44,9 @@ class VisualSemanticQAStage(Stage):
         llm_error = ""
         if self.llm_client:
             try:
-                result = self._ask_llm(timeline, design, continuity, render_report, director_contract, context)
+                result = self._ask_llm(
+                    timeline, design, continuity, render_report, director_contract, context
+                )
                 findings = list(result.get("findings", []) or [])
                 status = result.get("status") or ("needs_rework" if findings else "approved")
                 llm_status = "used"
@@ -59,7 +64,9 @@ class VisualSemanticQAStage(Stage):
             "project": {"name": config.project.name, "title": config.project.title},
             "status": status,
             "review_process": {
-                "mode": "llm_visual_semantic_review" if llm_status == "used" else "metadata_fallback",
+                "mode": (
+                    "llm_visual_semantic_review" if llm_status == "used" else "metadata_fallback"
+                ),
                 "llm_status": llm_status,
                 "llm_error": llm_error,
             },
@@ -131,10 +138,18 @@ class VisualSemanticQAStage(Stage):
                 continue
             segment_id = int(clip["segment_id"])
             design_item = design_by_segment.get(segment_id, {})
-            metadata = design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+            metadata = (
+                design_item.get("metadata", {})
+                if isinstance(design_item.get("metadata"), dict)
+                else {}
+            )
             expected_location = design_item.get("location_id")
             expected_wardrobe = metadata.get("wardrobe")
-            if expected_location and clip.get("location_id") and expected_location != clip.get("location_id"):
+            if (
+                expected_location
+                and clip.get("location_id")
+                and expected_location != clip.get("location_id")
+            ):
                 findings.append(
                     {
                         "segment_id": segment_id,
@@ -143,7 +158,11 @@ class VisualSemanticQAStage(Stage):
                         "evidence": f"timeline location {clip.get('location_id')} differs from design {expected_location}",
                     }
                 )
-            if expected_wardrobe and clip.get("wardrobe") and expected_wardrobe != clip.get("wardrobe"):
+            if (
+                expected_wardrobe
+                and clip.get("wardrobe")
+                and expected_wardrobe != clip.get("wardrobe")
+            ):
                 findings.append(
                     {
                         "segment_id": segment_id,
@@ -204,7 +223,11 @@ class VisualSemanticQAStage(Stage):
             return []
         findings: list[dict[str, Any]] = []
         expected_scene = binding.get("scene_ref")
-        if expected_scene and clip.get("location_id") and str(clip.get("location_id")) != str(expected_scene):
+        if (
+            expected_scene
+            and clip.get("location_id")
+            and str(clip.get("location_id")) != str(expected_scene)
+        ):
             findings.append(
                 {
                     "segment_id": segment_id,
@@ -214,7 +237,11 @@ class VisualSemanticQAStage(Stage):
                 }
             )
         expected_wardrobe = binding.get("wardrobe_lock")
-        if expected_wardrobe and clip.get("wardrobe") and str(clip.get("wardrobe")) != str(expected_wardrobe):
+        if (
+            expected_wardrobe
+            and clip.get("wardrobe")
+            and str(clip.get("wardrobe")) != str(expected_wardrobe)
+        ):
             findings.append(
                 {
                     "segment_id": segment_id,
@@ -225,7 +252,11 @@ class VisualSemanticQAStage(Stage):
             )
         expected_positions = list(binding.get("character_positions") or [])
         actual_positions = list(clip.get("character_positions") or [])
-        if expected_positions and actual_positions and not self._positions_match(expected_positions, actual_positions):
+        if (
+            expected_positions
+            and actual_positions
+            and not self._positions_match(expected_positions, actual_positions)
+        ):
             findings.append(
                 {
                     "segment_id": segment_id,
@@ -236,7 +267,11 @@ class VisualSemanticQAStage(Stage):
             )
         expected_composition = list(binding.get("composition_requirements") or [])
         actual_composition = clip.get("composition")
-        if expected_composition and actual_composition and not self._any_text_overlap(expected_composition, [actual_composition]):
+        if (
+            expected_composition
+            and actual_composition
+            and not self._any_text_overlap(expected_composition, [actual_composition])
+        ):
             findings.append(
                 {
                     "segment_id": segment_id,
@@ -250,9 +285,7 @@ class VisualSemanticQAStage(Stage):
     def _positions_match(self, expected: list[Any], actual: list[Any]) -> bool:
         actual_cues = self._position_cues(" ".join(str(item) for item in actual))
         expected_cue_groups = [
-            cues
-            for cues in (self._position_cues(str(item)) for item in expected)
-            if cues
+            cues for cues in (self._position_cues(str(item)) for item in expected) if cues
         ]
         if expected_cue_groups:
             return any(cues <= actual_cues for cues in expected_cue_groups)
@@ -260,7 +293,9 @@ class VisualSemanticQAStage(Stage):
         actual_tokens = self._semantic_words(" ".join(str(item) for item in actual))
         for item in expected:
             expected_tokens = self._semantic_words(str(item))
-            if expected_tokens and len(expected_tokens & actual_tokens) >= min(3, len(expected_tokens)):
+            if expected_tokens and len(expected_tokens & actual_tokens) >= min(
+                3, len(expected_tokens)
+            ):
                 return True
         return False
 
@@ -268,10 +303,30 @@ class VisualSemanticQAStage(Stage):
         import re
 
         cue_words = {
-            "left", "right", "center", "centre", "center-left", "center-right",
-            "foreground", "background", "edge", "middle", "window", "silhouette",
-            "profile", "overhead", "low-angle", "high-angle", "behind", "front",
-            "back", "near", "far", "toward", "towards", "away",
+            "left",
+            "right",
+            "center",
+            "centre",
+            "center-left",
+            "center-right",
+            "foreground",
+            "background",
+            "edge",
+            "middle",
+            "window",
+            "silhouette",
+            "profile",
+            "overhead",
+            "low-angle",
+            "high-angle",
+            "behind",
+            "front",
+            "back",
+            "near",
+            "far",
+            "toward",
+            "towards",
+            "away",
         }
         words = set(re.findall(r"[a-zA-Z0-9_-]+", text.lower()))
         cues = {word for word in words if word in cue_words}
@@ -295,8 +350,21 @@ class VisualSemanticQAStage(Stage):
         import re
 
         stopwords = {
-            "the", "and", "with", "into", "toward", "towards", "beside", "against",
-            "this", "that", "from", "frame", "shot", "camera", "composition",
+            "the",
+            "and",
+            "with",
+            "into",
+            "toward",
+            "towards",
+            "beside",
+            "against",
+            "this",
+            "that",
+            "from",
+            "frame",
+            "shot",
+            "camera",
+            "composition",
         }
         return {
             word
@@ -306,14 +374,23 @@ class VisualSemanticQAStage(Stage):
 
     def _clip_semantic_tokens(self, clip: dict[str, Any]) -> str:
         values: list[str] = []
-        for key in ("location_id", "wardrobe", "lighting_scheme", "shot_type", "movement", "composition"):
+        for key in (
+            "location_id",
+            "wardrobe",
+            "lighting_scheme",
+            "shot_type",
+            "movement",
+            "composition",
+        ):
             if clip.get(key):
                 values.append(str(clip[key]))
         for key in ("character_ids", "character_positions", "storyboard_frame_ids"):
             values.extend(str(item) for item in clip.get(key, []) or [])
         return " ".join(values).lower()
 
-    def _visual_clips_with_paths(self, timeline: dict[str, Any], context: StageContext) -> list[dict[str, Any]]:
+    def _visual_clips_with_paths(
+        self, timeline: dict[str, Any], context: StageContext
+    ) -> list[dict[str, Any]]:
         clips = []
         for clip in timeline.get("tracks", {}).get("visual", []) or []:
             item = dict(clip)

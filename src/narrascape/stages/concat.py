@@ -33,17 +33,25 @@ class ConcatStage(Stage):
         for i in range(len(script.segments) - 1):
             seg_id = script.segments[i].id
             gap_dur = config.visual.gap_map.get(seg_id, config.visual.segment_gap)
-            dur_key = str(gap_dur).replace('.', '_')
+            dur_key = str(gap_dur).replace(".", "_")
             gv = gap_dir / f"gap_{i:02d}_{dur_key}s.mp4"
             if not gv.exists() or not validate_video(gv):
                 if gv.exists():
                     gv.unlink()
                 run_ffmpeg(
                     [
-                        "-f", "lavfi",
-                        "-i", f"color=c=black:s={config.encode.width}x{config.encode.height}:d={gap_dur}:r={config.encode.fps}",
-                        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
-                        "-pix_fmt", "yuv420p",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"color=c=black:s={config.encode.width}x{config.encode.height}:d={gap_dur}:r={config.encode.fps}",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "ultrafast",
+                        "-crf",
+                        "18",
+                        "-pix_fmt",
+                        "yuv420p",
                         str(gv),
                     ],
                     desc=f"gap {i} ({gap_dur}s)",
@@ -62,7 +70,7 @@ class ConcatStage(Stage):
             if i < len(script.segments) - 1:
                 seg_id = script.segments[i].id
                 gap_dur = config.visual.gap_map.get(seg_id, config.visual.segment_gap)
-                dur_key = str(gap_dur).replace('.', '_')
+                dur_key = str(gap_dur).replace(".", "_")
                 gv = gap_dir / f"gap_{i:02d}_{dur_key}s.mp4"
                 if gv.exists() and validate_video(gv):
                     lines.append(f"file '{gv.as_posix()}'")
@@ -100,13 +108,16 @@ class ConcatStage(Stage):
             else:
                 # Fallback: just body
                 import shutil
+
                 shutil.copy(str(body_video), str(final_video))
         else:
             import shutil
+
             shutil.copy(str(body_video), str(final_video))
 
         if validate_video(final_video):
             from narrascape.utils.ffmpeg import get_duration
+
             dur = get_duration(final_video)
             return StageResult(
                 self.name,
@@ -133,24 +144,31 @@ class ConcatStage(Stage):
             )
 
         if ending.quote:
-            quote_alpha = (
-                f"if(lt(t,3),0,if(lt(t,6),(t-3)/3,if(gt(t,12),1-(t-12)/3,1)))"
-            )
+            quote_alpha = "if(lt(t,3),0,if(lt(t,6),(t-3)/3,if(gt(t,12),1-(t-12)/3,1)))"
             drawtexts.append(
                 f"drawtext=text='{ending.quote}':fontsize={ending.quote_size}:fontcolor=#F0E8D8:"
                 f"x=(w-text_w)/2:y={yp + len(lines)*60 + 20}:fontfile={font_path}:"
                 f"alpha='{quote_alpha}'"
             )
 
-        drawtexts.extend([f"fade=t=in:st=0:d=1", f"fade=t=out:st={max(0, EDUR-2)}:d=2"])
+        drawtexts.extend(["fade=t=in:st=0:d=1", f"fade=t=out:st={max(0, EDUR-2)}:d=2"])
         vf = ",".join(drawtexts)
         return run_ffmpeg(
             [
-                "-f", "lavfi",
-                "-i", f"color=c=black:s={config.encode.width}x{config.encode.height}:d={EDUR}:r={config.encode.fps}",
-                "-vf", vf,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                "-pix_fmt", "yuv420p",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s={config.encode.width}x{config.encode.height}:d={EDUR}:r={config.encode.fps}",
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
                 str(output_path),
             ],
             desc="ending card",

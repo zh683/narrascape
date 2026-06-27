@@ -12,6 +12,7 @@ from narrascape.config import NarrascapeConfig, Script
 @dataclass
 class StageContext:
     """Shared context passed to all stages during pipeline execution."""
+
     config: NarrascapeConfig
     script: Script
     cache: BuildCache
@@ -30,6 +31,7 @@ class StageContext:
 @dataclass
 class StageResult:
     """Result of a stage execution."""
+
     stage_name: str
     success: bool
     outputs: list[Path] | dict[str, Any] = field(default_factory=list)

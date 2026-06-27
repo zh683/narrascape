@@ -16,15 +16,16 @@ Usage:
 Note: PromptDirector requires an LLM. It does NOT fall back to keyword rules.
     If no LLM is available, it raises a clear error.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 from typing import Any
 
-from narrascape.llm import LLMClient, OutputValidator, is_assistant_bridge_provider
+from narrascape.config import MovementType, NarrascapeConfig, ShotType
+from narrascape.llm import OutputValidator, is_assistant_bridge_provider
 from narrascape.llm.prompts import get_prompt
-from narrascape.config import NarrascapeConfig, ShotType, MovementType
 
 logger = logging.getLogger("narrascape.agent.prompt_director")
 
@@ -32,6 +33,7 @@ logger = logging.getLogger("narrascape.agent.prompt_director")
 # ═══════════════════════════════════════════════════════════════════
 # PromptDirector Agent
 # ═══════════════════════════════════════════════════════════════════
+
 
 class PromptDirector:
     """AI Director that designs cinematic image generation prompts with full director autonomy.
@@ -79,20 +81,38 @@ class PromptDirector:
                 }
                 for c in self._characters
             ],
-            "scene_style": {
-                "style_id": self._scene_style.style_id if self._scene_style else "default",
-                "style_name": self._scene_style.style_name if self._scene_style else "",
-                "base_color_temperature": self._scene_style.base_color_temperature if self._scene_style else "",
-                "color_palette": self._scene_style.color_palette if self._scene_style else "",
-                "lighting_signature": self._scene_style.lighting_signature if self._scene_style else "",
-                "texture_palette": self._scene_style.texture_palette if self._scene_style else "",
-                "atmosphere_signature": self._scene_style.atmosphere_signature if self._scene_style else "",
-                "depth_signature": self._scene_style.depth_signature if self._scene_style else "",
-                "lens_signature": self._scene_style.lens_signature if self._scene_style else "",
-                "style_references": self._scene_style.style_references if self._scene_style else [],
-                "world_rules": self._scene_style.world_rules if self._scene_style else [],
-                "consistency_notes": self._scene_style.consistency_notes if self._scene_style else "",
-            } if self._scene_style else None,
+            "scene_style": (
+                {
+                    "style_id": self._scene_style.style_id if self._scene_style else "default",
+                    "style_name": self._scene_style.style_name if self._scene_style else "",
+                    "base_color_temperature": (
+                        self._scene_style.base_color_temperature if self._scene_style else ""
+                    ),
+                    "color_palette": self._scene_style.color_palette if self._scene_style else "",
+                    "lighting_signature": (
+                        self._scene_style.lighting_signature if self._scene_style else ""
+                    ),
+                    "texture_palette": (
+                        self._scene_style.texture_palette if self._scene_style else ""
+                    ),
+                    "atmosphere_signature": (
+                        self._scene_style.atmosphere_signature if self._scene_style else ""
+                    ),
+                    "depth_signature": (
+                        self._scene_style.depth_signature if self._scene_style else ""
+                    ),
+                    "lens_signature": self._scene_style.lens_signature if self._scene_style else "",
+                    "style_references": (
+                        self._scene_style.style_references if self._scene_style else []
+                    ),
+                    "world_rules": self._scene_style.world_rules if self._scene_style else [],
+                    "consistency_notes": (
+                        self._scene_style.consistency_notes if self._scene_style else ""
+                    ),
+                }
+                if self._scene_style
+                else None
+            ),
             "reference_image_chains": [
                 {
                     "chain_id": r.chain_id,
@@ -136,7 +156,9 @@ class PromptDirector:
         """
         # AI Assistant mode: llm_client is always available
         # This assertion protects against initialization bugs
-        assert self.llm_client is not None, "PromptDirector requires LLM client — initialization bug"
+        assert (
+            self.llm_client is not None
+        ), "PromptDirector requires LLM client — initialization bug"
 
         overall_tone = analysis_list[0].emotion if analysis_list else "neutral"
         style_template = config.images.style if config.images else "cinematic documentary"
@@ -145,10 +167,9 @@ class PromptDirector:
         # Phase 0: Build character profiles and scene style for consistency anchoring
         # This happens BEFORE any shot design to ensure all shots reference the same anchors
         # Bridge-backed assistant modes use one batch task; batch design handles consistency.
-        is_bridge_backed = (
-            getattr(self.llm_client, 'config', None)
-            and is_assistant_bridge_provider(self.llm_client.config.provider)
-        )
+        is_bridge_backed = getattr(
+            self.llm_client, "config", None
+        ) and is_assistant_bridge_provider(self.llm_client.config.provider)
         if not is_bridge_backed:
             self._build_character_profiles(segments, analysis_list)
             self._build_scene_style(segments, analysis_list, style_template)
@@ -159,9 +180,13 @@ class PromptDirector:
 
         # Bridge-backed assistant modes use batch design to reduce task files.
         if is_bridge_backed:
-            logger.info("[PromptDirector] AI assistant bridge mode: using batch design for all segments")
+            logger.info(
+                "[PromptDirector] AI assistant bridge mode: using batch design for all segments"
+            )
             raw_designs = self._design_sequence_batch(
-                segments, analysis_list, config,
+                segments,
+                analysis_list,
+                config,
                 overall_tone=overall_tone,
                 style_template=style_template,
                 character_profiles_str=character_profiles_str,
@@ -175,7 +200,7 @@ class PromptDirector:
 
         # Phase 1: Design each shot individually with full context (including character anchors)
         raw_designs: list[Any] = []
-        for i, (seg, analysis) in enumerate(zip(segments, analysis_list)):
+        for i, (seg, analysis) in enumerate(zip(segments, analysis_list, strict=False)):
             # Inject storyboard context into segment if available
             original_text = None
             if storyboard:
@@ -184,12 +209,16 @@ class PromptDirector:
                     sb_text = self._format_storyboard_for_segment(sb_frames)
                     original_text = seg.text
                     seg.text = f"{original_text}\n\n[STORYBOARD GUIDANCE]\n{sb_text}"
-            
+
             try:
                 # Identify key shots that deserve multiple candidates (Problem 5)
-                is_key_shot = i == 0 or i == total - 1 or i == total // 2 or analysis.intensity > 0.7
+                is_key_shot = (
+                    i == 0 or i == total - 1 or i == total // 2 or analysis.intensity > 0.7
+                )
                 design = self._design_single_shot(
-                    seg, analysis, config,
+                    seg,
+                    analysis,
+                    config,
                     overall_tone=overall_tone,
                     style_template=style_template,
                     all_segments=segments,
@@ -205,7 +234,7 @@ class PromptDirector:
                 # Restore original text if modified
                 if original_text is not None:
                     seg.text = original_text
-            
+
             logger.info(
                 f"[PromptDirector] Designed shot {seg.id}: {design.shot_type.value} | "
                 f"{design.movement.value if design.movement else 'still'} | "
@@ -238,12 +267,15 @@ class PromptDirector:
     ) -> list[Any]:
         """Batch design all shots in a single LLM call (bridge mode optimization)."""
         from narrascape.agent.models import ShotDesign
-        from narrascape.config import ShotType, MovementType
-        
+
         # Build segments description
         segments_desc = []
-        for i, (seg, analysis) in enumerate(zip(segments, analysis_list)):
-            position = "opening" if i == 0 else "climax" if i == len(segments) - 1 else f"middle ({i+1}/{len(segments)})"
+        for i, (seg, analysis) in enumerate(zip(segments, analysis_list, strict=False)):
+            position = (
+                "opening"
+                if i == 0
+                else "climax" if i == len(segments) - 1 else f"middle ({i+1}/{len(segments)})"
+            )
             segments_desc.append(f"""
 Segment {seg.id} ({position}):
 - Text: {seg.text}
@@ -253,7 +285,7 @@ Segment {seg.id} ({position}):
 - Visual keywords: {', '.join(analysis.visual_keywords)}
 - Pacing: {analysis.pacing}
 """)
-        
+
         prompt = f"""You are an AI Director designing cinematic shots for a documentary video.
 
 Design ALL shots in the sequence below. For each segment, create a complete shot design.
@@ -306,27 +338,27 @@ Guidelines:
 
         resp = self.llm_client.complete(prompt, json_mode=True)
         data = resp.extract_json()
-        
+
         if not isinstance(data, list):
             raise ValueError(f"Expected JSON array, got {type(data)}")
-        
+
         # Build ShotDesign objects from response
         raw_designs = []
         for i, item in enumerate(data):
             seg_id = item.get("segment_id", segments[i].id if i < len(segments) else 0)
-            
+
             # Map shot type string to ShotType enum (with aliases)
             shot_type_str = item.get("shot_type", "medium")
             shot_type = self._parse_shot_type(shot_type_str)
-            
+
             # Map movement string to MovementType enum (with aliases)
             movement_str = item.get("movement", "none")
             movement = self._parse_movement_type(movement_str)
-            
+
             metadata = item.get("metadata", {})
             if not isinstance(metadata, dict):
                 metadata = {}
-            
+
             design = ShotDesign(
                 segment_id=seg_id,
                 shot_type=shot_type,
@@ -343,9 +375,9 @@ Guidelines:
             )
             raw_designs.append(design)
             logger.info(f"[PromptDirector] Batch-designed shot {seg_id}: {shot_type.value}")
-        
+
         return raw_designs
-    
+
     def _parse_shot_type(self, shot_type_str: str) -> ShotType:
         """Parse shot type string to ShotType enum with aliases."""
         aliases = {
@@ -386,7 +418,7 @@ Guidelines:
         except KeyError:
             logger.warning(f"Unknown shot type '{shot_type_str}', defaulting to MEDIUM")
             return ShotType.MEDIUM
-    
+
     def _parse_movement_type(self, movement_str: str) -> MovementType | None:
         """Parse movement string to MovementType enum with aliases."""
         if not movement_str or movement_str.lower() in ("none", "", "null", "still"):
@@ -470,9 +502,11 @@ Guidelines:
         position = (
             "opening"
             if index == 0
-            else "climax"
-            if index == len(all_segments) - 1
-            else f"middle ({index + 1}/{len(all_segments)})"
+            else (
+                "climax"
+                if index == len(all_segments) - 1
+                else f"middle ({index + 1}/{len(all_segments)})"
+            )
         )
 
         # Select relevant knowledge (Problem 4: smart cropping)
@@ -492,11 +526,23 @@ Guidelines:
         # Build validator for all required fields including three-layer model
         validator = OutputValidator.combine(
             OutputValidator.has_keys(
-                "director_vision", "cinematic_format", "shot_type", "movement",
-                "focal_length", "aperture", "camera_angle", "lighting_scheme",
-                "light_sources", "composition", "color_palette", "atmosphere",
-                "depth_of_field", "style_fingerprint", "image_prompt",
-                "negative_prompt", "reasoning"
+                "director_vision",
+                "cinematic_format",
+                "shot_type",
+                "movement",
+                "focal_length",
+                "aperture",
+                "camera_angle",
+                "lighting_scheme",
+                "light_sources",
+                "composition",
+                "color_palette",
+                "atmosphere",
+                "depth_of_field",
+                "style_fingerprint",
+                "image_prompt",
+                "negative_prompt",
+                "reasoning",
             ),
             OutputValidator.non_empty("director_vision"),
             OutputValidator.non_empty("cinematic_format"),
@@ -511,7 +557,7 @@ Guidelines:
             print(f"DEBUG template: {repr(template_user)}")
             print(f"DEBUG profiles: {repr(character_profiles_str)[:150]}")
             print(f"DEBUG style: {repr(scene_style_str)[:150]}")
-            
+
             design_data = self.llm_client.run_template_validated(
                 template,
                 validator=validator,
@@ -525,14 +571,10 @@ Guidelines:
                 intensity=f"{analysis.intensity:.1f}",
                 scene_type=analysis.scene_type,
                 entities=(
-                    ", ".join(analysis.key_entities[:5])
-                    if analysis.key_entities
-                    else "none"
+                    ", ".join(analysis.key_entities[:5]) if analysis.key_entities else "none"
                 ),
                 visual_keywords=(
-                    ", ".join(analysis.visual_keywords[:5])
-                    if analysis.visual_keywords
-                    else "none"
+                    ", ".join(analysis.visual_keywords[:5]) if analysis.visual_keywords else "none"
                 ),
                 narrative_function=getattr(analysis, "narrative_function", "exposition"),
                 pacing=analysis.pacing,
@@ -549,8 +591,16 @@ Guidelines:
             # Optional: generate multiple variations for key shots (Problem 5)
             if generate_variations:
                 design.metadata["variations"] = self._generate_variations(
-                    design, seg_id, text, analysis, cinematography_knowledge,
-                    style_template, overall_tone, prev_context, next_context, position,
+                    design,
+                    seg_id,
+                    text,
+                    analysis,
+                    cinematography_knowledge,
+                    style_template,
+                    overall_tone,
+                    prev_context,
+                    next_context,
+                    position,
                     video_model,
                 )
 
@@ -565,14 +615,20 @@ Guidelines:
                         f"(score: {critique['score']:.2f})"
                     )
                     design = self._redesign_with_constraints(
-                        design, critique["issues"], text, analysis, cinematography_knowledge,
-                        style_template, overall_tone, prev_context, next_context, position,
+                        design,
+                        critique["issues"],
+                        text,
+                        analysis,
+                        cinematography_knowledge,
+                        style_template,
+                        overall_tone,
+                        prev_context,
+                        next_context,
+                        position,
                     )
 
             # Add video model specific notes (Problem 7)
-            design.metadata["video_model_notes"] = self._video_model_notes(
-                video_model, design
-            )
+            design.metadata["video_model_notes"] = self._video_model_notes(video_model, design)
 
             return design
 
@@ -663,8 +719,10 @@ Guidelines:
                     )
 
                 # Apply adjustments: if overall consistency score is low, trigger redesign
-                if score < 0.5 and adjustments and adjustments.lower() not in (
-                    "none", "无", "none.", ""
+                if (
+                    score < 0.5
+                    and adjustments
+                    and adjustments.lower() not in ("none", "无", "none.", "")
                 ):
                     logger.info(
                         f"[PromptDirector] Redesigning shot {design.segment_id} "
@@ -675,9 +733,7 @@ Guidelines:
                     designs[i] = design
 
                 # Also apply minor adjustments directly to metadata if no redesign needed
-                elif adjustments and adjustments.lower() not in (
-                    "none", "无", "none.", ""
-                ):
+                elif adjustments and adjustments.lower() not in ("none", "无", "none.", ""):
                     design.metadata["consistency_applied"] = True
                     # Parse and apply specific prompt adjustments
                     self._apply_prompt_adjustments(design, adjustments)
@@ -707,9 +763,8 @@ Guidelines:
 
         try:
             from narrascape.llm.models import Message
-            resp = self.llm_client.chat(
-                [Message(role="user", content=correction_prompt)]
-            )
+
+            resp = self.llm_client.chat([Message(role="user", content=correction_prompt)])
             data = resp.extract_json_safe()
             if data and isinstance(data, dict):
                 if data.get("director_vision"):
@@ -747,11 +802,12 @@ Guidelines:
             # Try to extract the suggested modification
             # Heuristic: look for quoted text after the suggestion
             import re
-            match = re.search(r'''["\'](.+?)["\']''', adjustments)
+
+            match = re.search(r"""["\'](.+?)["\']""", adjustments)
             if match and design.director_vision:
                 new_vision = match.group(1)
                 design.director_vision = new_vision
-                design.reasoning += f" [Minor consistency adjustment: rewritten director_vision]"
+                design.reasoning += " [Minor consistency adjustment: rewritten director_vision]"
             return
 
         # Simple heuristics: extract keyword adjustments for metadata hints
@@ -818,13 +874,15 @@ Guidelines:
             from narrascape.llm.models import Message
 
             resp = self.llm_client.chat(
-                [Message(
-                    role="user",
-                    content=template.user.format(
-                        segments_json=segments_json,
-                        analysis_json=analysis_json,
-                    ),
-                )]
+                [
+                    Message(
+                        role="user",
+                        content=template.user.format(
+                            segments_json=segments_json,
+                            analysis_json=analysis_json,
+                        ),
+                    )
+                ]
             )
             data = resp.extract_json_safe()
 
@@ -902,13 +960,15 @@ Guidelines:
             from narrascape.llm.models import Message
 
             resp = self.llm_client.chat(
-                [Message(
-                    role="user",
-                    content=template.user.format(
-                        segments_json=segments_json,
-                        analysis_json=analysis_json,
-                    ),
-                )]
+                [
+                    Message(
+                        role="user",
+                        content=template.user.format(
+                            segments_json=segments_json,
+                            analysis_json=analysis_json,
+                        ),
+                    )
+                ]
             )
             data = resp.extract_json_safe()
 
@@ -954,7 +1014,7 @@ Guidelines:
                 f'"body_description": "{c.body_description}", '
                 f'"default_outfit": "{c.default_outfit}", '
                 f'"signature_accessories": {json.dumps(c.signature_accessories)}, '
-                f'"negative_anchors": {json.dumps(c.negative_anchors)}' + '}'
+                f'"negative_anchors": {json.dumps(c.negative_anchors)}' + "}"
             )
             formatted.append(profile)
 
@@ -1001,29 +1061,37 @@ Guidelines:
         # Character reference chains
         for char in self._characters:
             if char.reference_image_url:
-                chains.append(ReferenceImageChain(
-                    chain_id=f"char_{char.char_id}",
-                    chain_type="character",
-                    reference_urls=[char.reference_image_url] if isinstance(char.reference_image_url, str) else char.reference_image_url,
-                    target_model=char.seedream_model or "seedream_4.6",
-                    usage_mode="reference",
-                    sample_strength=char.seedream_sample_strength or 0.5,
-                    consistency_target="face",
-                    description=f"Character reference: {char.name}",
-                ))
+                chains.append(
+                    ReferenceImageChain(
+                        chain_id=f"char_{char.char_id}",
+                        chain_type="character",
+                        reference_urls=(
+                            [char.reference_image_url]
+                            if isinstance(char.reference_image_url, str)
+                            else char.reference_image_url
+                        ),
+                        target_model=char.seedream_model or "seedream_4.6",
+                        usage_mode="reference",
+                        sample_strength=char.seedream_sample_strength or 0.5,
+                        consistency_target="face",
+                        description=f"Character reference: {char.name}",
+                    )
+                )
 
         # Scene style reference chain
         if self._scene_style and self._scene_style.style_references:
-            chains.append(ReferenceImageChain(
-                chain_id=f"style_{self._scene_style.style_id}",
-                chain_type="style",
-                reference_urls=self._scene_style.style_references,
-                target_model="seedream_5.0",
-                usage_mode="style",
-                sample_strength=0.3,
-                consistency_target="style",
-                description=f"Style reference: {self._scene_style.style_name}",
-            ))
+            chains.append(
+                ReferenceImageChain(
+                    chain_id=f"style_{self._scene_style.style_id}",
+                    chain_type="style",
+                    reference_urls=self._scene_style.style_references,
+                    target_model="seedream_5.0",
+                    usage_mode="style",
+                    sample_strength=0.3,
+                    consistency_target="style",
+                    description=f"Style reference: {self._scene_style.style_name}",
+                )
+            )
 
         # Per-shot generated image chains (for video first/last frame linking)
         for design in designs:
@@ -1032,16 +1100,18 @@ Guidelines:
                     # Link to existing chain or create new
                     existing = [c for c in chains if c.chain_id == chain_id]
                     if not existing:
-                        chains.append(ReferenceImageChain(
-                            chain_id=chain_id,
-                            chain_type="scene",
-                            reference_urls=[],
-                            target_model=design.seedance_model or "seedance_2.0",
-                            usage_mode="first_frame",
-                            sample_strength=0.5,
-                            consistency_target="all",
-                            description=f"Scene chain for segment {design.segment_id}",
-                        ))
+                        chains.append(
+                            ReferenceImageChain(
+                                chain_id=chain_id,
+                                chain_type="scene",
+                                reference_urls=[],
+                                target_model=design.seedance_model or "seedance_2.0",
+                                usage_mode="first_frame",
+                                sample_strength=0.5,
+                                consistency_target="all",
+                                description=f"Scene chain for segment {design.segment_id}",
+                            )
+                        )
 
         self._reference_image_chains = chains
         logger.info(f"[PromptDirector] Built {len(chains)} reference image chains")
@@ -1072,12 +1142,35 @@ Guidelines:
 
                 # Check 1: Does image_prompt contain key identity terms?
                 # Extract key nouns/adjectives from identity_block (simple heuristic)
-                key_terms = [word for word in expected_identity.split()
-                            if len(word) > 3 and word not in (
-                                "with", "wearing", "and", "the", "his", "her", "has",
-                                "have", "had", "been", "were", "are", "from", "this",
-                                "that", "for", "not", "but", "you", "she", "they",
-                            )]
+                key_terms = [
+                    word
+                    for word in expected_identity.split()
+                    if len(word) > 3
+                    and word
+                    not in (
+                        "with",
+                        "wearing",
+                        "and",
+                        "the",
+                        "his",
+                        "her",
+                        "has",
+                        "have",
+                        "had",
+                        "been",
+                        "were",
+                        "are",
+                        "from",
+                        "this",
+                        "that",
+                        "for",
+                        "not",
+                        "but",
+                        "you",
+                        "she",
+                        "they",
+                    )
+                ]
 
                 missing_terms = []
                 for term in key_terms[:10]:  # Check top 10 most significant terms
@@ -1095,8 +1188,14 @@ Guidelines:
 
                 # Check 2: Does negative_prompt contain anti-drift terms?
                 negative = design.metadata.get("negative_prompt", "").lower()
-                anti_drift_terms = ["different hair", "different face", "different outfit",
-                                   "different age", "smooth skin", "deformed face"]
+                anti_drift_terms = [
+                    "different hair",
+                    "different face",
+                    "different outfit",
+                    "different age",
+                    "smooth skin",
+                    "deformed face",
+                ]
                 has_protection = any(term in negative for term in anti_drift_terms)
 
                 if not has_protection and design.character_refs:
@@ -1126,21 +1225,19 @@ Guidelines:
 
     # ── Smart Knowledge Selection (Problem 4) ───────────────────────────
 
-    def _select_knowledge_for_shot(
-        self, scene_type: str, emotion: str, pacing: str
-    ) -> str:
+    def _select_knowledge_for_shot(self, scene_type: str, emotion: str, pacing: str) -> str:
         """Select the most relevant cinematography knowledge for this shot.
 
         Instead of sending the entire ~15KB knowledge base, we prioritize chapters
         based on the shot's needs and return only the most relevant sections.
         """
         from narrascape.agent.cinematography_knowledge import (
-            SHOT_TYPE_KNOWLEDGE,
             CAMERA_LENS_KNOWLEDGE,
-            LIGHTING_KNOWLEDGE,
-            COMPOSITION_KNOWLEDGE,
             COLOR_ATMOSPHERE_KNOWLEDGE,
+            COMPOSITION_KNOWLEDGE,
+            LIGHTING_KNOWLEDGE,
             NEGATIVE_PROMPT_KNOWLEDGE,
+            SHOT_TYPE_KNOWLEDGE,
             VIDEO_FIRST_KNOWLEDGE,
         )
 
@@ -1275,12 +1372,13 @@ Guidelines:
                 f"- image_prompt: {design.image_prompt[:200]}\n\n"
                 f"Generate 2 alternative approaches (different shot type, focal length, or angle) "
                 f"that could also work for this moment. Each should be a valid creative choice.\n\n"
-                f'Return ONLY a JSON array of 2 objects: '
+                f"Return ONLY a JSON array of 2 objects: "
                 f'[{{"shot_type": "...", "focal_length": "...", "camera_angle": "...", '
                 f'"movement": "...", "image_prompt": "...", "reasoning": "..."}}, ...]'
             )
 
             from narrascape.llm.models import Message
+
             resp = self.llm_client.chat([Message(role="user", content=variation_prompt)])
             data = resp.extract_json_safe()
 
@@ -1288,14 +1386,16 @@ Guidelines:
                 variations = []
                 for v in data[:2]:
                     if isinstance(v, dict) and v.get("image_prompt"):
-                        variations.append({
-                            "shot_type": v.get("shot_type", design.shot_type.value),
-                            "focal_length": v.get("focal_length", ""),
-                            "camera_angle": v.get("camera_angle", ""),
-                            "movement": v.get("movement", ""),
-                            "image_prompt": v.get("image_prompt", ""),
-                            "reasoning": v.get("reasoning", "Alternative design"),
-                        })
+                        variations.append(
+                            {
+                                "shot_type": v.get("shot_type", design.shot_type.value),
+                                "focal_length": v.get("focal_length", ""),
+                                "camera_angle": v.get("camera_angle", ""),
+                                "movement": v.get("movement", ""),
+                                "image_prompt": v.get("image_prompt", ""),
+                                "reasoning": v.get("reasoning", "Alternative design"),
+                            }
+                        )
                 return variations
 
         except Exception as e:
@@ -1326,11 +1426,12 @@ Guidelines:
                 f"3. Does the composition match the emotion?\n"
                 f"4. Does the negative_prompt cover common AI artifacts?\n"
                 f"5. Does the shot serve the narration (not just look pretty)?\n\n"
-                f'Return ONLY a JSON object: '
+                f"Return ONLY a JSON object: "
                 f'{{"score": 0.0-1.0, "issues": ["..."], "suggestions": ["..."]}}'
             )
 
             from narrascape.llm.models import Message
+
             resp = self.llm_client.chat([Message(role="user", content=critique_prompt)])
             data = resp.extract_json_safe()
 
@@ -1372,11 +1473,21 @@ Guidelines:
         )
         validator = OutputValidator.combine(
             OutputValidator.has_keys(
-                "shot_type", "movement", "focal_length", "aperture",
-                "camera_angle", "lighting_scheme", "light_sources",
-                "composition", "color_palette", "atmosphere",
-                "depth_of_field", "style_fingerprint", "image_prompt",
-                "negative_prompt", "reasoning"
+                "shot_type",
+                "movement",
+                "focal_length",
+                "aperture",
+                "camera_angle",
+                "lighting_scheme",
+                "light_sources",
+                "composition",
+                "color_palette",
+                "atmosphere",
+                "depth_of_field",
+                "style_fingerprint",
+                "image_prompt",
+                "negative_prompt",
+                "reasoning",
             ),
             OutputValidator.non_empty("image_prompt"),
             OutputValidator.non_empty("negative_prompt"),
@@ -1394,14 +1505,10 @@ Guidelines:
                 intensity=f"{analysis.intensity:.1f}",
                 scene_type=analysis.scene_type,
                 entities=(
-                    ", ".join(analysis.key_entities[:5])
-                    if analysis.key_entities
-                    else "none"
+                    ", ".join(analysis.key_entities[:5]) if analysis.key_entities else "none"
                 ),
                 visual_keywords=(
-                    ", ".join(analysis.visual_keywords[:5])
-                    if analysis.visual_keywords
-                    else "none"
+                    ", ".join(analysis.visual_keywords[:5]) if analysis.visual_keywords else "none"
                 ),
                 narrative_function=getattr(analysis, "narrative_function", "exposition"),
                 pacing=analysis.pacing,
@@ -1583,9 +1690,7 @@ Guidelines:
 
         if not accepted and issues:
             # Log patterns for optimization
-            logger.info(
-                f"[PromptDirector] Image rejected for segment {segment_id}: {issues}"
-            )
+            logger.info(f"[PromptDirector] Image rejected for segment {segment_id}: {issues}")
             # Could trigger negative prompt optimization here
             # For now, just log it
 
@@ -1599,6 +1704,7 @@ Guidelines:
 
         # Count common issues
         from collections import Counter
+
         issue_counts = Counter()
         for e in self._feedback_log:
             for issue in e.get("issues", []):
@@ -1655,12 +1761,16 @@ Guidelines:
         director_vision = design_data.get("director_vision", "")
         if not director_vision:
             director_vision = design_data.get("image_prompt", text)
-            logger.warning(f"[PromptDirector] Shot {seg_id}: director_vision missing from LLM output. Using image_prompt as fallback.")
+            logger.warning(
+                f"[PromptDirector] Shot {seg_id}: director_vision missing from LLM output. Using image_prompt as fallback."
+            )
 
         # Layer 3: cinematic_format is the standardized cinematic language representation
         cinematic_format = design_data.get("cinematic_format", "")
         if not cinematic_format:
-            logger.warning(f"[PromptDirector] Shot {seg_id}: cinematic_format missing from LLM output. Constructing fallback.")
+            logger.warning(
+                f"[PromptDirector] Shot {seg_id}: cinematic_format missing from LLM output. Constructing fallback."
+            )
             cinematic_format = self._build_cinematic_format_fallback(design_data, seg_id)
 
         # Verify three-layer consistency (prevent LLM from cutting corners)
@@ -1690,7 +1800,7 @@ Guidelines:
         seedream_model = design_data.get("seedream_model", "")
         seedance_model = design_data.get("seedance_model", "")
         seedance_resolution = design_data.get("seedance_resolution", "720p")
-        
+
         if not seedream_model:
             seedream_model = self._select_seedream_model(character_refs)
         if not seedance_model:
@@ -1758,11 +1868,28 @@ Guidelines:
             prompt_lower = image_prompt.lower()
 
             # Simple heuristic: check if key identity terms are present
-            key_terms = [word for word in identity_lower.split()
-                        if len(word) > 4 and word not in (
-                            "with", "wearing", "and", "the", "his", "her", "has",
-                            "have", "been", "were", "are", "from", "this", "that",
-                        )]
+            key_terms = [
+                word
+                for word in identity_lower.split()
+                if len(word) > 4
+                and word
+                not in (
+                    "with",
+                    "wearing",
+                    "and",
+                    "the",
+                    "his",
+                    "her",
+                    "has",
+                    "have",
+                    "been",
+                    "were",
+                    "are",
+                    "from",
+                    "this",
+                    "that",
+                )
+            ]
             overlap = sum(1 for term in key_terms[:5] if term in prompt_lower)
 
             if overlap >= 2:
@@ -1826,7 +1953,7 @@ Guidelines:
     def _build_cinematic_format_fallback(self, design_data: dict, seg_id: int) -> str:
         """Construct a basic cinematic_format when LLM doesn't provide one."""
         parts = []
-        
+
         # Location/Time (best effort from scene_type)
         scene_type = design_data.get("scene_type", "")
         if "outdoor" in scene_type.lower() or "landscape" in scene_type.lower():
@@ -1835,46 +1962,46 @@ Guidelines:
             parts.append("INT. LOCATION — TIME")
         else:
             parts.append("EXT./INT. LOCATION — TIME")
-        
+
         # Shot size
         shot_type = design_data.get("shot_type", "medium shot")
         parts.append(shot_type.upper().replace("_", " "))
-        
+
         # Lens
         focal_length = design_data.get("focal_length", "")
         if focal_length:
             parts.append(f"{focal_length}")
-        
+
         # Angle
         camera_angle = design_data.get("camera_angle", "")
         if camera_angle:
             parts.append(camera_angle.upper().replace("-", " "))
-        
+
         # Movement
         movement = design_data.get("movement", "")
         if movement and movement.lower() != "still":
             parts.append(movement.upper().replace("_", " "))
-        
+
         # Lighting
         lighting = design_data.get("lighting_scheme", "")
         if lighting:
             parts.append(f"LIGHTING: {lighting.upper()}")
-        
+
         # Depth
         dof = design_data.get("depth_of_field", "")
         if dof:
             parts.append(f"DEPTH: {dof.upper()}")
-        
+
         # Color
         color = design_data.get("color_palette", "")
         if color:
             parts.append(f"COLOR: {color.upper()}")
-        
+
         # Mood
         emotion = design_data.get("emotion", "")
         if emotion:
             parts.append(f"MOOD: {emotion.upper()}")
-        
+
         return ". ".join(parts) + "."
 
     def _verify_three_layer_consistency(
@@ -1897,7 +2024,9 @@ Guidelines:
             if isinstance(design_data, dict):
                 data = design_data
             else:
-                data = getattr(design_data, "model_dump", lambda: getattr(design_data, "__dict__", {}))()
+                data = getattr(
+                    design_data, "model_dump", lambda: getattr(design_data, "__dict__", {})
+                )()
             director_vision = data.get("director_vision", "")
             cinematic_format = data.get("cinematic_format", "")
             seg_id = data.get("segment_id", 0) or data.get("seg_id", 0)
@@ -1912,7 +2041,17 @@ Guidelines:
             warnings.append("cinematic_format missing EXT./INT. location marker")
 
         # Check 2: cinematic_format must contain a time of day
-        time_markers = ["DAWN", "MORNING", "NOON", "AFTERNOON", "GOLDEN HOUR", "SUNSET", "DUSK", "NIGHT", "MIDNIGHT"]
+        time_markers = [
+            "DAWN",
+            "MORNING",
+            "NOON",
+            "AFTERNOON",
+            "GOLDEN HOUR",
+            "SUNSET",
+            "DUSK",
+            "NIGHT",
+            "MIDNIGHT",
+        ]
         if not any(t in cinematic_format.upper() for t in time_markers):
             warnings.append("cinematic_format missing time-of-day marker")
 
@@ -1924,7 +2063,8 @@ Guidelines:
         if "K" not in cinematic_format and "KELVIN" not in cinematic_format.upper():
             # Check for common color temperature shorthand like 3500K, 6500K
             import re
-            if not re.search(r'\d{3,4}K', cinematic_format):
+
+            if not re.search(r"\d{3,4}K", cinematic_format):
                 warnings.append("cinematic_format missing color temperature (Kelvin value)")
 
         # Check 5: cinematic_format must contain an aperture or depth reference
@@ -1936,22 +2076,51 @@ Guidelines:
         image_prompt = design_data.get("image_prompt", "") if isinstance(design_data, dict) else ""
         if image_prompt and cinematic_format:
             # Extract shot type from cinematic_format
-            shot_types = ["WIDE SHOT", "CLOSE UP", "MEDIUM SHOT", "EXTREME CLOSE", "FULL SHOT", "ESTABLISHING"]
+            shot_types = [
+                "WIDE SHOT",
+                "CLOSE UP",
+                "MEDIUM SHOT",
+                "EXTREME CLOSE",
+                "FULL SHOT",
+                "ESTABLISHING",
+            ]
             found_shot_type = any(st in cinematic_format.upper() for st in shot_types)
             if found_shot_type:
                 # Check if image_prompt also references the shot type or framing
                 prompt_has_framing = any(
                     term in image_prompt.lower()
-                    for term in ["wide shot", "close up", "medium shot", "extreme close", "full shot", "establishing"]
+                    for term in [
+                        "wide shot",
+                        "close up",
+                        "medium shot",
+                        "extreme close",
+                        "full shot",
+                        "establishing",
+                    ]
                 )
                 if not prompt_has_framing:
-                    warnings.append("image_prompt may be missing framing info from cinematic_format")
+                    warnings.append(
+                        "image_prompt may be missing framing info from cinematic_format"
+                    )
 
         # Check 7: director_vision should NOT contain technical terms (it should be pure visual description)
-        banned_terms = ["85mm", "f/1.4", "f/2.8", "f/5.6", "f/8", "f/11", "low-key", "high-key", "chiaroscuro", "rembrandt"]
+        banned_terms = [
+            "85mm",
+            "f/1.4",
+            "f/2.8",
+            "f/5.6",
+            "f/8",
+            "f/11",
+            "low-key",
+            "high-key",
+            "chiaroscuro",
+            "rembrandt",
+        ]
         for term in banned_terms:
             if term.lower() in director_vision.lower():
-                warnings.append(f"director_vision contains technical term '{term}' — should be in cinematic_format only")
+                warnings.append(
+                    f"director_vision contains technical term '{term}' — should be in cinematic_format only"
+                )
                 break  # One warning is enough
 
         # Log all warnings
@@ -1983,6 +2152,7 @@ Guidelines:
 
     def _derive_size(self, shot_type_str: str) -> str | None:
         from narrascape.motion.factory import derive_size
+
         try:
             st = ShotType(shot_type_str.lower().strip().replace(" ", "_"))
             return derive_size(st, manual_size=None)
@@ -2007,5 +2177,7 @@ Guidelines:
   Duration: {f.duration_hint:.1f}s
   Notes: {f.notes[:100] if f.notes else 'none'}
 """)
-        lines.append("\nWhen designing this shot, follow the storyboard frame descriptions closely. Match the composition, camera angle, and character positions.")
+        lines.append(
+            "\nWhen designing this shot, follow the storyboard frame descriptions closely. Match the composition, camera angle, and character positions."
+        )
         return "\n".join(lines)

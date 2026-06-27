@@ -8,6 +8,7 @@ Supports multiple backends:
 - Generic HTTP upload
 - Base64 inline (fallback, no upload needed)
 """
+
 from __future__ import annotations
 
 import base64
@@ -16,7 +17,6 @@ import logging
 import mimetypes
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger("narrascape.uploader")
 
@@ -122,12 +122,10 @@ class ImageUploader:
         Expects the upload endpoint to return JSON with a 'url' field.
         """
         import os
+
         endpoint = os.environ.get("NARRASCAPE_UPLOAD_ENDPOINT", "")
         if not endpoint:
-            logger.warning(
-                "NARRASCAPE_UPLOAD_ENDPOINT not set. "
-                "Using base64 inline fallback."
-            )
+            logger.warning("NARRASCAPE_UPLOAD_ENDPOINT not set. " "Using base64 inline fallback.")
             return self._to_base64(path)
 
         # Prepare multipart form data
@@ -142,9 +140,9 @@ class ImageUploader:
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
             f"Content-Type: {mime}\r\n\r\n"
-        ).encode("utf-8")
+        ).encode()
         body += file_data
-        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+        body += f"\r\n--{boundary}--\r\n".encode()
 
         req = urllib.request.Request(
             endpoint,

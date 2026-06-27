@@ -3,14 +3,15 @@
 Reads image_prompts.yaml, calls Ark API, outputs to assets/images/.
 Supports reference images for character consistency and sequential batch mode.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import subprocess
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +65,9 @@ class GenerateImagesStage(Stage):
         prompts_path = config.project_dir / "image_prompts.yaml"
         if not prompts_path.exists():
             return False, f"image_prompts.yaml not found: {prompts_path}"
-        selection = select_provider(config, "image_generation", intent=self._intent_for_config(config))
+        selection = select_provider(
+            config, "image_generation", intent=self._intent_for_config(config)
+        )
         if selection.tool.name == "local_image":
             return True, ""
         if not self.api_key:
@@ -81,7 +84,9 @@ class GenerateImagesStage(Stage):
         images_dir.mkdir(parents=True, exist_ok=True)
         pipe_dir = config.pipeline_dir
         pipe_dir.mkdir(parents=True, exist_ok=True)
-        selection = select_provider(config, "image_generation", intent=self._intent_for_config(config))
+        selection = select_provider(
+            config, "image_generation", intent=self._intent_for_config(config)
+        )
         provider_meta = selection_metadata(selection)
 
         # Load prompts
@@ -107,11 +112,16 @@ class GenerateImagesStage(Stage):
                 True,
                 outputs=generated,
                 message=f"{len(generated)} local placeholder image(s)",
-                metadata={"mode": "local", "count": len(generated), "provider_selection": provider_meta},
+                metadata={
+                    "mode": "local",
+                    "count": len(generated),
+                    "provider_selection": provider_meta,
+                },
             )
 
         # Budget check
         from narrascape.utils.budget import BudgetTracker
+
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
         est_cost = budget_tracker.get_cost_estimate("image", len(targets))
         can_spend, budget_msg = budget_tracker.can_spend(est_cost)
@@ -144,14 +154,18 @@ class GenerateImagesStage(Stage):
         if self.sequential_batch > 0:
             # Batch mode
             for batch_start in range(0, len(targets), self.sequential_batch):
-                batch = targets[batch_start:batch_start + self.sequential_batch]
+                batch = targets[batch_start : batch_start + self.sequential_batch]
                 prompts_text = [p.description.replace("\n", " ").strip() for p in batch]
                 names = [p.id for p in batch]
                 shot_type = batch[0].shot_type.value
                 manual_size = batch[0].size
                 size = self._derive_size(shot_type, manual_size)
-                logger.info(f"[Batch {batch_start // self.sequential_batch + 1}] {', '.join(names)} (size={size})")
-                results = self._generate_sequential(prompts_text, names, size, ref_image_b64, images_dir)
+                logger.info(
+                    f"[Batch {batch_start // self.sequential_batch + 1}] {', '.join(names)} (size={size})"
+                )
+                results = self._generate_sequential(
+                    prompts_text, names, size, ref_image_b64, images_dir
+                )
                 for r in results:
                     if r:
                         ok_count += 1
@@ -173,17 +187,19 @@ class GenerateImagesStage(Stage):
                 prompt_text = p.description.replace("\n", " ").strip()
                 shot_type = p.shot_type.value
                 size = self._derive_size(shot_type, p.size)
-                
+
                 # Extract per-prompt parameters from metadata
                 negative_prompt = getattr(p, "negative_prompt", None) or ""
                 seedream_model = getattr(p, "seedream_model", None) or self.model
-                sample_strength = getattr(p, "seedream_sample_strength", None) or self.default_sample_strength
-                
+                sample_strength = (
+                    getattr(p, "seedream_sample_strength", None) or self.default_sample_strength
+                )
+
                 # Check for per-prompt reference images (multi-reference support)
                 prompt_ref_image = ref_image_b64
                 per_prompt_ref = getattr(p, "reference_image_url", None)
                 per_prompt_refs = getattr(p, "reference_images", [])
-                
+
                 if per_prompt_refs:
                     # Multi-reference: upload all and pass as array
                     uploaded_refs = []
@@ -195,15 +211,26 @@ class GenerateImagesStage(Stage):
                     # Legacy single reference
                     prompt_ref_image = self._load_ref_image(per_prompt_ref)
                     logger.info(f"  Per-prompt reference: {per_prompt_ref}")
-                
-                logger.info(f"[{i + 1}/{len(targets)}] {pid}: {prompt_text[:70]}... (size={size}, model={seedream_model})")
-                if self._generate_one(prompt_text, pid, size, prompt_ref_image, images_dir, 
-                                      negative_prompt=negative_prompt, model=seedream_model, 
-                                      sample_strength=sample_strength):
+
+                logger.info(
+                    f"[{i + 1}/{len(targets)}] {pid}: {prompt_text[:70]}... (size={size}, model={seedream_model})"
+                )
+                if self._generate_one(
+                    prompt_text,
+                    pid,
+                    size,
+                    prompt_ref_image,
+                    images_dir,
+                    negative_prompt=negative_prompt,
+                    model=seedream_model,
+                    sample_strength=sample_strength,
+                ):
                     ok_count += 1
                     done.add(pid)
                     state["done"] = list(done)
-                    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+                    state_path.write_text(
+                        json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
+                    )
                     # Record actual cost per successful generation
                     per_image = budget_tracker.get_cost_estimate("image", 1)
                     budget_tracker.record(per_image)
@@ -217,7 +244,11 @@ class GenerateImagesStage(Stage):
             self.name,
             fail_count == 0,
             message=f"{ok_count} OK, {fail_count} failed",
-            metadata={"provider_selection": provider_meta, "ok_count": ok_count, "fail_count": fail_count},
+            metadata={
+                "provider_selection": provider_meta,
+                "ok_count": ok_count,
+                "fail_count": fail_count,
+            },
         )
 
     # ── Internal methods ───────────────────────────
@@ -234,7 +265,9 @@ class GenerateImagesStage(Stage):
             return "reference"
         return "creative"
 
-    def _generate_local_placeholder(self, prompt: Any, out: Path, index: int, config: NarrascapeConfig) -> None:
+    def _generate_local_placeholder(
+        self, prompt: Any, out: Path, index: int, config: NarrascapeConfig
+    ) -> None:
         """Generate a deterministic local image for offline pipeline verification."""
         palette = [
             ((35, 74, 101), (230, 194, 116)),
@@ -256,13 +289,17 @@ class GenerateImagesStage(Stage):
         for step in range(0, width, max(1, width // 18)):
             color = tuple(int(bg[c] + (accent[c] - bg[c]) * step / max(width, 1)) for c in range(3))
             draw.rectangle([step, 0, min(step + width // 18 + 1, width), height], fill=color)
-        draw.rectangle([width * 0.08, height * 0.12, width * 0.92, height * 0.88], outline=(245, 245, 235), width=max(2, width // 180))
+        draw.rectangle(
+            [width * 0.08, height * 0.12, width * 0.92, height * 0.88],
+            outline=(245, 245, 235),
+            width=max(2, width // 180),
+        )
         font = ImageFont.load_default()
         label = f"{prompt.id} / {prompt.shot_type.value}"
         draw.text((width * 0.1, height * 0.14), label, fill=(255, 255, 255), font=font)
         desc = (prompt.description or "")[:120]
         y = int(height * 0.22)
-        for line in [desc[i:i + 42] for i in range(0, len(desc), 42)][:4]:
+        for line in [desc[i : i + 42] for i in range(0, len(desc), 42)][:4]:
             draw.text((width * 0.1, y), line, fill=(255, 255, 255), font=font)
             y += 18
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -272,8 +309,9 @@ class GenerateImagesStage(Stage):
         if manual_size:
             return manual_size
         # Sync with motion/factory SHOT_SIZE_MAP
-        from narrascape.motion.factory import SHOT_SIZE_MAP
         from narrascape.config import ShotType
+        from narrascape.motion.factory import SHOT_SIZE_MAP
+
         try:
             st = ShotType(shot_type)
             return SHOT_SIZE_MAP.get(st, "2560x1440")
@@ -308,7 +346,7 @@ class GenerateImagesStage(Stage):
 
         # Use per-prompt model or default
         use_model = model or self.model
-        
+
         payload = {
             "model": use_model,
             "prompt": prompt,
@@ -382,7 +420,9 @@ class GenerateImagesStage(Stage):
             return False
 
         ffmpeg = find_ffmpeg()
-        subprocess.run([ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True)
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
+        )
         tmp.unlink(missing_ok=True)
 
         logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
@@ -448,7 +488,9 @@ class GenerateImagesStage(Stage):
             out_png = images_dir / f"{name}.png"
             tmp = images_dir / f"_tmp_{name}.jpg"
             urllib.request.urlretrieve(urls[j], str(tmp))
-            subprocess.run([ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True)
+            subprocess.run(
+                [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
+            )
             tmp.unlink(missing_ok=True)
             results[gen_idx] = True
             logger.info(f"{name} OK {out_png.stat().st_size / 1024:.0f}KB")

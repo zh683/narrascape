@@ -2,6 +2,7 @@
 """
 Unified FFmpeg wrapper with retry, validation, and cross-platform path resolution.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +12,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -22,8 +23,8 @@ logger = logging.getLogger("narrascape.ffmpeg")
 # FFmpeg Discovery
 # ═══════════════════════════════════════════
 
-_FFMPEG_EXE: Optional[Path] = None
-_FFPROBE_EXE: Optional[Path] = None
+_FFMPEG_EXE: Path | None = None
+_FFPROBE_EXE: Path | None = None
 
 
 def find_ffmpeg() -> Path:
@@ -85,22 +86,30 @@ def find_ffprobe() -> Path:
         _FFPROBE_EXE = Path(env_path)
         return _FFPROBE_EXE
 
-    raise RuntimeError(
-        "ffprobe not found. Please install ffmpeg (ffprobe is bundled with it)."
-    )
+    raise RuntimeError("ffprobe not found. Please install ffmpeg (ffprobe is bundled with it).")
 
 
 # ═══════════════════════════════════════════
 # Media Metadata
 # ═══════════════════════════════════════════
 
+
 def get_duration(path: Path) -> float:
     """Get media duration in seconds using ffprobe."""
     probe = find_ffprobe()
     r = subprocess.run(
-        [str(probe), "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True
+        [
+            str(probe),
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(f"Cannot get duration for {path}: {r.stderr}")
@@ -111,13 +120,23 @@ def get_media_info(path: Path) -> dict[str, Any]:
     """Get comprehensive media metadata as JSON."""
     probe = find_ffprobe()
     r = subprocess.run(
-        [str(probe), "-v", "quiet", "-print_format", "json",
-         "-show_format", "-show_streams", str(path)],
-        capture_output=True, text=True
+        [
+            str(probe),
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         raise RuntimeError(f"ffprobe failed for {path}: {r.stderr}")
     import json
+
     return json.loads(r.stdout)
 
 
@@ -145,13 +164,14 @@ def get_video_resolution(path: Path) -> tuple[int, int]:
 # FFmpeg Execution
 # ═══════════════════════════════════════════
 
+
 def run_ffmpeg(
     args: list[str],
     *,
     desc: str = "",
     retries: int = 2,
     validate_output: bool = True,
-    timeout: Optional[int] = None,
+    timeout: int | None = None,
     capture_output: bool = True,
 ) -> bool:
     """Execute ffmpeg with retry logic and optional output validation.
@@ -171,10 +191,12 @@ def run_ffmpeg(
     cmd = [str(ffmpeg), "-y"] + args
 
     # Detect output file path from args
-    output_path: Optional[Path] = None
+    output_path: Path | None = None
     for i in range(len(args) - 1, -1, -1):
         a = args[i]
-        if not a.startswith("-") and any(a.endswith(ext) for ext in [".mp4", ".mp3", ".wav", ".mov", ".mkv"]):
+        if not a.startswith("-") and any(
+            a.endswith(ext) for ext in [".mp4", ".mp3", ".wav", ".mov", ".mkv"]
+        ):
             output_path = Path(a)
             break
 
@@ -200,7 +222,7 @@ def run_ffmpeg(
             stderr = (result.stderr or "")[:500] if capture_output else "(output not captured)"
             logger.error(f"[ffmpeg] ERROR: {stderr}")
             if attempt < retries:
-                logger.info(f"[ffmpeg] Retrying in 1s...")
+                logger.info("[ffmpeg] Retrying in 1s...")
                 time.sleep(1)
                 continue
             return False
@@ -223,7 +245,7 @@ def run_ffmpeg(
     return False
 
 
-def run_ffmpeg_silent(args: list[str], timeout: Optional[int] = None) -> subprocess.CompletedProcess:
+def run_ffmpeg_silent(args: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
     """Run ffmpeg silently, returning the full result. For internal use."""
     ffmpeg = find_ffmpeg()
     cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + args
@@ -233,6 +255,7 @@ def run_ffmpeg_silent(args: list[str], timeout: Optional[int] = None) -> subproc
 # ═══════════════════════════════════════════
 # Content Hashing for Cache Keys
 # ═══════════════════════════════════════════
+
 
 def file_hash(path: Path, algorithm: str = "sha256") -> str:
     """Compute hash of file contents."""
@@ -246,6 +269,7 @@ def file_hash(path: Path, algorithm: str = "sha256") -> str:
 def config_hash(config: Any, algorithm: str = "sha256") -> str:
     """Compute hash of a Pydantic model (or any JSON-serializable object)."""
     import json
+
     if isinstance(config, BaseModel):
         data = config.model_dump_json(exclude={"project_dir"})
     else:
@@ -256,6 +280,7 @@ def config_hash(config: Any, algorithm: str = "sha256") -> str:
 # ═══════════════════════════════════════════
 # Cross-Platform Font Discovery
 # ═══════════════════════════════════════════
+
 
 def get_system_font() -> str:
     """Return a font file path suitable for ffmpeg drawtext, cross-platform.

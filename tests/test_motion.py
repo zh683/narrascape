@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tests for motion engines and factory functions."""
+
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 
 from narrascape.config import MovementType, ShotType, SupersampleMode
@@ -13,7 +13,6 @@ from narrascape.motion import (
     derive_movement,
     derive_size,
     derive_zoom_magnitude,
-    detect_hard_edges,
 )
 from narrascape.motion.crop import CropEngine
 from narrascape.motion.pil import PILEngine
@@ -31,12 +30,18 @@ class TestDeriveFunctions:
         assert derive_movement(ShotType.CLOSE_UP, 5, None) == MovementType.STILL
         assert derive_movement(ShotType.CLOSE_UP, 15, None) == MovementType.ZOOM_SLOW
         assert derive_movement(ShotType.CLOSE_UP, 30, None) == MovementType.ZOOM_IN
-        assert derive_movement(ShotType.CLOSE_UP, 30, MovementType.ZOOM_OUT) == MovementType.ZOOM_OUT
+        assert (
+            derive_movement(ShotType.CLOSE_UP, 30, MovementType.ZOOM_OUT) == MovementType.ZOOM_OUT
+        )
 
     def test_derive_zoom_magnitude(self):
         assert derive_zoom_magnitude(MovementType.ZOOM_IN, ShotType.WIDE_ENV, 30) == 0.12
-        assert derive_zoom_magnitude(MovementType.ZOOM_IN, ShotType.WIDE_ENV, 5) == 0.06  # < 10s, halved
-        assert derive_zoom_magnitude(MovementType.ZOOM_IN, ShotType.WIDE_ENV, 12) == 0.09  # < 18s, 75%
+        assert (
+            derive_zoom_magnitude(MovementType.ZOOM_IN, ShotType.WIDE_ENV, 5) == 0.06
+        )  # < 10s, halved
+        assert (
+            derive_zoom_magnitude(MovementType.ZOOM_IN, ShotType.WIDE_ENV, 12) == 0.09
+        )  # < 18s, 75%
 
     def test_compute_zoom_range(self):
         assert compute_zoom_range(MovementType.ZOOM_IN, 0.15) == (1.0, 1.15)
@@ -50,10 +55,14 @@ class TestEngineSelection:
         params = MotionParams(
             image_path=Path("/tmp/test.png"),
             output_path=Path("/tmp/out.mp4"),
-            duration=10.0, fps=25, width=1920, height=1080,
+            duration=10.0,
+            fps=25,
+            width=1920,
+            height=1080,
             movement=MovementType.PAN_LEFT,
             shot_type=ShotType.WIDE_ENV,
-            fade_in=1.0, fade_out=1.0,
+            fade_in=1.0,
+            fade_out=1.0,
         )
         engine = build_motion_engine(params)
         assert isinstance(engine, CropEngine)
@@ -62,10 +71,14 @@ class TestEngineSelection:
         params = MotionParams(
             image_path=Path("/tmp/test.png"),
             output_path=Path("/tmp/out.mp4"),
-            duration=10.0, fps=25, width=1920, height=1080,
+            duration=10.0,
+            fps=25,
+            width=1920,
+            height=1080,
             movement=MovementType.ZOOM_IN,
             shot_type=ShotType.MEDIUM,
-            fade_in=1.0, fade_out=1.0,
+            fade_in=1.0,
+            fade_out=1.0,
             supersample=SupersampleMode.NORMAL,
         )
         engine = build_motion_engine(params)
@@ -75,10 +88,14 @@ class TestEngineSelection:
         params = MotionParams(
             image_path=Path("/tmp/test.png"),
             output_path=Path("/tmp/out.mp4"),
-            duration=10.0, fps=25, width=1920, height=1080,
+            duration=10.0,
+            fps=25,
+            width=1920,
+            height=1080,
             movement=MovementType.ZOOM_IN,
             shot_type=ShotType.MEDIUM,
-            fade_in=1.0, fade_out=1.0,
+            fade_in=1.0,
+            fade_out=1.0,
             supersample=SupersampleMode.EXTREME,
         )
         engine = build_motion_engine(params)

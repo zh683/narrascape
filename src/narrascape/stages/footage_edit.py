@@ -27,7 +27,9 @@ class FootageEditStage(Stage):
         timeline = yaml.safe_load(timeline_path.read_text(encoding="utf-8")) or {}
         edits = timeline.get("edits", [])
         if not edits:
-            return StageResult(self.name, False, message="No footage edits in footage_timeline.yaml")
+            return StageResult(
+                self.name, False, message="No footage edits in footage_timeline.yaml"
+            )
 
         segment_dir = config.pipeline_dir / "source_media_segments"
         segment_dir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +81,9 @@ class FootageEditStage(Stage):
                 message=f"{len(rendered)} footage edit(s) rendered",
                 metadata={"edit_count": len(rendered), "timeline": timeline_path.as_posix()},
             )
-        return StageResult(self.name, False, outputs=rendered, message="footage roughcut render failed")
+        return StageResult(
+            self.name, False, outputs=rendered, message="footage roughcut render failed"
+        )
 
     def _render_edit(self, edit: dict[str, Any], context: StageContext, out: Path) -> bool:
         config = context.config

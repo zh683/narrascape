@@ -13,6 +13,7 @@ logger = logging.getLogger("narrascape.cache")
 
 class CacheEntry(BaseModel):
     """A single cache entry."""
+
     key: str
     input_hashes: dict[str, str]
     config_hash: str
@@ -61,6 +62,7 @@ class BuildCache:
             data = config.model_dump_json()
         elif isinstance(config, dict):
             import json
+
             data = json.dumps(config, sort_keys=True, ensure_ascii=False)
         else:
             data = str(config)
@@ -79,9 +81,13 @@ class BuildCache:
             config: Serializable configuration object
             version: Cache schema version (bump to invalidate)
         """
-        input_hashes = {name: self._hash_file(path) for name, path in inputs.items() if path.exists()}
+        input_hashes = {
+            name: self._hash_file(path) for name, path in inputs.items() if path.exists()
+        }
         config_hash = self._hash_config(config)
-        combined = json.dumps({"inputs": input_hashes, "config": config_hash, "version": version}, sort_keys=True)
+        combined = json.dumps(
+            {"inputs": input_hashes, "config": config_hash, "version": version}, sort_keys=True
+        )
         return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:20]
 
     def is_cached(self, key: str, output_path: Path) -> bool:
@@ -93,7 +99,9 @@ class BuildCache:
             return False
         # Validate input hashes haven't changed
         for name, expected_hash in entry.input_hashes.items():
-            input_path = self.cache_dir.parent.parent / name  # heuristic: resolve relative to project
+            input_path = (
+                self.cache_dir.parent.parent / name
+            )  # heuristic: resolve relative to project
             if not input_path.exists() or self._hash_file(input_path) != expected_hash:
                 return False
         return True
@@ -117,7 +125,10 @@ class BuildCache:
     ) -> None:
         """Register a new cache entry."""
         import time
-        input_hashes = {name: self._hash_file(path) for name, path in inputs.items() if path.exists()}
+
+        input_hashes = {
+            name: self._hash_file(path) for name, path in inputs.items() if path.exists()
+        }
         entry = CacheEntry(
             key=key,
             input_hashes=input_hashes,

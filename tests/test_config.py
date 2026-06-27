@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """Tests for narrascape configuration models."""
+
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 
+import pytest
+
 from narrascape.config import (
-    BudgetConfig,
-    EncodeConfig,
     ImageMap,
     ImageMapEntry,
     ImagePrompt,
-    ImagePrompts,
     NarrascapeConfig,
-    MovementType,
     ProjectConfig,
     Script,
     ScriptSegment,
@@ -61,10 +59,12 @@ class TestNarrascapeConfig:
 
 class TestScript:
     def test_basic(self):
-        script = Script(segments=[
-            ScriptSegment(id=1, text="Hello world."),
-            ScriptSegment(id=2, text="Second segment."),
-        ])
+        script = Script(
+            segments=[
+                ScriptSegment(id=1, text="Hello world."),
+                ScriptSegment(id=2, text="Second segment."),
+            ]
+        )
         assert script.segment_count == 2
         assert script.get_text(1) == "Hello world."
         assert script.get_text(99) == ""
@@ -101,9 +101,11 @@ class TestImageMap:
         assert entry.timing == [0.6, 0.4]
 
     def test_lookup(self):
-        imap = ImageMap(segments=[
-            ImageMapEntry(id=1, images=["img_01"]),
-            ImageMapEntry(id=2, images=["img_02", "img_03"], timing=[0.5, 0.5]),
-        ])
+        imap = ImageMap(
+            segments=[
+                ImageMapEntry(id=1, images=["img_01"]),
+                ImageMapEntry(id=2, images=["img_02", "img_03"], timing=[0.5, 0.5]),
+            ]
+        )
         assert imap.get_images(1) == ["img_01"]
         assert imap.get_images(99) == []

@@ -39,7 +39,9 @@ class FilmSupervisorStage(Stage):
         creative_recommendations = list(creative_review.get("recommendations", []) or [])
         visual_findings = list(visual_report.get("findings", []) or [])
         blocking_errors = list(render_report.get("errors", []) or [])
-        next_stages = self._next_stages(actions, creative_recommendations, visual_findings, blocking_errors)
+        next_stages = self._next_stages(
+            actions, creative_recommendations, visual_findings, blocking_errors
+        )
         status = "needs_rework" if next_stages else "approved"
         report = {
             "schema_version": "film_supervisor.v1",
@@ -55,7 +57,9 @@ class FilmSupervisorStage(Stage):
             "sources": {
                 "rework_plan": (config.pipeline_dir / "rework_plan.yaml").as_posix(),
                 "creative_review": (config.pipeline_dir / "creative_review.yaml").as_posix(),
-                "visual_semantic_report": (config.pipeline_dir / "visual_semantic_report.yaml").as_posix(),
+                "visual_semantic_report": (
+                    config.pipeline_dir / "visual_semantic_report.yaml"
+                ).as_posix(),
                 "render_report": (config.pipeline_dir / "render_report.yaml").as_posix(),
             },
         }
@@ -87,7 +91,21 @@ class FilmSupervisorStage(Stage):
         if any(item.get("action") == "recut" for item in all_actions):
             stages.extend(["film_timeline", "film_assemble"])
         if stages:
-            stages.extend(["film_assemble", "audio", "subtitles", "qa", "continuity_bible", "editing_review", "director_review", "rework_plan", "creative_review", "visual_semantic_qa", "film_supervisor"])
+            stages.extend(
+                [
+                    "film_assemble",
+                    "audio",
+                    "subtitles",
+                    "qa",
+                    "continuity_bible",
+                    "editing_review",
+                    "director_review",
+                    "rework_plan",
+                    "creative_review",
+                    "visual_semantic_qa",
+                    "film_supervisor",
+                ]
+            )
         return self._dedupe(stages)
 
     def _dedupe(self, stages: list[str]) -> list[str]:

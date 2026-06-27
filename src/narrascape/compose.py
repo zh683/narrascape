@@ -17,8 +17,7 @@ class CompositionRuntime(Protocol):
     name: str
     available: bool
 
-    def render(self, plan: CompositionPlan) -> bool:
-        ...
+    def render(self, plan: CompositionPlan) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -53,11 +52,13 @@ class CompositionRuntimeRegistry:
         self._runtimes = {runtime.name: runtime for runtime in runtimes}
 
     @classmethod
-    def default(cls) -> "CompositionRuntimeRegistry":
+    def default(cls) -> CompositionRuntimeRegistry:
         return cls(
             [
                 FFmpegCompositionRuntime(),
-                UnavailableCompositionRuntime("remotion", "Remotion integration is not wired into Narrascape yet"),
+                UnavailableCompositionRuntime(
+                    "remotion", "Remotion integration is not wired into Narrascape yet"
+                ),
             ]
         )
 

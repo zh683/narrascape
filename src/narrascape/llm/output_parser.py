@@ -3,10 +3,12 @@
 Provides automatic extraction, validation, and correction for structured LLM outputs.
 All validators return (is_valid, error_message) tuples.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("narrascape.llm.output_parser")
 
@@ -17,6 +19,7 @@ class OutputValidator:
     @staticmethod
     def has_keys(*required_keys: str) -> Callable[[Any], tuple[bool, str]]:
         """Create a validator that checks for required keys in a dict."""
+
         def validator(data: Any) -> tuple[bool, str]:
             if not isinstance(data, dict):
                 return False, f"Expected dict, got {type(data).__name__}"
@@ -24,11 +27,13 @@ class OutputValidator:
             if missing:
                 return False, f"Missing required keys: {missing}"
             return True, ""
+
         return validator
 
     @staticmethod
     def has_nested_keys(path: str, *required_keys: str) -> Callable[[Any], tuple[bool, str]]:
         """Check for keys in a nested path (e.g., 'segments' -> 'id', 'text')."""
+
         def validator(data: Any) -> tuple[bool, str]:
             if not isinstance(data, dict):
                 return False, f"Expected dict, got {type(data).__name__}"
@@ -42,11 +47,13 @@ class OutputValidator:
                 if missing:
                     return False, f"Item {i} in '{path}' missing keys: {missing}"
             return True, ""
+
         return validator
 
     @staticmethod
     def type_check(field: str, expected_type: type) -> Callable[[Any], tuple[bool, str]]:
         """Check that a field has the expected type."""
+
         def validator(data: Any) -> tuple[bool, str]:
             if not isinstance(data, dict):
                 return False, f"Expected dict, got {type(data).__name__}"
@@ -54,13 +61,20 @@ class OutputValidator:
                 return True, ""  # Skip if missing (use has_keys for that)
             value = data[field]
             if not isinstance(value, expected_type):
-                return False, f"Field '{field}' expected {expected_type.__name__}, got {type(value).__name__}"
+                return (
+                    False,
+                    f"Field '{field}' expected {expected_type.__name__}, got {type(value).__name__}",
+                )
             return True, ""
+
         return validator
 
     @staticmethod
-    def range_check(field: str, min_val: float, max_val: float) -> Callable[[Any], tuple[bool, str]]:
+    def range_check(
+        field: str, min_val: float, max_val: float
+    ) -> Callable[[Any], tuple[bool, str]]:
         """Check that a numeric field is within range."""
+
         def validator(data: Any) -> tuple[bool, str]:
             if not isinstance(data, dict):
                 return False, f"Expected dict, got {type(data).__name__}"
@@ -74,11 +88,13 @@ class OutputValidator:
             except (TypeError, ValueError):
                 return False, f"Field '{field}' is not numeric: {value}"
             return True, ""
+
         return validator
 
     @staticmethod
     def non_empty(field: str) -> Callable[[Any], tuple[bool, str]]:
         """Check that a string field is not empty."""
+
         def validator(data: Any) -> tuple[bool, str]:
             if not isinstance(data, dict):
                 return False, f"Expected dict, got {type(data).__name__}"
@@ -90,17 +106,22 @@ class OutputValidator:
             if isinstance(value, list) and len(value) == 0:
                 return False, f"Field '{field}' is empty list"
             return True, ""
+
         return validator
 
     @staticmethod
-    def combine(*validators: Callable[[Any], tuple[bool, str]]) -> Callable[[Any], tuple[bool, str]]:
+    def combine(
+        *validators: Callable[[Any], tuple[bool, str]]
+    ) -> Callable[[Any], tuple[bool, str]]:
         """Combine multiple validators into one."""
+
         def validator(data: Any) -> tuple[bool, str]:
             for v in validators:
                 is_valid, error = v(data)
                 if not is_valid:
                     return False, error
             return True, ""
+
         return validator
 
 
@@ -120,7 +141,8 @@ class JSONRepair:
 
         # Remove trailing commas before } or ]
         import re
-        result = re.sub(r',(\s*[}\]])', r'\1', original)
+
+        result = re.sub(r",(\s*[}\]])", r"\1", original)
 
         # Fix single quotes to double quotes (common LLM error)
         # Only for simple cases - this is risky
@@ -142,12 +164,12 @@ class JSONRepair:
         import re
 
         # Try to find JSON object
-        match = re.search(r'\{.*\}', text, re.DOTALL)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             return match.group(0)
 
         # Try to find JSON array
-        match = re.search(r'\[.*\]', text, re.DOTALL)
+        match = re.search(r"\[.*\]", text, re.DOTALL)
         if match:
             return match.group(0)
 

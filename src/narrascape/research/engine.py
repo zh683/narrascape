@@ -3,9 +3,9 @@
 Supports both LLM-powered research (with structured prompting and validation)
 and template-based research outlines when LLM is unavailable.
 """
+
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -113,6 +113,7 @@ class ResearchEngine:
 def load_research_report(path: str) -> ResearchResult:
     """Load a research report from markdown file."""
     from pathlib import Path
+
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Research report not found: {path}")

@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffmpeg, get_duration, run_ffmpeg, run_ffmpeg_silent
+from narrascape.utils.ffmpeg import find_ffmpeg, get_duration, run_ffmpeg
 
 logger = logging.getLogger("narrascape.stages.audio")
 
@@ -46,9 +46,19 @@ class AudioStage(Stage):
             if pad > 0:
                 logger.info(f"Padding audio: {audio_dur:.1f}s -> {need:.1f}s (+{pad:.1f}s)")
                 run_ffmpeg(
-                    ["-i", str(mixed_audio), "-af", f"apad=pad_dur={pad}",
-                     "-c:a", "libmp3lame", "-b:a", "192k", str(audio_aligned)],
-                    desc="audio padding", validate_output=False,
+                    [
+                        "-i",
+                        str(mixed_audio),
+                        "-af",
+                        f"apad=pad_dur={pad}",
+                        "-c:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "192k",
+                        str(audio_aligned),
+                    ],
+                    desc="audio padding",
+                    validate_output=False,
                 )
             else:
                 shutil.copy(str(mixed_audio), str(audio_aligned))
@@ -70,11 +80,22 @@ class AudioStage(Stage):
 
         ok = run_ffmpeg(
             [
-                "-i", str(final_video),
-                "-i", str(audio_file),
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-shortest", str(out),
+                "-i",
+                str(final_video),
+                "-i",
+                str(audio_file),
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-shortest",
+                str(out),
             ],
             desc="mux clean",
             validate_output=True,
@@ -83,7 +104,9 @@ class AudioStage(Stage):
         if ok and out.exists():
             size_mb = out.stat().st_size / 1024 / 1024
             return StageResult(
-                self.name, True, outputs=[out],
+                self.name,
+                True,
+                outputs=[out],
                 message=f"{out.name}: {size_mb:.1f} MB",
             )
 
@@ -122,7 +145,7 @@ class AudioRemixStage(Stage):
                 missing_tts.append(seg.id)
         if missing_tts:
             return False, f"Missing TTS files for segments: {missing_tts}. Run generate_tts first."
-        
+
         # Check BGM files exist
         music_dir = config.music_dir
         if config.bgm_map and config.bgm_map.zones:
@@ -133,7 +156,7 @@ class AudioRemixStage(Stage):
                     missing_bgm.append(zone.id)
             if missing_bgm:
                 return False, f"Missing BGM files: {missing_bgm}. Run generate_music first."
-        
+
         return True, ""
 
     def run(self, context: StageContext) -> StageResult:
@@ -162,16 +185,34 @@ class AudioRemixStage(Stage):
         narration_norm = pipeline_dir / "narration_norm.mp3"
         if not narration_norm.exists():
             run_ffmpeg(
-                ["-i", str(narration_gapped),
-                 "-af", f"loudnorm=I={music_cfg.narration_lufs}:TP=-1.5:LRA=11",
-                 "-c:a", "libmp3lame", "-b:a", "192k", str(narration_norm)],
-                desc="normalize narration", validate_output=False,
+                [
+                    "-i",
+                    str(narration_gapped),
+                    "-af",
+                    f"loudnorm=I={music_cfg.narration_lufs}:TP=-1.5:LRA=11",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "192k",
+                    str(narration_norm),
+                ],
+                desc="normalize narration",
+                validate_output=False,
             )
 
         # ── 3. Build zone timeline ──
         timing_path = pipeline_dir / "timing.json"
-        durations = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
-        timeline = self._build_zone_timeline(script, bgm_map, durations, gap_map, gap_default)
+        durations = (
+            json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+        )
+        timeline = self._build_zone_timeline(
+            script,
+            bgm_map,
+            durations,
+            gap_map,
+            gap_default,
+            config.music_dir,
+        )
 
         # Verify BGM files
         missing = []
@@ -183,14 +224,27 @@ class AudioRemixStage(Stage):
 
         # ── 4. Build filter chain and mix ──
         mixed = pipeline_dir / "mixed_audio.mp3"
-        filter_lines = self._build_filter_chain(timeline, narration_dur, total_target, music_cfg, bgm_map)
+        filter_lines = self._build_filter_chain(
+            timeline, narration_dur, total_target, music_cfg, bgm_map
+        )
         filter_graph = ";".join(filter_lines)
 
         cmd = [str(find_ffmpeg()), "-y", "-i", str(narration_norm)]
         for z in timeline:
             cmd.extend(["-i", str(z["file"])])
-        cmd.extend(["-filter_complex", filter_graph, "-map", "[final]",
-                    "-c:a", "libmp3lame", "-b:a", "192k", str(mixed)])
+        cmd.extend(
+            [
+                "-filter_complex",
+                filter_graph,
+                "-map",
+                "[final]",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "192k",
+                str(mixed),
+            ]
+        )
 
         logger.info(f"Mixing {len(timeline)} BGM zones + narration...")
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -215,14 +269,26 @@ class AudioRemixStage(Stage):
                 continue
 
             gap_dur = gap_map.get(seg.id, gap_default)
-            dur_key = str(gap_dur).replace('.', '_')
+            dur_key = str(gap_dur).replace(".", "_")
             sf = pipeline_dir / f"silence_{dur_key}s.mp3"
             if gap_dur not in silences:
                 if not sf.exists():
                     run_ffmpeg(
-                        ["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
-                         "-t", str(gap_dur), "-c:a", "libmp3lame", "-b:a", "128k", str(sf)],
-                        desc=f"silence {gap_dur}s", validate_output=False,
+                        [
+                            "-f",
+                            "lavfi",
+                            "-i",
+                            "anullsrc=r=44100:cl=stereo",
+                            "-t",
+                            str(gap_dur),
+                            "-c:a",
+                            "libmp3lame",
+                            "-b:a",
+                            "128k",
+                            str(sf),
+                        ],
+                        desc=f"silence {gap_dur}s",
+                        validate_output=False,
                     )
                 silences[gap_dur] = sf
             concat_lines.append(f"file '{sf.as_posix()}'")
@@ -245,16 +311,29 @@ class AudioRemixStage(Stage):
         filter_graph = normalizes + ";" + concat_filter
 
         run_ffmpeg(
-            inputs + ["-filter_complex", filter_graph, "-map", "[narrated]",
-                      "-c:a", "libmp3lame", "-b:a", "192k", str(pipeline_dir / "narration_gapped.mp3")],
-            desc="concat narration", validate_output=False,
+            inputs
+            + [
+                "-filter_complex",
+                filter_graph,
+                "-map",
+                "[narrated]",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "192k",
+                str(pipeline_dir / "narration_gapped.mp3"),
+            ],
+            desc="concat narration",
+            validate_output=False,
         )
 
-    def _build_zone_timeline(self, script, bgm_map, durations, gap_map, gap_default):
+    def _build_zone_timeline(self, script, bgm_map, durations, gap_map, gap_default, music_dir):
         """Calculate time boundaries for each BGM zone."""
         timeline = []
         for zone in bgm_map.zones:
-            start_id, end_id = zone.covers[0], zone.covers[-1] if len(zone.covers) > 1 else zone.covers[0]
+            start_id, end_id = zone.covers[0], (
+                zone.covers[-1] if len(zone.covers) > 1 else zone.covers[0]
+            )
             zone_start = timeline[-1]["end"] if timeline else 0.0
             zone_t = zone_start
 
@@ -266,12 +345,14 @@ class AudioRemixStage(Stage):
                 if sid < end_id:
                     zone_t += gap_map.get(sid, gap_default)
 
-            timeline.append({
-                "id": zone.id,
-                "start": zone_start,
-                "end": zone_t,
-                "file": music_dir / f"{zone.id}.mp3",
-            })
+            timeline.append(
+                {
+                    "id": zone.id,
+                    "start": zone_start,
+                    "end": zone_t,
+                    "file": music_dir / f"{zone.id}.mp3",
+                }
+            )
         return timeline
 
     def _build_filter_chain(self, timeline, narration_dur, total_target, music_cfg, bgm_map):
@@ -282,7 +363,9 @@ class AudioRemixStage(Stage):
 
         # Handle no BGM zones: just process narration
         if n_zones == 0:
-            lines.append(f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={total_target:.3f},atrim=0:{total_target:.3f}[narr]")
+            lines.append(
+                f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={total_target:.3f},atrim=0:{total_target:.3f}[narr]"
+            )
             lines.append(f"[narr]loudnorm=I={music_cfg.target_lufs}:TP=-1.0:LRA=7[final]")
             return lines
 
@@ -290,12 +373,14 @@ class AudioRemixStage(Stage):
 
         # Step A: atrim each zone BGM
         for i, entry in enumerate(timeline):
-            is_last = (i == n_zones - 1)
+            is_last = i == n_zones - 1
             if is_last:
                 zone_dur = (total_target - entry["start"]) + xfade + music_cfg.fade_out_seconds
             else:
                 zone_dur = (entry["end"] - entry["start"]) + xfade
-            lines.append(f"[{input_idx}:a]aloop=loop=-1:size=2e9,atrim=0:{zone_dur:.3f},asetpts=PTS-STARTPTS[z{i}]")
+            lines.append(
+                f"[{input_idx}:a]aloop=loop=-1:size=2e9,atrim=0:{zone_dur:.3f},asetpts=PTS-STARTPTS[z{i}]"
+            )
             input_idx += 1
 
         # Step B: chain acrossfade
@@ -309,10 +394,14 @@ class AudioRemixStage(Stage):
 
         # Step C: fade out
         fade_start = total_target - music_cfg.fade_out_seconds
-        lines.append(f"[{last_bgm}]afade=t=out:st={fade_start:.3f}:d={music_cfg.fade_out_seconds}[bgm_final]")
+        lines.append(
+            f"[{last_bgm}]afade=t=out:st={fade_start:.3f}:d={music_cfg.fade_out_seconds}[bgm_final]"
+        )
 
         # Step D: Narration
-        lines.append(f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={total_target:.3f}[narr]")
+        lines.append(
+            f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={total_target:.3f}[narr]"
+        )
 
         # Step E: Sidechain
         lines.append(
@@ -324,8 +413,10 @@ class AudioRemixStage(Stage):
         )
 
         # Step F: Mix
-        lines.append(f"[bgm_ducked]volume={music_cfg.volume},volume={music_cfg.music_boost_db}dB[bgm_vol]")
-        lines.append(f"[narr][bgm_vol]amix=inputs=2:duration=longest:normalize=0[mixed]")
+        lines.append(
+            f"[bgm_ducked]volume={music_cfg.volume},volume={music_cfg.music_boost_db}dB[bgm_vol]"
+        )
+        lines.append("[narr][bgm_vol]amix=inputs=2:duration=longest:normalize=0[mixed]")
 
         # Step G: Loudnorm
         lines.append(f"[mixed]loudnorm=I={music_cfg.target_lufs}:TP=-1.0:LRA=7[final]")

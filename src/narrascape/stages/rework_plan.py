@@ -86,7 +86,8 @@ class ReworkPlanStage(Stage):
                     "segment_id": int(item["segment_id"]),
                     "action": item.get("action", "recut"),
                     "reason": item.get("reason", "editing_review"),
-                    "priority": item.get("priority") or self._priority_for(item.get("reason", ""), item.get("action", "")),
+                    "priority": item.get("priority")
+                    or self._priority_for(item.get("reason", ""), item.get("action", "")),
                     "source": "editing_review",
                 }
             )
@@ -118,7 +119,9 @@ class ReworkPlanStage(Stage):
             existing_sources = set(str(existing.get("source", "")).split("+"))
             existing_sources.add(str(action.get("source", "")))
             existing["source"] = "+".join(sorted(source for source in existing_sources if source))
-            if priority_rank.get(action.get("priority", "low"), 0) > priority_rank.get(existing.get("priority", "low"), 0):
+            if priority_rank.get(action.get("priority", "low"), 0) > priority_rank.get(
+                existing.get("priority", "low"), 0
+            ):
                 existing["priority"] = action["priority"]
         return sorted(
             merged.values(),
@@ -140,7 +143,13 @@ class ReworkPlanStage(Stage):
         return grouped
 
     def _priority_for(self, reason: str, action: str) -> str:
-        if reason in {"missing_visual", "missing_video_clip", "continuity_risk", "wardrobe_jump", "screen_axis_flip"}:
+        if reason in {
+            "missing_visual",
+            "missing_video_clip",
+            "continuity_risk",
+            "wardrobe_jump",
+            "screen_axis_flip",
+        }:
             return "high"
         if action == "recut" or reason in {"pacing_risk", "repeated_visual_asset"}:
             return "medium"

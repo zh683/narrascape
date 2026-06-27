@@ -109,8 +109,12 @@ def test_qa_reports_film_level_checks_from_timeline(tmp_path, monkeypatch):
         },
     )
     stage = QAStage()
-    monkeypatch.setattr(stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0})
-    monkeypatch.setattr(stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0})
+    monkeypatch.setattr(
+        stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0}
+    )
+    monkeypatch.setattr(
+        stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0}
+    )
 
     result = stage.run(_context(config))
 
@@ -153,9 +157,19 @@ def test_director_review_marks_failed_shots_for_regeneration_and_recuts(tmp_path
     review_path = config.pipeline_dir / "director_review.yaml"
     review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
     assert review["status"] == "needs_rework"
-    assert {"segment_id": 3, "action": "regenerate_video", "reason": "missing_visual"} in review["rework_queue"]
-    assert {"segment_id": 2, "action": "regenerate_video", "reason": "missing_generated_video"} in review["rework_queue"]
-    assert {"segment_id": 1, "action": "regenerate_video", "reason": "missing_video_clip"} in review["rework_queue"]
+    assert {"segment_id": 3, "action": "regenerate_video", "reason": "missing_visual"} in review[
+        "rework_queue"
+    ]
+    assert {
+        "segment_id": 2,
+        "action": "regenerate_video",
+        "reason": "missing_generated_video",
+    } in review["rework_queue"]
+    assert {
+        "segment_id": 1,
+        "action": "regenerate_video",
+        "reason": "missing_video_clip",
+    } in review["rework_queue"]
     assert {"segment_id": 2, "action": "recut", "reason": "pacing_risk"} in review["rework_queue"]
 
 
@@ -179,8 +193,12 @@ def test_qa_detects_repeated_shots_in_film_timeline_segments(tmp_path, monkeypat
         },
     )
     stage = QAStage()
-    monkeypatch.setattr(stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0})
-    monkeypatch.setattr(stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0})
+    monkeypatch.setattr(
+        stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0}
+    )
+    monkeypatch.setattr(
+        stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0}
+    )
 
     result = stage.run(_context(config))
 
@@ -207,8 +225,12 @@ def test_qa_reports_missing_timeline_video_clip_files(tmp_path, monkeypatch):
         },
     )
     stage = QAStage()
-    monkeypatch.setattr(stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0})
-    monkeypatch.setattr(stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0})
+    monkeypatch.setattr(
+        stage, "_detect_silence", lambda path: {"ok": True, "mean_volume_db": -18.0}
+    )
+    monkeypatch.setattr(
+        stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0}
+    )
 
     result = stage.run(_context(config))
 

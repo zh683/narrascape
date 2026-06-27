@@ -37,7 +37,6 @@ def selection_metadata(selection: ProviderSelection) -> dict[str, Any]:
         "reason": selection.reason,
         "requires": list(selection.tool.requires),
         "alternatives": [
-            {"name": name, "score": round(score, 6)}
-            for name, score in selection.alternatives
+            {"name": name, "score": round(score, 6)} for name, score in selection.alternatives
         ],
     }

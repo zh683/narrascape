@@ -17,6 +17,7 @@ Requirements:
     - NARRASCAPE_FFMPEG environment variable set (or ffmpeg in PATH)
     - narrascape package installed
 """
+
 from __future__ import annotations
 
 import os
@@ -31,36 +32,36 @@ from narrascape.stages.generate_images import GenerateImagesStage
 
 def verify_seedream_style_consistency():
     """Verify Seedream 5.0 style consistency with style anchor."""
-    
+
     print("=" * 60)
     print("Seedream 5.0 Style Consistency Verification")
     print("=" * 60)
     print()
-    
+
     # Check prerequisites
     api_key = os.environ.get("ARK_API_KEY")
     if not api_key:
         print("❌ ERROR: ARK_API_KEY environment variable not set")
         print("   Set it with: export ARK_API_KEY='your-key'")
         sys.exit(1)
-    
+
     print(f"OK ARK_API_KEY: {api_key[:10]}...")
-    
+
     # Setup output directory
     output_dir = Path("test_style_consistency")
     output_dir.mkdir(exist_ok=True)
-    
+
     # Create generator
     generator = GenerateImagesStage(
         model="doubao-seedream-5-0-260128",
         api_key=api_key,
     )
-    
+
     # Step 1: Generate Style Anchor
     print()
     print("Step 1: Generating Style Anchor (still-life)...")
     print("  This defines the visual style for ALL subsequent images.")
-    
+
     style_anchor_prompt = (
         "A simple ceramic vase with a single white flower on a wooden table, "
         "near a window with soft natural light streaming in, "
@@ -68,9 +69,9 @@ def verify_seedream_style_consistency():
         "consistent artistic style, uniform rendering quality, "
         "highly detailed, photorealistic, 8K"
     )
-    
+
     style_anchor_path = output_dir / "style_anchor.png"
-    
+
     try:
         result = generator._generate_one(
             prompt=style_anchor_prompt,
@@ -87,21 +88,21 @@ def verify_seedream_style_consistency():
     except Exception as e:
         print(f"ERROR: Error generating style anchor: {e}")
         sys.exit(1)
-    
+
     # Step 2: Generate Character Reference with Style Anchor
     print()
     print("Step 2: Generating Character Reference (with style anchor)...")
     print("  Using style anchor as reference for consistent style.")
-    
+
     character_prompt = (
         "参考图1的风格和色调，"
         "A full body portrait of a young warrior in traditional Chinese clothing, "
         "standing in a neutral pose, clean simple background, "
         "photorealistic, highly detailed, 8K"
     )
-    
+
     character_path = output_dir / "character_ref.png"
-    
+
     try:
         result = generator._generate_one(
             prompt=character_prompt,
@@ -118,21 +119,21 @@ def verify_seedream_style_consistency():
     except Exception as e:
         print(f"ERROR: Error generating character reference: {e}")
         sys.exit(1)
-    
+
     # Step 3: Generate Scene Reference with Style Anchor
     print()
     print("Step 3: Generating Scene Reference (with style anchor)...")
     print("  Using style anchor as reference for consistent style.")
-    
+
     scene_prompt = (
         "参考图1的风格和色调，"
         "A misty mountain landscape at dawn, ancient pine trees, "
         "soft golden morning light, atmospheric haze, "
         "photorealistic, highly detailed, 8K"
     )
-    
+
     scene_path = output_dir / "scene_ref.png"
-    
+
     try:
         result = generator._generate_one(
             prompt=scene_prompt,
@@ -149,7 +150,7 @@ def verify_seedream_style_consistency():
     except Exception as e:
         print(f"ERROR: Error generating scene reference: {e}")
         sys.exit(1)
-    
+
     # Step 4: Summary
     print()
     print("=" * 60)

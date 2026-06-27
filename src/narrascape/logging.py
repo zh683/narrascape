@@ -1,29 +1,29 @@
 from __future__ import annotations
 
 import logging
-import sys
-from typing import Optional
 
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Narrascape color theme
-NARRASCAPE_THEME = Theme({
-    "info": "cyan",
-    "warning": "yellow",
-    "error": "bold red",
-    "success": "bold green",
-    "stage": "bold blue",
-    "cache": "dim cyan",
-})
+NARRASCAPE_THEME = Theme(
+    {
+        "info": "cyan",
+        "warning": "yellow",
+        "error": "bold red",
+        "success": "bold green",
+        "stage": "bold blue",
+        "cache": "dim cyan",
+    }
+)
 
 console = Console(theme=NARRASCAPE_THEME)
 
 
 def setup_logging(
     level: int | str = logging.INFO,
-    log_file: Optional[str] = None,
+    log_file: str | None = None,
     verbose: bool = False,
 ) -> logging.Logger:
     """Configure structured logging for narrascape pipeline.

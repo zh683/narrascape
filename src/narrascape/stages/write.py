@@ -2,19 +2,18 @@
 
 Outputs script.yaml and marks it for human approval.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import yaml
 
-from narrascape.config import NarrascapeConfig, load_config
-from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.research import ResearchEngine, load_research_report
-from narrascape.writer import ScriptWriter
 from narrascape.humanizer import HumanizerEngine
+from narrascape.research import ResearchEngine, load_research_report
+from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.writer import ScriptWriter
 
 logger = logging.getLogger("narrascape.stages.write")
 
@@ -115,22 +114,24 @@ class WriteStage(Stage):
 
         console = Console()
         console.print()
-        console.print(Panel(
-            f"[bold green]✍️ Script Generated[/]\n"
-            f"Topic: {topic}\n"
-            f"Segments: {script.segment_count}\n\n"
-            f"[yellow]⏸️ PAUSED FOR APPROVAL[/]\n"
-            f"Please review and edit:\n"
-            f"  [cyan]{script_path}[/]\n\n"
-            f"Files created:\n"
-            f"  [dim]→ {raw_path} (AI raw)[/]\n"
-            f"  [dim]→ {script_path} (humanized, EDIT THIS)[/]\n"
-            f"  [dim]→ {project_dir / 'research_report.md'} (research)[/]\n\n"
-            f"After you're satisfied, run:\n"
-            f"  [bold]narrascape design -p {project_dir}[/]",
-            title="Approval Required",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]✍️ Script Generated[/]\n"
+                f"Topic: {topic}\n"
+                f"Segments: {script.segment_count}\n\n"
+                f"[yellow]⏸️ PAUSED FOR APPROVAL[/]\n"
+                f"Please review and edit:\n"
+                f"  [cyan]{script_path}[/]\n\n"
+                f"Files created:\n"
+                f"  [dim]→ {raw_path} (AI raw)[/]\n"
+                f"  [dim]→ {script_path} (humanized, EDIT THIS)[/]\n"
+                f"  [dim]→ {project_dir / 'research_report.md'} (research)[/]\n\n"
+                f"After you're satisfied, run:\n"
+                f"  [bold]narrascape design -p {project_dir}[/]",
+                title="Approval Required",
+                border_style="yellow",
+            )
+        )
 
         return StageResult(
             stage_name=self.name,

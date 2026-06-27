@@ -98,7 +98,9 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                             "wardrobe": "field coat",
                             "lighting_scheme": "green practicals",
                             "storyboard_frame_ids": ["sb_01_01", "sb_01_02"],
-                            "character_positions": ["Mira center-left, looking toward the waking machine"],
+                            "character_positions": [
+                                "Mira center-left, looking toward the waking machine"
+                            ],
                             "composition": "Mira isolated in negative space beside the machine",
                         },
                         {
@@ -113,7 +115,9 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                             "wardrobe": "field coat",
                             "lighting_scheme": "blue moonlight",
                             "storyboard_frame_ids": ["sb_02_01"],
-                            "character_positions": ["Mira foreground silhouette against the window"],
+                            "character_positions": [
+                                "Mira foreground silhouette against the window"
+                            ],
                             "composition": "Wide reveal with Mira small against the lost city",
                         },
                     ],
@@ -154,7 +158,9 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                             "shot_type": "close_up",
                             "camera_movement": "push_in",
                             "camera_angle": "eye-level",
-                            "character_positions": ["Mira center-left, looking toward the waking machine"],
+                            "character_positions": [
+                                "Mira center-left, looking toward the waking machine"
+                            ],
                             "emotion": "dread",
                             "duration_hint": 3.0,
                             "character_refs": ["mira"],
@@ -186,7 +192,9 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                             "shot_type": "wide_env",
                             "camera_movement": "pull_out",
                             "camera_angle": "eye-level",
-                            "character_positions": ["Mira foreground silhouette against the window"],
+                            "character_positions": [
+                                "Mira foreground silhouette against the window"
+                            ],
                             "emotion": "awe",
                             "duration_hint": 5.0,
                             "character_refs": ["mira"],
@@ -202,7 +210,14 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
         encoding="utf-8",
     )
     (config.pipeline_dir / "render_report.yaml").write_text(
-        yaml.safe_dump({"output": "output/contract-project-sub.mp4", "checks": {}, "errors": [], "warnings": []}),
+        yaml.safe_dump(
+            {
+                "output": "output/contract-project-sub.mp4",
+                "checks": {},
+                "errors": [],
+                "warnings": [],
+            }
+        ),
         encoding="utf-8",
     )
     return config
@@ -243,7 +258,9 @@ def test_director_contract_compiles_story_language_prompt_and_qa(tmp_path):
     result = DirectorContractStage().run(_context(config))
 
     assert result.success
-    contract = yaml.safe_load((config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
     assert contract["schema_version"] == "director_contract.v1"
     first = contract["shots"][0]
     assert first["story_reason"] == "Reveal controlled fear without exposition."
@@ -263,7 +280,9 @@ def test_director_contract_binds_storyboard_frames_to_execution_contract(tmp_pat
     result = DirectorContractStage().run(_context(config))
 
     assert result.success
-    contract = yaml.safe_load((config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
     first = contract["shots"][0]
     binding = first["storyboard_binding"]
     assert binding["storyboard_frame_ids"] == ["sb_01_01", "sb_01_02"]
@@ -321,7 +340,9 @@ def test_director_contract_uses_llm_when_available(tmp_path):
     prompt, kwargs = llm.calls[0]
     assert "top-tier film director" in prompt
     assert kwargs["json_mode"] is True
-    contract = yaml.safe_load((config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
     assert contract["compile_process"]["llm_status"] == "used"
     assert contract["shots"][0]["story_reason"] == "LLM chooses a withheld panic beat."
 
@@ -333,7 +354,9 @@ def test_generate_video_prefers_director_contract_prompt(tmp_path):
     config = _config(tmp_path)
     DirectorContractStage().run(_context(config))
     design = yaml.safe_load((config.project_dir / "design_report.yaml").read_text(encoding="utf-8"))
-    contract = yaml.safe_load((config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
     stage = GenerateVideoStage(api_key="fake")
     segment = design["segments"][0]
 
@@ -373,7 +396,9 @@ def test_visual_semantic_qa_fallback_checks_contract_assertions(tmp_path):
     result = VisualSemanticQAStage().run(_context(config))
 
     assert result.success
-    report = yaml.safe_load((config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8"))
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
     risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
     assert (1, "contract_must_show_missing") in risks
     assert (1, "contract_must_not_show_present") in risks
@@ -396,7 +421,9 @@ def test_visual_semantic_qa_fallback_checks_storyboard_contract_fields(tmp_path)
     result = VisualSemanticQAStage().run(_context(config))
 
     assert result.success
-    report = yaml.safe_load((config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8"))
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
     risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
     assert (1, "storyboard_scene_mismatch") in risks
     assert (1, "storyboard_wardrobe_mismatch") in risks

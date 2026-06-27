@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from narrascape.config import MovementType, ShotType, SupersampleMode, VisualConfig
+from PIL import Image
+
+from narrascape.config import MovementType, ShotType, SupersampleMode
 from narrascape.motion.base import MotionEngine, MotionParams
 from narrascape.motion.crop import CropEngine
 from narrascape.motion.pil import PILEngine
 from narrascape.motion.zoompan import ZoomPanEngine
-from PIL import Image
 
 logger = logging.getLogger("narrascape.motion.factory")
 
@@ -96,24 +97,21 @@ def detect_hard_edges(
 # Aspect ratio range: [1/16, 16]
 SHOT_SIZE_MAP = {
     # ── Ultra-wide landscape shots (pan-based, need aspect >= 16:9) ──
-    ShotType.WIDE_ENV: "4704x2016",       # 3K 21:9 — wide landscapes, pan_left
-    ShotType.WIDE_ANGLE: "6240x2656",     # 4K 21:9 — panoramic, near max pixel limit
-    ShotType.ESTABLISHING: "4704x2016",    # 3K 21:9 — establishing shots, same as wide_env
-    ShotType.AERIAL: "5504x3040",          # 4K 16:9 — aerial, high-res for overhead detail
-
+    ShotType.WIDE_ENV: "4704x2016",  # 3K 21:9 — wide landscapes, pan_left
+    ShotType.WIDE_ANGLE: "6240x2656",  # 4K 21:9 — panoramic, near max pixel limit
+    ShotType.ESTABLISHING: "4704x2016",  # 3K 21:9 — establishing shots, same as wide_env
+    ShotType.AERIAL: "5504x3040",  # 4K 16:9 — aerial, high-res for overhead detail
     # ── Standard cinematic shots (zoom-based, 16:9) ──
-    ShotType.MEDIUM: "4096x2304",          # 3K 16:9 — standard medium shots
-    ShotType.TWO_SHOT: "4096x2304",        # 3K 16:9 — two-person dialog
-    ShotType.OVER_SHOULDER: "4096x2304",   # 3K 16:9 — intimate perspective
-    ShotType.CLOSE_UP: "4096x2304",        # 3K 16:9 — close-up detail
-
+    ShotType.MEDIUM: "4096x2304",  # 3K 16:9 — standard medium shots
+    ShotType.TWO_SHOT: "4096x2304",  # 3K 16:9 — two-person dialog
+    ShotType.OVER_SHOULDER: "4096x2304",  # 3K 16:9 — intimate perspective
+    ShotType.CLOSE_UP: "4096x2304",  # 3K 16:9 — close-up detail
     # ── Specialized framing (zoom-based, non-standard ratios) ──
-    ShotType.EXTREME_CLOSE_UP: "3072x3072", # 3K 1:1 — face centered, zoom-in crop
-    ShotType.DETAIL: "3744x2496",          # 3K 3:2 — slightly wider for objects
-    ShotType.INSERT: "3744x2496",           # 3K 3:2 — insert shots (letters, watches)
-    ShotType.SILHOUETTE: "3520x4704",      # 4K 3:4 — vertical, full body silhouette
-    ShotType.GROUP_SHOT: "4992x3328",      # 4K 3:2 — wider than 16:9, more people
-
+    ShotType.EXTREME_CLOSE_UP: "3072x3072",  # 3K 1:1 — face centered, zoom-in crop
+    ShotType.DETAIL: "3744x2496",  # 3K 3:2 — slightly wider for objects
+    ShotType.INSERT: "3744x2496",  # 3K 3:2 — insert shots (letters, watches)
+    ShotType.SILHOUETTE: "3520x4704",  # 4K 3:4 — vertical, full body silhouette
+    ShotType.GROUP_SHOT: "4992x3328",  # 4K 3:2 — wider than 16:9, more people
     ShotType.BLACK: None,
 }
 
@@ -351,10 +349,14 @@ def build_motion_engine(params: MotionParams) -> MotionEngine:
        - NORMAL → zoompan
     """
     if params.movement in (
-        MovementType.PAN_LEFT, MovementType.PAN_RIGHT,
-        MovementType.PAN_UP, MovementType.PAN_DOWN,
-        MovementType.TILT_UP, MovementType.TILT_DOWN,
-        MovementType.DRIFT, MovementType.STILL,
+        MovementType.PAN_LEFT,
+        MovementType.PAN_RIGHT,
+        MovementType.PAN_UP,
+        MovementType.PAN_DOWN,
+        MovementType.TILT_UP,
+        MovementType.TILT_DOWN,
+        MovementType.DRIFT,
+        MovementType.STILL,
     ):
         for engine in _ENGINES:
             if isinstance(engine, CropEngine) and engine.can_handle(params):
@@ -372,11 +374,11 @@ def build_motion_engine(params: MotionParams) -> MotionEngine:
         if params.image_path.exists() and detect_hard_edges(params.image_path):
             for engine in _ENGINES:
                 if isinstance(engine, PILEngine) and engine.can_handle(params):
-                    logger.info(f"[motion] AUTO mode → hard edges detected → PIL engine")
+                    logger.info("[motion] AUTO mode → hard edges detected → PIL engine")
                     return engine
         for engine in _ENGINES:
             if isinstance(engine, ZoomPanEngine) and engine.can_handle(params):
-                logger.info(f"[motion] AUTO mode → soft edges → zoompan engine")
+                logger.info("[motion] AUTO mode → soft edges → zoompan engine")
                 return engine
 
     # Default: normal zoompan

@@ -44,7 +44,9 @@ class CreativeReviewStage(Stage):
                 status = result.get("status") or ("needs_rework" if recommendations else "approved")
                 llm_status = "used"
             except Exception as exc:
-                findings, recommendations = self._fallback_findings(editing, continuity, render_report)
+                findings, recommendations = self._fallback_findings(
+                    editing, continuity, render_report
+                )
                 status = "needs_rework" if recommendations else "approved"
                 llm_status = "fallback_after_error"
                 llm_error = str(exc)
@@ -146,10 +148,14 @@ class CreativeReviewStage(Stage):
                 }
             )
         for error in render_report.get("errors", []) or []:
-            findings.append({"segment_id": None, "issue": error, "severity": "high", "source": "render_report"})
+            findings.append(
+                {"segment_id": None, "issue": error, "severity": "high", "source": "render_report"}
+            )
         return findings, self._dedupe_recommendations(recommendations)
 
-    def _dedupe_recommendations(self, recommendations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _dedupe_recommendations(
+        self, recommendations: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         deduped: list[dict[str, Any]] = []
         seen = set()
         for item in recommendations:

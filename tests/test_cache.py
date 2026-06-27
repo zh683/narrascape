@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Tests for build cache."""
+
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-
-import pytest
 
 from narrascape.cache import BuildCache
 

@@ -276,7 +276,9 @@ def test_script_scene_director_builds_act_scene_sequence_shot_hierarchy(tmp_path
     result = ScriptSceneDirectorStage().run(_context(config))
 
     assert result.success
-    structure = yaml.safe_load((config.pipeline_dir / "screenplay_structure.yaml").read_text(encoding="utf-8"))
+    structure = yaml.safe_load(
+        (config.pipeline_dir / "screenplay_structure.yaml").read_text(encoding="utf-8")
+    )
     assert structure["schema_version"] == "screenplay_structure.v1"
     assert structure["grain_order"] == ["act", "scene", "sequence", "shot"]
     assert len(structure["acts"]) >= 3
@@ -302,7 +304,9 @@ def test_continuity_director_writes_bible_and_flags_wardrobe_axis_risks(tmp_path
     result = ContinuityBibleStage().run(_context(config))
 
     assert result.success
-    bible = yaml.safe_load((config.pipeline_dir / "continuity_bible.yaml").read_text(encoding="utf-8"))
+    bible = yaml.safe_load(
+        (config.pipeline_dir / "continuity_bible.yaml").read_text(encoding="utf-8")
+    )
     assert bible["schema_version"] == "continuity_bible.v1"
     assert bible["characters"]["mira"]["appearances"][0]["wardrobe"] == "field coat"
     assert "lab" in bible["locations"]
@@ -319,7 +323,9 @@ def test_editing_director_reviews_pacing_repetition_and_emotion_curve(tmp_path):
     result = EditingReviewStage().run(_context(config))
 
     assert result.success
-    review = yaml.safe_load((config.pipeline_dir / "editing_review.yaml").read_text(encoding="utf-8"))
+    review = yaml.safe_load(
+        (config.pipeline_dir / "editing_review.yaml").read_text(encoding="utf-8")
+    )
     assert review["schema_version"] == "editing_review.v1"
     assert 2 in review["pacing"]["risk_segments"]
     assert 3 in review["repetition"]["repeated_shot_segments"]
@@ -329,7 +335,9 @@ def test_editing_director_reviews_pacing_repetition_and_emotion_curve(tmp_path):
         "tense",
         "relief",
     ]
-    assert any(item["action"] == "recut" and item["segment_id"] == 2 for item in review["recommendations"])
+    assert any(
+        item["action"] == "recut" and item["segment_id"] == 2 for item in review["recommendations"]
+    )
 
 
 def test_rework_director_merges_review_editing_and_continuity_into_action_plan(tmp_path):
@@ -374,13 +382,17 @@ def test_multi_take_director_selects_best_take_and_timeline_uses_it(tmp_path):
     result = TakeSelectStage().run(_context(config))
 
     assert result.success
-    selection = yaml.safe_load((config.pipeline_dir / "take_selection.yaml").read_text(encoding="utf-8"))
+    selection = yaml.safe_load(
+        (config.pipeline_dir / "take_selection.yaml").read_text(encoding="utf-8")
+    )
     assert selection["schema_version"] == "take_selection.v1"
     assert selection["selections"][0]["selected_take"] == "vid_01_take_02"
     assert "qa" in selection["selection_process"]["judges"]
 
     FilmTimelineStage().run(_context(config))
-    timeline = yaml.safe_load((config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8"))
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
     first_clip = timeline["tracks"]["visual"][0]
     assert first_clip["asset_ref"] == "vid_01_take_02"
     assert first_clip["path"] == "assets/videos/vid_01_take_02.mp4"
@@ -420,7 +432,9 @@ def test_multi_take_director_uses_llm_judge_when_available(tmp_path):
     prompt, kwargs = llm.calls[0]
     assert "vid_01_take_01" in prompt
     assert kwargs["json_mode"] is True
-    selection = yaml.safe_load((config.pipeline_dir / "take_selection.yaml").read_text(encoding="utf-8"))
+    selection = yaml.safe_load(
+        (config.pipeline_dir / "take_selection.yaml").read_text(encoding="utf-8")
+    )
     assert selection["selection_process"]["mode"] == "qa_plus_llm"
     assert selection["selection_process"]["llm_status"] == "used"
     assert selection["selections"][0]["selected_take"] == "vid_01_take_01"

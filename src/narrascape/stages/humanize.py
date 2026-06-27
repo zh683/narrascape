@@ -2,16 +2,16 @@
 
 Can be run standalone on an existing script or as part of the write pipeline.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from typing import Any
 
 import yaml
 
-from narrascape.config import NarrascapeConfig
-from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.humanizer import HumanizerEngine
+from narrascape.stages.base import Stage, StageContext, StageResult
 
 logger = logging.getLogger("narrascape.stages.humanize")
 
@@ -66,13 +66,17 @@ class HumanizeStage(Stage):
             total_ai_score += score["ai_likeness"]
 
             if self.score_only:
-                logger.info(f"[humanize] Seg {seg.get('id', '?')}: {score['verdict']} (score={score['ai_likeness']})")
+                logger.info(
+                    f"[humanize] Seg {seg.get('id', '?')}: {score['verdict']} (score={score['ai_likeness']})"
+                )
             else:
                 humanized = humanizer.humanize(original)
                 if humanized != original:
                     seg["text"] = humanized
                     changed_segments += 1
-                    logger.info(f"[humanize] Seg {seg.get('id', '?')}: humanized ({score['verdict']})")
+                    logger.info(
+                        f"[humanize] Seg {seg.get('id', '?')}: humanized ({score['verdict']})"
+                    )
 
         avg_score = total_ai_score / len(data["segments"]) if data["segments"] else 0
 
@@ -85,11 +89,12 @@ class HumanizeStage(Stage):
             logger.info(f"[humanize] Saved backup: {backup_path}")
 
         from rich.console import Console
+
         console = Console()
 
         if self.score_only:
             console.print(f"[bold]AI Score (avg):[/] {avg_score:.1f}/10")
-            console.print(f"[dim]Lower is better. <2 = human-like, >5 = AI-like[/]")
+            console.print("[dim]Lower is better. <2 = human-like, >5 = AI-like[/]")
         else:
             console.print(f"[bold green]Humanized {changed_segments} segments[/]")
             console.print(f"Average AI score: {avg_score:.1f}/10 → improved")

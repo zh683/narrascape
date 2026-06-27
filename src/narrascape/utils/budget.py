@@ -2,12 +2,12 @@
 
 Tracks cumulative spending across pipeline runs and enforces caps.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from narrascape.config import BudgetConfig
 
@@ -69,7 +69,10 @@ class BudgetTracker:
                 )
                 logger.warning(msg)
                 return True, msg
-            return True, f"Budget OK: {self.spent + estimated_cost:.2f}/{self.budget.total_usd:.2f} USD"
+            return (
+                True,
+                f"Budget OK: {self.spent + estimated_cost:.2f}/{self.budget.total_usd:.2f} USD",
+            )
 
         if self.budget.mode == "cap":
             if self.spent + estimated_cost > self.budget.total_usd:
@@ -80,7 +83,10 @@ class BudgetTracker:
                 )
                 logger.error(msg)
                 return False, msg
-            return True, f"Budget OK: {self.spent + estimated_cost:.2f}/{self.budget.total_usd:.2f} USD"
+            return (
+                True,
+                f"Budget OK: {self.spent + estimated_cost:.2f}/{self.budget.total_usd:.2f} USD",
+            )
 
         return True, ""
 

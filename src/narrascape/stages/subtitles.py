@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font_name, run_ffmpeg
@@ -32,9 +31,14 @@ class SubtitleStage(Stage):
         timing_path = config.pipeline_dir / "timing.json"
 
         import json
-        durations = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
 
-        srt_entries = self._build_srt(script, durations, sub_cfg, config.visual.gap_map, config.visual.segment_gap)
+        durations = (
+            json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+        )
+
+        srt_entries = self._build_srt(
+            script, durations, sub_cfg, config.visual.gap_map, config.visual.segment_gap
+        )
         srt_path.write_text(srt_entries, encoding="utf-8")
         logger.info(f"SRT: {srt_entries.count(chr(10)+chr(10))} entries")
 
@@ -58,10 +62,20 @@ class SubtitleStage(Stage):
 
         ok = run_ffmpeg(
             [
-                "-i", str(clean),
-                "-vf", vf,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-pix_fmt", "yuv420p", "-c:a", "copy",
+                "-i",
+                str(clean),
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
                 str(sub_out),
             ],
             desc="burn subtitles",
@@ -71,7 +85,9 @@ class SubtitleStage(Stage):
         if ok and sub_out.exists():
             size_mb = sub_out.stat().st_size / 1024 / 1024
             return StageResult(
-                self.name, True, outputs=[sub_out],
+                self.name,
+                True,
+                outputs=[sub_out],
                 message=f"{sub_out.name}: {size_mb:.1f} MB",
             )
 
@@ -100,9 +116,7 @@ class SubtitleStage(Stage):
             for chunk in chunks:
                 cd = max(0.5, (t1 - t0) * len(chunk) / total_chars)
                 entries.append(
-                    f"{idx}\n"
-                    f"{self._ts(elapsed)} --> {self._ts(elapsed + cd)}\n"
-                    f"{chunk}\n"
+                    f"{idx}\n" f"{self._ts(elapsed)} --> {self._ts(elapsed + cd)}\n" f"{chunk}\n"
                 )
                 idx += 1
                 elapsed += cd
@@ -125,7 +139,18 @@ class SubtitleStage(Stage):
                     if chars[j] in punctuation:
                         end = j + 1
                         break
-            strip_chars = punctuation + chr(34) + chr(39) + chr(8220) + chr(8221) + chr(40) + chr(41) + chr(12298) + chr(12299) + ' 	'
+            strip_chars = (
+                punctuation
+                + chr(34)
+                + chr(39)
+                + chr(8220)
+                + chr(8221)
+                + chr(40)
+                + chr(41)
+                + chr(12298)
+                + chr(12299)
+                + " 	"
+            )
             chunk = "".join(chars[i:end]).strip(strip_chars)
             if chunk:
                 chunks.append(chunk)

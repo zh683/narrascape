@@ -3,18 +3,17 @@
 Reads bgm_map from config.yaml, calculates zone durations from timing.json,
 generates background music segments to assets/music/.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import subprocess
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_script
@@ -102,10 +101,14 @@ class GenerateMusicStage(Stage):
         if selection.tool.name == "local_music":
             generated = []
             timing_path = pipe_dir / "timing.json"
-            durations = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+            durations = (
+                json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+            )
             for i, zone in enumerate(zones):
                 is_last = i == len(zones) - 1
-                duration = self._calc_zone_duration(zone, durations, segments, gap_map, gap_default, config, music_cfg, is_last)
+                duration = self._calc_zone_duration(
+                    zone, durations, segments, gap_map, gap_default, config, music_cfg, is_last
+                )
                 out = music_dir / f"{zone.id}.mp3"
                 if not out.exists():
                     self._generate_local_music(out, min(duration, 8.0), i)
@@ -120,11 +123,16 @@ class GenerateMusicStage(Stage):
                 True,
                 outputs=generated,
                 message=f"{len(generated)}/{len(zones)} local BGM",
-                metadata={"mode": "local", "count": len(generated), "provider_selection": provider_meta},
+                metadata={
+                    "mode": "local",
+                    "count": len(generated),
+                    "provider_selection": provider_meta,
+                },
             )
 
         # Budget check
         from narrascape.utils.budget import BudgetTracker
+
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
         est_cost = budget_tracker.get_cost_estimate("music", len(zones))
         can_spend, budget_msg = budget_tracker.can_spend(est_cost)
@@ -139,13 +147,17 @@ class GenerateMusicStage(Stage):
 
         # Load timing
         timing_path = pipe_dir / "timing.json"
-        durations = json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+        durations = (
+            json.loads(timing_path.read_text(encoding="utf-8")) if timing_path.exists() else {}
+        )
 
         # Load state
         bgm_state_path = pipe_dir / "bgm_state.json"
         bgm_state = self._load_state(bgm_state_path)
         bgm_state["provider_selection"] = provider_meta
-        bgm_state_path.write_text(json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8")
+        bgm_state_path.write_text(
+            json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         logger.info(f"BGM: {len(zones)} zones, model={model}")
         logger.info(f"     sample_rate={music_cfg.sample_rate}Hz, bitrate={music_cfg.bitrate}bps")
@@ -157,18 +169,24 @@ class GenerateMusicStage(Stage):
 
         generated = []
         for i, zone in enumerate(zones):
-            is_last = (i == len(zones) - 1)
-            dur = self._calc_zone_duration(zone, durations, segments, gap_map, gap_default, config, music_cfg, is_last)
+            is_last = i == len(zones) - 1
+            dur = self._calc_zone_duration(
+                zone, durations, segments, gap_map, gap_default, config, music_cfg, is_last
+            )
             start_id = zone.covers[0] if zone.covers else 0
             end_id = zone.covers[-1] if zone.covers else 0
             label = zone.label or zone.id
-            logger.info(f"[{i + 1}/{len(zones)}] {zone.id} ({label}) · seg {start_id}-{end_id} · target {dur:.0f}s")
+            logger.info(
+                f"[{i + 1}/{len(zones)}] {zone.id} ({label}) · seg {start_id}-{end_id} · target {dur:.0f}s"
+            )
             result = self._generate_one(zone, dur, music_cfg, bgm_state, music_dir)
             if result:
                 generated.append(result)
                 if zone.id not in bgm_state.get("done", []):
                     bgm_state.setdefault("done", []).append(zone.id)
-                    bgm_state_path.write_text(json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8")
+                    bgm_state_path.write_text(
+                        json.dumps(bgm_state, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
                 # Record actual cost per successful zone generation
                 per_zone = budget_tracker.get_cost_estimate("music", 1)
                 budget_tracker.record(per_zone)
@@ -182,13 +200,25 @@ class GenerateMusicStage(Stage):
         ffprobe = find_ffprobe()
         for f in generated:
             r = subprocess.run(
-                [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
-                 "-of", "csv=p=0", str(f)], capture_output=True, text=True
+                [
+                    ffprobe,
+                    "-v",
+                    "quiet",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "csv=p=0",
+                    str(f),
+                ],
+                capture_output=True,
+                text=True,
             )
             if r.stdout.strip():
                 total_dur += float(r.stdout.strip())
 
-        logger.info(f"Done: {len(generated)}/{len(zones)} OK, {total_dur:.0f}s ({total_dur / 60:.1f}min)")
+        logger.info(
+            f"Done: {len(generated)}/{len(zones)} OK, {total_dur:.0f}s ({total_dur / 60:.1f}min)"
+        )
         return StageResult(
             self.name,
             True,
@@ -214,11 +244,16 @@ class GenerateMusicStage(Stage):
         frequency = 110 + (index % 4) * 35
         run_ffmpeg(
             [
-                "-f", "lavfi",
-                "-i", f"sine=frequency={frequency}:duration={duration}:sample_rate=44100",
-                "-af", "volume=0.035",
-                "-c:a", "libmp3lame",
-                "-b:a", "128k",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency={frequency}:duration={duration}:sample_rate=44100",
+                "-af",
+                "volume=0.035",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
                 str(out),
             ],
             desc=f"local music {out.stem}",
@@ -261,11 +296,13 @@ class GenerateMusicStage(Stage):
         zid = zone.id
         out = music_dir / f"{zid}.mp3"
         if zid in state.get("done", []) and out.exists():
-            logger.info(f"    skip (cached in state)")
+            logger.info("    skip (cached in state)")
             return out
 
         prompt = zone.prompt
-        logger.info(f"    model={music_cfg.model}, {len(prompt)} chars (target ~{duration_seconds:.0f}s)")
+        logger.info(
+            f"    model={music_cfg.model}, {len(prompt)} chars (target ~{duration_seconds:.0f}s)"
+        )
 
         payload = {
             "model": music_cfg.model,
@@ -280,7 +317,9 @@ class GenerateMusicStage(Stage):
         }
 
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(f"{self.base_url}/v1/music_generation", data=data, method="POST")
+        req = urllib.request.Request(
+            f"{self.base_url}/v1/music_generation", data=data, method="POST"
+        )
         req.add_header("Authorization", f"Bearer {self.api_key}")
         req.add_header("Content-Type", "application/json")
 
@@ -305,17 +344,32 @@ class GenerateMusicStage(Stage):
         # Check actual duration
         ffprobe = find_ffprobe()
         r2 = subprocess.run(
-            [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(out)],
-            capture_output=True, text=True
+            [
+                ffprobe,
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
         )
         actual = float(r2.stdout.strip())
         need = duration_seconds / 1.2
         ratio = actual / max(need, 1)
         if ratio > 3.0:
-            logger.warning(f"    WARN {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s) — {ratio:.1f}x, LIKELY LOOPED")
+            logger.warning(
+                f"    WARN {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s) — {ratio:.1f}x, LIKELY LOOPED"
+            )
         elif ratio > 2.0:
-            logger.warning(f"    WARN {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s) — {ratio:.1f}x")
+            logger.warning(
+                f"    WARN {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s) — {ratio:.1f}x"
+            )
         else:
-            logger.info(f"    OK {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s)")
+            logger.info(
+                f"    OK {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s)"
+            )
         return out

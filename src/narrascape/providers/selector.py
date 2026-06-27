@@ -31,7 +31,11 @@ class ProviderSelector:
         candidates: list[ProviderTool],
         task_context: dict[str, Any] | None = None,
     ) -> ProviderSelection:
-        usable = [tool for tool in candidates if tool.capability.value == capability and tool.status == "available"]
+        usable = [
+            tool
+            for tool in candidates
+            if tool.capability.value == capability and tool.status == "available"
+        ]
         if not usable:
             raise ValueError(f"No available providers for capability: {capability}")
 

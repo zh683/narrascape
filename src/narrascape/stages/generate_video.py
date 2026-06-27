@@ -12,13 +12,14 @@ Correct API workflow (火山方舟):
 
 Native workflow: Seedream image -> Seedance video (zero-loss character consistency)
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +122,7 @@ class GenerateVideoStage(Stage):
 
         # Budget check
         from narrascape.utils.budget import BudgetTracker
+
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
         est_cost = budget_tracker.get_cost_estimate("video", len(segments))
         can_spend, budget_msg = budget_tracker.can_spend(est_cost)
@@ -160,7 +162,9 @@ class GenerateVideoStage(Stage):
             resolution = seg.get("seedance_resolution", self.resolution)
 
             logger.info(f"[{i + 1}/{len(segments)}] {vid_id}: {video_prompt[:60]}...")
-            logger.info(f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}")
+            logger.info(
+                f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}"
+            )
 
             result = self._generate_one(
                 video_prompt,
@@ -175,7 +179,9 @@ class GenerateVideoStage(Stage):
                 ok_count += 1
                 done.add(vid_id)
                 state["done"] = list(done)
-                state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+                state_path.write_text(
+                    json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
                 per_video = budget_tracker.get_cost_estimate("video", 1)
                 budget_tracker.record(per_video)
             else:
@@ -188,7 +194,11 @@ class GenerateVideoStage(Stage):
             self.name,
             fail_count == 0,
             message=f"{ok_count} OK, {fail_count} failed",
-            metadata={"provider_selection": provider_meta, "ok_count": ok_count, "fail_count": fail_count},
+            metadata={
+                "provider_selection": provider_meta,
+                "ok_count": ok_count,
+                "fail_count": fail_count,
+            },
         )
 
     # ── Internal methods ───────────────────────────
@@ -201,6 +211,7 @@ class GenerateVideoStage(Stage):
     def _load_design_report(self, path: Path) -> dict:
         if path.exists():
             import yaml
+
             return yaml.safe_load(path.read_text(encoding="utf-8"))
         return {}
 
@@ -214,7 +225,9 @@ class GenerateVideoStage(Stage):
         """Map internal model name to Volcengine Ark model ID."""
         return self.MODEL_MAP.get(model, model)
 
-    def _build_video_prompt(self, seg: dict, contract_by_segment: dict[int, dict[str, Any]] | None = None) -> str:
+    def _build_video_prompt(
+        self, seg: dict, contract_by_segment: dict[int, dict[str, Any]] | None = None
+    ) -> str:
         """Build a video generation prompt from the shot design.
 
         Uses cinematic_format for camera movement, motion, and scene description.
@@ -272,6 +285,7 @@ class GenerateVideoStage(Stage):
         if not path.exists():
             return {}
         import yaml
+
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         result: dict[int, dict[str, Any]] = {}
         for shot in data.get("shots", []) or []:
@@ -338,47 +352,59 @@ class GenerateVideoStage(Stage):
 
         if has_first and has_last:
             # Mode 2: First + last frame (bookend mode) - takes priority
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": first_frame},
-                "role": "first_frame",
-            })
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": last_frame},
-                "role": "last_frame",
-            })
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": first_frame},
+                    "role": "first_frame",
+                }
+            )
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": last_frame},
+                    "role": "last_frame",
+                }
+            )
         elif has_refs:
             # Mode 3: Multi-modal reference (1-9 images)
             for ref_url in reference_images[:9]:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": ref_url},
-                    "role": "reference_image",
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": ref_url},
+                        "role": "reference_image",
+                    }
+                )
             # If first_frame is also provided and not already in refs, add it
             if has_first and first_frame not in reference_images:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": first_frame},
-                    "role": "reference_image",
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": first_frame},
+                        "role": "reference_image",
+                    }
+                )
         elif has_first:
             # Mode 1: First frame only
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": first_frame},
-                "role": "first_frame",
-            })
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": first_frame},
+                    "role": "first_frame",
+                }
+            )
         else:
             # Text-only generation (no reference images)
             pass
 
         # Text prompt (required, must be present)
-        content.append({
-            "type": "text",
-            "text": prompt,
-        })
+        content.append(
+            {
+                "type": "text",
+                "text": prompt,
+            }
+        )
 
         model_id = self._resolve_model_id(model)
 
@@ -452,7 +478,9 @@ class GenerateVideoStage(Stage):
                 video_url = r.get("video_url") or r.get("url")
                 if video_url:
                     return video_url
-                logger.error(f"  No video_url in succeeded response: {json.dumps(r, ensure_ascii=False)[:200]}")
+                logger.error(
+                    f"  No video_url in succeeded response: {json.dumps(r, ensure_ascii=False)[:200]}"
+                )
                 return None
 
             elif status in ("failed", "expired"):

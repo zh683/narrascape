@@ -7,7 +7,7 @@ Usage:
     # In narrascape:
     client = BridgeLLMClient(task_dir=Path(".narrascape/bridge"))
     resp = client.complete("Design shots for this script...")
-    
+
     # AI assistant reads task file, writes response file
     # System reads response and continues
 
@@ -15,17 +15,17 @@ Environment:
     NARRASCAPE_BRIDGE_DIR - Directory for task/response files
     NARRASCAPE_BRIDGE_TIMEOUT - Max seconds to wait for response (default: 300)
 """
+
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
 
-from narrascape.llm.models import LLMConfig, LLMResponse, Message, PromptTemplate
+from narrascape.llm.models import LLMResponse, Message, PromptTemplate
 
 logger = logging.getLogger("narrascape.llm.bridge")
 
@@ -72,31 +72,33 @@ class BridgeLLMClient:
         # Build the full conversation
         conversation = []
         for msg in messages:
-            role_label = {"system": "System", "user": "User", "assistant": "AI"}.get(msg.role, msg.role)
+            role_label = {"system": "System", "user": "User", "assistant": "AI"}.get(
+                msg.role, msg.role
+            )
             conversation.append(f"## {role_label}\n\n{msg.content}")
-        
+
         conversation_text = "\n\n".join(conversation)
-        
+
         # Determine expected output format
         json_mode = kwargs.get("json_mode", False)
         schema_hint = kwargs.get("schema_hint", "")
         task_id = self._task_id(conversation_text, json_mode, schema_hint)
-        
+
         # Write task file
         task_file = self.pending_dir / f"task_{task_id}.md"
         task_content = self._format_task(task_id, conversation_text, json_mode, schema_hint)
         task_file.write_text(task_content, encoding="utf-8")
-        
+
         logger.info(f"[bridge] Task created: {task_file}")
         logger.info(f"[bridge] Waiting for AI assistant response... (timeout={self.timeout}s)")
-        
+
         # Log instructions for the AI assistant
         self._log_instructions(task_id, task_file)
-        
+
         # Wait for response
         response_file = self.completed_dir / f"response_{task_id}.json"
         start = time.monotonic()
-        
+
         existing_response = self._read_response(task_id, task_file, response_file)
         if existing_response:
             return existing_response
@@ -106,7 +108,7 @@ class BridgeLLMClient:
             if response:
                 return response
             time.sleep(1)
-        
+
         # Timeout
         raise RuntimeError(
             f"Bridge timeout: AI assistant did not respond within {self.timeout}s.\n"
@@ -169,10 +171,12 @@ class BridgeLLMClient:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
-    def _format_task(self, task_id: str, conversation: str, json_mode: bool, schema_hint: str) -> str:
+    def _format_task(
+        self, task_id: str, conversation: str, json_mode: bool, schema_hint: str
+    ) -> str:
         """Format a task file for the AI assistant."""
         output_format = "```json\n{...}\n```" if json_mode else "natural language text"
-        
+
         return f"""# Narrascape AI Assistant Task — ID: {task_id}
 
 ## Your Role

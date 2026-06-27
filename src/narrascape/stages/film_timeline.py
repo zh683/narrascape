@@ -35,7 +35,10 @@ class FilmTimelineStage(Stage):
         output_path = config.project_dir / "film_timeline.yaml"
         timing = self._load_json(config.pipeline_dir / "timing.json")
         design = self._load_yaml(
-            self._first_existing(config.project_dir / "design_report.yaml", config.pipeline_dir / "design_report.yaml")
+            self._first_existing(
+                config.project_dir / "design_report.yaml",
+                config.pipeline_dir / "design_report.yaml",
+            )
         )
         image_map = self._load_yaml(config.project_dir / "image_map.yaml")
         footage_timeline = self._load_yaml(config.project_dir / "footage_timeline.yaml")
@@ -59,11 +62,11 @@ class FilmTimelineStage(Stage):
             for item in footage_timeline.get("edits", [])
             if item.get("target_segment_id") is not None
         }
-        generated_video_by_segment = self._generated_videos_by_segment(config, video_state, take_selection)
+        generated_video_by_segment = self._generated_videos_by_segment(
+            config, video_state, take_selection
+        )
         assets_by_id = {
-            item.get("id"): item
-            for item in asset_manifest.get("assets", [])
-            if item.get("id")
+            item.get("id"): item for item in asset_manifest.get("assets", []) if item.get("id")
         }
 
         cursor = 0.0
@@ -144,10 +147,15 @@ class FilmTimelineStage(Stage):
                                 "source": "generated_image",
                                 "asset_ref": image_id,
                                 "path": f"assets/images/{image_id}.png",
-                                "start": round(cursor + duration * sum(
-                                    self._ratio_for(timing_ratios, earlier, len(images))
-                                    for earlier in range(image_index)
-                                ), 3),
+                                "start": round(
+                                    cursor
+                                    + duration
+                                    * sum(
+                                        self._ratio_for(timing_ratios, earlier, len(images))
+                                        for earlier in range(image_index)
+                                    ),
+                                    3,
+                                ),
                                 "duration": round(clip_duration, 3),
                                 "role": "generated_visual",
                                 "transition": "ken_burns",
@@ -278,7 +286,9 @@ class FilmTimelineStage(Stage):
         return videos
 
     def _continuity_fields(self, design_item: dict[str, Any]) -> dict[str, Any]:
-        metadata = design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+        metadata = (
+            design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
+        )
         return {
             "wardrobe": metadata.get("wardrobe"),
             "lighting_scheme": metadata.get("lighting_scheme"),

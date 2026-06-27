@@ -11,7 +11,7 @@ Key features:
 
 __version__ = "0.1.0"
 
-from narrascape.pipeline import Pipeline
 from narrascape.config import NarrascapeConfig, load_config
+from narrascape.pipeline import Pipeline
 
 __all__ = ["__version__", "Pipeline", "NarrascapeConfig", "load_config"]

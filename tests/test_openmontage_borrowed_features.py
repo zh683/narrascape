@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import yaml
 
 from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, ProjectConfig, Script
-from narrascape.pipeline import get_stage_map, _resolve_dependencies
+from narrascape.pipeline import _resolve_dependencies, get_stage_map
 from narrascape.stages.base import StageContext
 
 
@@ -137,7 +136,9 @@ def test_composition_runtime_selects_ffmpeg_by_default(tmp_path):
     from narrascape.compose import CompositionPlan, CompositionRuntimeRegistry
 
     registry = CompositionRuntimeRegistry.default()
-    plan = CompositionPlan(project="project", runtime="auto", inputs=[], output=tmp_path / "out.mp4")
+    plan = CompositionPlan(
+        project="project", runtime="auto", inputs=[], output=tmp_path / "out.mp4"
+    )
 
     runtime = registry.select(plan)
 

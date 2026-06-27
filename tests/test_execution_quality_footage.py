@@ -16,7 +16,6 @@ from narrascape.config import (
     MusicProvider,
     NarrascapeConfig,
     ProjectConfig,
-    Script,
     TTSConfig,
     TTSProvider,
 )
@@ -65,11 +64,21 @@ def _write_minimal_project(project_dir: Path) -> None:
 def _config(tmp_path: Path, *, bgm: bool = False) -> NarrascapeConfig:
     project_dir = tmp_path / "project"
     _write_minimal_project(project_dir)
-    bgm_map = BGMMap(
-        zones=[
-            BGMZone(id="zone_a", covers=[1, 1], label="Zone A", prompt="quiet pulse", min_duration=10)
-        ]
-    ) if bgm else BGMMap()
+    bgm_map = (
+        BGMMap(
+            zones=[
+                BGMZone(
+                    id="zone_a",
+                    covers=[1, 1],
+                    label="Zone A",
+                    prompt="quiet pulse",
+                    min_duration=10,
+                )
+            ]
+        )
+        if bgm
+        else BGMMap()
+    )
     return NarrascapeConfig(
         project=ProjectConfig(
             name="project",
@@ -111,7 +120,9 @@ def test_generate_tts_executes_provider_selected_by_selector(tmp_path, monkeypat
 
     config = _config(tmp_path)
     stage = GenerateTTSStage(api_key=None)
-    monkeypatch.setattr(stage, "_generate_local_tone", lambda out, duration, seg_id: out.write_bytes(b"tone"))
+    monkeypatch.setattr(
+        stage, "_generate_local_tone", lambda out, duration, seg_id: out.write_bytes(b"tone")
+    )
 
     result = stage.run(_context(config))
 
@@ -128,7 +139,9 @@ def test_generate_music_executes_provider_selected_by_selector(tmp_path, monkeyp
     config.pipeline_dir.mkdir(parents=True)
     (config.pipeline_dir / "timing.json").write_text(json.dumps({"1": 4.0}), encoding="utf-8")
     stage = GenerateMusicStage(api_key=None)
-    monkeypatch.setattr(stage, "_generate_local_music", lambda out, duration, index: out.write_bytes(b"music"))
+    monkeypatch.setattr(
+        stage, "_generate_local_music", lambda out, duration, index: out.write_bytes(b"music")
+    )
 
     result = stage.run(_context(config))
 
@@ -181,7 +194,9 @@ def test_qa_reports_deep_quality_checks(tmp_path, monkeypatch):
     config.pipeline_dir.mkdir(parents=True)
     final = config.output_dir / "project-sub.mp4"
     final.write_bytes(b"video")
-    (config.pipeline_dir / "subtitles.srt").write_text("1\n00:00:00,000 --> 00:00:04,000\nhello\n", encoding="utf-8")
+    (config.pipeline_dir / "subtitles.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:04,000\nhello\n", encoding="utf-8"
+    )
     (config.pipeline_dir / "timing.json").write_text(json.dumps({"1": 10.0}), encoding="utf-8")
     (config.pipeline_dir / "image_gen_state.json").write_text(
         json.dumps({"provider_selection": {"name": "local_image"}}),
@@ -203,8 +218,12 @@ def test_qa_reports_deep_quality_checks(tmp_path, monkeypatch):
         },
     )
     stage = QAStage()
-    monkeypatch.setattr(stage, "_detect_silence", lambda path: {"ok": False, "mean_volume_db": -90.0})
-    monkeypatch.setattr(stage, "_detect_black_frames", lambda path, duration: {"risk": True, "black_seconds": 4.0})
+    monkeypatch.setattr(
+        stage, "_detect_silence", lambda path: {"ok": False, "mean_volume_db": -90.0}
+    )
+    monkeypatch.setattr(
+        stage, "_detect_black_frames", lambda path, duration: {"risk": True, "black_seconds": 4.0}
+    )
 
     result = stage.run(_context(config))
 

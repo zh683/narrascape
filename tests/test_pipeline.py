@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """Tests for pipeline dependency resolution."""
+
 from __future__ import annotations
 
 import pytest
 
-from narrascape.pipeline import _resolve_dependencies
-from narrascape.pipeline import Pipeline
 from narrascape.config import LLMConfig, NarrascapeConfig, ProjectConfig, Script
 from narrascape.llm import LLMClient
+from narrascape.pipeline import Pipeline, _resolve_dependencies
+from narrascape.stages.audio import AudioRemixStage, AudioStage
 from narrascape.stages.base import StageResult
-from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.concat import ConcatStage
-from narrascape.stages.audio import AudioStage
-from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.design import DesignStage
 from narrascape.stages.film_assemble import FilmAssembleStage
+from narrascape.stages.film_timeline import FilmTimelineStage
 from narrascape.stages.generate_images import GenerateImagesStage
 from narrascape.stages.generate_music import GenerateMusicStage
 from narrascape.stages.generate_tts import GenerateTTSStage
-from narrascape.stages.film_timeline import FilmTimelineStage
 from narrascape.stages.humanize import HumanizeStage
+from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.pre_production import PreProductionStage
 from narrascape.stages.research import ResearchStage
+from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.write import WriteStage
-from narrascape.stages.audio import AudioRemixStage
 
 
 class TestDependencyResolution:
@@ -93,14 +92,21 @@ class TestDependencyResolution:
     def test_circular_dependency(self):
         class FakeStage:
             @property
-            def name(self): return "a"
+            def name(self):
+                return "a"
+
             @property
-            def depends_on(self): return ["b"]
+            def depends_on(self):
+                return ["b"]
+
         class FakeStageB:
             @property
-            def name(self): return "b"
+            def name(self):
+                return "b"
+
             @property
-            def depends_on(self): return ["a"]
+            def depends_on(self):
+                return ["a"]
 
         available = {"a": FakeStage, "b": FakeStageB}
         with pytest.raises(RuntimeError, match="Circular"):
@@ -186,7 +192,13 @@ class TestPipelineStageFactory:
         llm_client = LLMClient.from_env()
         pipeline = Pipeline(config, llm_client=llm_client)
 
-        for stage_cls in (ResearchStage, WriteStage, HumanizeStage, PreProductionStage, DesignStage):
+        for stage_cls in (
+            ResearchStage,
+            WriteStage,
+            HumanizeStage,
+            PreProductionStage,
+            DesignStage,
+        ):
             stage = pipeline._create_stage(stage_cls)
 
             assert stage.llm_client is llm_client

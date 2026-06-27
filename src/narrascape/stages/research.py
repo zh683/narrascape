@@ -3,15 +3,14 @@
 This stage can be run standalone or as part of the pipeline.
 Outputs a research_report.md for human review and writer input.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
-from narrascape.config import NarrascapeConfig, Script, load_config
-from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.research import ResearchEngine
+from narrascape.stages.base import Stage, StageContext, StageResult
 
 logger = logging.getLogger("narrascape.stages.research")
 
@@ -44,8 +43,9 @@ class ResearchStage(Stage):
 
         # Print summary
         from rich.console import Console
+
         console = Console()
-        console.print(f"[bold green]Research complete![/]")
+        console.print("[bold green]Research complete![/]")
         console.print(f"  Topic: {topic}")
         console.print(f"  Sections: {len(result.findings)}")
         console.print(f"  [cyan]→ {report_path}[/]")

@@ -104,7 +104,9 @@ def _context(config: NarrascapeConfig) -> StageContext:
     )
 
 
-def test_film_assemble_renders_visual_track_with_video_source_and_image_fallback(tmp_path, monkeypatch):
+def test_film_assemble_renders_visual_track_with_video_source_and_image_fallback(
+    tmp_path, monkeypatch
+):
     from narrascape.stages.film_assemble import FilmAssembleStage
 
     config = _config(tmp_path)
@@ -116,7 +118,9 @@ def test_film_assemble_renders_visual_track_with_video_source_and_image_fallback
         return True
 
     monkeypatch.setattr("narrascape.stages.film_assemble.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("narrascape.stages.film_assemble.validate_video", lambda path: path.exists())
+    monkeypatch.setattr(
+        "narrascape.stages.film_assemble.validate_video", lambda path: path.exists()
+    )
 
     result = FilmAssembleStage().run(_context(config))
 
@@ -127,7 +131,10 @@ def test_film_assemble_renders_visual_track_with_video_source_and_image_fallback
     assert (config.pipeline_dir / "timeline_segments" / "v_003.mp4").exists()
     assert (config.pipeline_dir / "film_assembled.mp4").exists()
     joined_commands = [" ".join(command) for command in commands]
-    assert any("assets\\videos\\vid_01.mp4" in cmd or "assets/videos/vid_01.mp4" in cmd for cmd in joined_commands)
+    assert any(
+        "assets\\videos\\vid_01.mp4" in cmd or "assets/videos/vid_01.mp4" in cmd
+        for cmd in joined_commands
+    )
     assert any("-loop 1" in cmd for cmd in joined_commands)
 
 
@@ -157,7 +164,9 @@ def test_film_assemble_respects_timeline_start_gaps(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr("narrascape.stages.film_assemble.run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr("narrascape.stages.film_assemble.validate_video", lambda path: path.exists())
+    monkeypatch.setattr(
+        "narrascape.stages.film_assemble.validate_video", lambda path: path.exists()
+    )
 
     result = FilmAssembleStage().run(_context(config))
 

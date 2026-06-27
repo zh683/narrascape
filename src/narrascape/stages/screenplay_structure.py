@@ -33,7 +33,10 @@ class ScriptSceneDirectorStage(Stage):
         output.parent.mkdir(parents=True, exist_ok=True)
 
         design = self._load_yaml(
-            self._first_existing(config.project_dir / "design_report.yaml", config.pipeline_dir / "design_report.yaml")
+            self._first_existing(
+                config.project_dir / "design_report.yaml",
+                config.pipeline_dir / "design_report.yaml",
+            )
         )
         timing = self._load_json(config.pipeline_dir / "timing.json")
         design_by_segment = {
@@ -108,7 +111,9 @@ class ScriptSceneDirectorStage(Stage):
 
         for scene_index, scene_segments in enumerate(scene_groups, start=1):
             scene_id = f"{act_id}_scene_{scene_index:02d}"
-            first_design = design_by_segment.get(int(scene_segments[0].id), {}) if scene_segments else {}
+            first_design = (
+                design_by_segment.get(int(scene_segments[0].id), {}) if scene_segments else {}
+            )
             sequences = self._build_sequences(
                 act_id,
                 scene_id,
@@ -168,7 +173,8 @@ class ScriptSceneDirectorStage(Stage):
                         "shot_type": design.get("shot_type", "medium"),
                         "movement": design.get("movement", "still"),
                         "duration": self._duration_for(timing, segment_id, segment.text),
-                        "director_intent": design.get("director_vision") or design.get("image_prompt", ""),
+                        "director_intent": design.get("director_vision")
+                        or design.get("image_prompt", ""),
                     }
                 )
                 shot_index[str(segment_id)] = {

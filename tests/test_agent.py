@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Tests for agent director components."""
+
 from __future__ import annotations
 
 import pytest
 
-from narrascape.agent.models import SegmentAnalysis, ShotDesign, BGMZoneSuggestion, DesignReport
-from narrascape.config import ShotType, MovementType
+from narrascape.agent.models import BGMZoneSuggestion, DesignReport, SegmentAnalysis, ShotDesign
+from narrascape.config import MovementType, ShotType
 from narrascape.llm.models import LLMResponse
 
 
@@ -246,7 +247,9 @@ class TestShotDesign:
             style_template="documentary",
             segments=[design],
             bgm_zones=[
-                BGMZoneSuggestion(covers=[1, 2], label="Opening", prompt="Piano solo", emotion="calm"),
+                BGMZoneSuggestion(
+                    covers=[1, 2], label="Opening", prompt="Piano solo", emotion="calm"
+                ),
             ],
         )
         design_dict = report.to_design_report()
@@ -326,8 +329,8 @@ class TestPromptDirectorPureLogic:
         assert "x" in size
 
     def test_inject_character_identity(self):
-        from narrascape.agent.prompt_director import PromptDirector
         from narrascape.agent.models import CharacterProfile
+        from narrascape.agent.prompt_director import PromptDirector
 
         director = PromptDirector(llm_client=None)
         director._characters = [
@@ -349,7 +352,7 @@ class TestPromptDirectorPureLogic:
 
     def test_estimate_duration_chinese(self):
         from narrascape.agent.prompt_director import PromptDirector
-        from narrascape.config import NarrascapeConfig, TTSConfig, ProjectConfig
+        from narrascape.config import NarrascapeConfig, ProjectConfig, TTSConfig
 
         director = PromptDirector(llm_client=None)
         config = NarrascapeConfig(
@@ -361,7 +364,7 @@ class TestPromptDirectorPureLogic:
 
     def test_estimate_duration_english(self):
         from narrascape.agent.prompt_director import PromptDirector
-        from narrascape.config import NarrascapeConfig, TTSConfig, ProjectConfig
+        from narrascape.config import NarrascapeConfig, ProjectConfig, TTSConfig
 
         director = PromptDirector(llm_client=None)
         config = NarrascapeConfig(
@@ -451,8 +454,8 @@ class TestPromptDirectorPureLogic:
         assert director._reference_image_chains == []
 
     def test_format_storyboard_for_segment(self):
-        from narrascape.agent.prompt_director import PromptDirector
         from narrascape.agent.models import StoryboardFrame
+        from narrascape.agent.prompt_director import PromptDirector
 
         director = PromptDirector(llm_client=None)
         frames = [
@@ -502,7 +505,7 @@ class TestPreProductionModels:
     """Tests for pre-production models (CharacterReferenceSheet, EnvironmentReference, Storyboard, PreProductionReport)."""
 
     def test_character_reference_sheet_creation(self):
-        from narrascape.agent.models import CharacterReferenceSheet, CharacterReferenceImage
+        from narrascape.agent.models import CharacterReferenceImage, CharacterReferenceSheet
 
         anchor = CharacterReferenceImage(
             image_id="char_001_anchor",
@@ -551,9 +554,15 @@ class TestPreProductionModels:
         from narrascape.agent.models import Storyboard, StoryboardFrame
 
         frames = [
-            StoryboardFrame(frame_id="sb_001_01", segment_id=1, frame_index=0, description="Wide shot"),
-            StoryboardFrame(frame_id="sb_001_02", segment_id=1, frame_index=1, description="Close-up"),
-            StoryboardFrame(frame_id="sb_002_01", segment_id=2, frame_index=0, description="Medium shot"),
+            StoryboardFrame(
+                frame_id="sb_001_01", segment_id=1, frame_index=0, description="Wide shot"
+            ),
+            StoryboardFrame(
+                frame_id="sb_001_02", segment_id=1, frame_index=1, description="Close-up"
+            ),
+            StoryboardFrame(
+                frame_id="sb_002_01", segment_id=2, frame_index=0, description="Medium shot"
+            ),
         ]
         sb = Storyboard(frames=frames, total_frames=3, total_segments=2)
         seg1_frames = sb.frames_for_segment(1)
@@ -564,29 +573,45 @@ class TestPreProductionModels:
 
     def test_pre_production_report_export(self):
         from narrascape.agent.models import (
-            PreProductionReport, CharacterReferenceSheet, CharacterReferenceImage,
-            EnvironmentReference, EnvironmentReferenceImage, Storyboard, StoryboardFrame,
+            CharacterReferenceImage,
+            CharacterReferenceSheet,
+            EnvironmentReference,
+            EnvironmentReferenceImage,
+            PreProductionReport,
+            Storyboard,
+            StoryboardFrame,
         )
 
         anchor = CharacterReferenceImage(
-            image_id="char_001_anchor", image_type="anchor",
-            local_path="/tmp/char_001_anchor.png", prompt="test",
+            image_id="char_001_anchor",
+            image_type="anchor",
+            local_path="/tmp/char_001_anchor.png",
+            prompt="test",
         )
         sheet = CharacterReferenceSheet(
-            char_id="char_001", name="Hero",
-            anchor_image=anchor, primary_reference_path="/tmp/char_001_anchor.png",
+            char_id="char_001",
+            name="Hero",
+            anchor_image=anchor,
+            primary_reference_path="/tmp/char_001_anchor.png",
         )
         mood = EnvironmentReferenceImage(
-            image_id="scene_001_mood", image_type="mood",
-            local_path="/tmp/scene_001_mood.png", prompt="test",
+            image_id="scene_001_mood",
+            image_type="mood",
+            local_path="/tmp/scene_001_mood.png",
+            prompt="test",
         )
         env = EnvironmentReference(
-            scene_id="scene_001", scene_name="Forest",
-            mood_images=[mood], primary_reference_path="/tmp/scene_001_mood.png",
+            scene_id="scene_001",
+            scene_name="Forest",
+            mood_images=[mood],
+            primary_reference_path="/tmp/scene_001_mood.png",
         )
         frame = StoryboardFrame(
-            frame_id="sb_001_01", segment_id=1, frame_index=0,
-            description="Wide shot", shot_type="wide",
+            frame_id="sb_001_01",
+            segment_id=1,
+            frame_index=0,
+            description="Wide shot",
+            shot_type="wide",
         )
         sb = Storyboard(frames=[frame], total_frames=1, total_segments=1)
 

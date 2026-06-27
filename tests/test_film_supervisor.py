@@ -47,14 +47,20 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                         "image_prompt": "Mira studies the machine in the lab.",
                         "character_ids": ["mira"],
                         "location_id": "lab",
-                        "metadata": {"wardrobe": "field coat", "lighting_scheme": "green practicals"},
+                        "metadata": {
+                            "wardrobe": "field coat",
+                            "lighting_scheme": "green practicals",
+                        },
                     },
                     {
                         "segment_id": 3,
                         "image_prompt": "Mira sees a memory in the lab, same face and field coat.",
                         "character_ids": ["mira"],
                         "location_id": "lab",
-                        "metadata": {"wardrobe": "field coat", "lighting_scheme": "green practicals"},
+                        "metadata": {
+                            "wardrobe": "field coat",
+                            "lighting_scheme": "green practicals",
+                        },
                     },
                 ],
             },
@@ -120,8 +126,12 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
         encoding="utf-8",
     )
     for index in range(1, 4):
-        (project_dir / "assets" / "videos" / f"vid_{index:02d}.mp4").write_bytes(f"video {index}".encode())
-        (project_dir / "assets" / "images" / f"img_{index:02d}.png").write_bytes(f"image {index}".encode())
+        (project_dir / "assets" / "videos" / f"vid_{index:02d}.mp4").write_bytes(
+            f"video {index}".encode()
+        )
+        (project_dir / "assets" / "images" / f"img_{index:02d}.png").write_bytes(
+            f"image {index}".encode()
+        )
 
     config = NarrascapeConfig(
         project=ProjectConfig(
@@ -170,7 +180,12 @@ def _config(tmp_path: Path) -> NarrascapeConfig:
                 "repetition": {"repeated_shot_segments": []},
                 "emotion_curve": {"beats": []},
                 "recommendations": [
-                    {"segment_id": 2, "action": "recut", "reason": "pacing_risk", "priority": "high"}
+                    {
+                        "segment_id": 2,
+                        "action": "recut",
+                        "reason": "pacing_risk",
+                        "priority": "high",
+                    }
                 ],
             },
             sort_keys=False,
@@ -267,7 +282,9 @@ def test_film_supervisor_reads_director_reports_and_decides_next_stages(tmp_path
     result = FilmSupervisorStage().run(_context(config))
 
     assert result.success
-    report = yaml.safe_load((config.pipeline_dir / "film_supervisor.yaml").read_text(encoding="utf-8"))
+    report = yaml.safe_load(
+        (config.pipeline_dir / "film_supervisor.yaml").read_text(encoding="utf-8")
+    )
     assert report["schema_version"] == "film_supervisor.v1"
     assert report["status"] == "needs_rework"
     assert "rework_execute" in report["next_stages"]
@@ -307,7 +324,9 @@ def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(t
     assert (config.pipeline_dir / "rework_quarantine" / "videos" / "vid_03.mp4").exists()
     state = json.loads((config.pipeline_dir / "video_gen_state.json").read_text(encoding="utf-8"))
     assert state["done"] == ["vid_01", "vid_02"]
-    execution = yaml.safe_load((config.pipeline_dir / "rework_execution.yaml").read_text(encoding="utf-8"))
+    execution = yaml.safe_load(
+        (config.pipeline_dir / "rework_execution.yaml").read_text(encoding="utf-8")
+    )
     assert execution["schema_version"] == "rework_execution.v1"
     assert execution["executed_actions"][0]["operation"] == "invalidate_generated_video"
     assert (config.pipeline_dir / "video_regen_queue.yaml").exists()
@@ -325,7 +344,9 @@ def test_creative_review_uses_llm_when_available(tmp_path):
         {
             "status": "needs_rework",
             "findings": [{"segment_id": 2, "issue": "flat emotional beat", "severity": "medium"}],
-            "recommendations": [{"segment_id": 2, "action": "recut", "reason": "flat emotional beat"}],
+            "recommendations": [
+                {"segment_id": 2, "action": "recut", "reason": "flat emotional beat"}
+            ],
         }
     )
     config = _config(tmp_path)
@@ -337,7 +358,9 @@ def test_creative_review_uses_llm_when_available(tmp_path):
     prompt, kwargs = llm.calls[0]
     assert "film_timeline" in prompt
     assert kwargs["json_mode"] is True
-    review = yaml.safe_load((config.pipeline_dir / "creative_review.yaml").read_text(encoding="utf-8"))
+    review = yaml.safe_load(
+        (config.pipeline_dir / "creative_review.yaml").read_text(encoding="utf-8")
+    )
     assert review["schema_version"] == "creative_review.v1"
     assert review["review_process"]["llm_status"] == "used"
     assert review["recommendations"][0]["reason"] == "flat emotional beat"
@@ -368,7 +391,9 @@ def test_visual_semantic_qa_uses_llm_when_available(tmp_path):
     prompt, kwargs = llm.calls[0]
     assert "assets/videos/vid_03.mp4" in prompt
     assert kwargs["json_mode"] is True
-    report = yaml.safe_load((config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8"))
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
     assert report["schema_version"] == "visual_semantic_report.v1"
     assert report["review_process"]["llm_status"] == "used"
     assert report["findings"][0]["risk_type"] == "character_face_drift"
@@ -382,7 +407,9 @@ def test_visual_semantic_qa_fallback_flags_timeline_design_mismatch(tmp_path):
     result = VisualSemanticQAStage().run(_context(config))
 
     assert result.success
-    report = yaml.safe_load((config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8"))
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
     risks = {(item["segment_id"], item["risk_type"]) for item in report["findings"]}
     assert (3, "scene_mismatch") in risks
     assert (3, "wardrobe_mismatch") in risks

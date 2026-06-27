@@ -99,5 +99,7 @@ class DirectorReviewStage(Stage):
         if report.get("errors"):
             notes.append("QA reported blocking errors; rework is required before delivery.")
         if queue:
-            notes.append("Review each rework action, then regenerate video or recut the affected segment.")
+            notes.append(
+                "Review each rework action, then regenerate video or recut the affected segment."
+            )
         return notes

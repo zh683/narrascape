@@ -4,14 +4,16 @@ Supports: OpenAI, Anthropic, DeepSeek, Volcengine (Ark), and local models.
 All calls automatically retry with exponential backoff.
 All outputs validated against expected format with automatic re-prompting.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import time
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any
 
-from narrascape.llm.models import LLMConfig, LLMResponse, Message, PromptTemplate, LLMCallLog
+from narrascape.llm.models import LLMCallLog, LLMConfig, LLMResponse, Message, PromptTemplate
 from narrascape.utils.retry import retry_with_backoff
 
 logger = logging.getLogger("narrascape.llm")
@@ -62,10 +64,10 @@ class LLMClient:
         """Create LLM client from environment variables.
 
         Priority: AI_ASSISTANT > BRIDGE > OPENAI > DEEPSEEK > ANTHROPIC > ARK
-        
+
         When no external API keys are found, defaults to AI Assistant mode
         (project-local bridge tasks processed by the current AI assistant).
-        
+
         Args:
             allow_bridge: If True, allow bridge mode when NARRASCAPE_LLM_MODE=bridge
         """
@@ -88,12 +90,16 @@ class LLMClient:
         key = os.environ.get("DEEPSEEK_API_KEY")
         if key:
             base = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-            return cls(LLMConfig(provider="deepseek", api_key=key, base_url=base, model="deepseek-chat"))
+            return cls(
+                LLMConfig(provider="deepseek", api_key=key, base_url=base, model="deepseek-chat")
+            )
 
         # Try Anthropic
         key = os.environ.get("ANTHROPIC_API_KEY")
         if key:
-            return cls(LLMConfig(provider="anthropic", api_key=key, model="claude-3-sonnet-20240229"))
+            return cls(
+                LLMConfig(provider="anthropic", api_key=key, model="claude-3-sonnet-20240229")
+            )
 
         # Try Volcengine / Ark
         key = os.environ.get("ARK_API_KEY")
@@ -125,34 +131,37 @@ class LLMClient:
 
     def _ai_assistant_provider(self, messages: list[Message], config: LLMConfig) -> LLMResponse:
         """AI Assistant bridge provider.
-        
+
         When the system is running in an AI assistant environment (like this conversation),
         the current AI assistant processes project-local task files. This is the primary mode when
         Codex, Kimi, or other AI assistants are driving the system.
-        
+
         This provider uses the BridgeLLMClient to create task files and wait for the
         AI assistant to process them. No external API keys needed.
         """
         # Use bridge mechanism for real AI assistant interaction
         self._init_bridge()
-        
+
         # Build full prompt from messages
         parts = []
         for m in messages:
             role_label = {"system": "System", "user": "User", "assistant": "AI"}.get(m.role, m.role)
             parts.append(f"[{role_label}]\n{m.content}")
         prompt = "\n\n".join(parts)
-        
+
         logger.info("[AI Assistant] Using bridge mechanism for AI assistant interaction")
         logger.info(f"[AI Assistant] Prompt length: {len(prompt)} chars")
-        
+
         # Create task file and wait for AI assistant response
-        return self._bridge.complete(prompt, json_mode=config.json_mode, max_retries=config.max_retries)
+        return self._bridge.complete(
+            prompt, json_mode=config.json_mode, max_retries=config.max_retries
+        )
 
     def _init_bridge(self) -> None:
         """Initialize bridge client for AI assistant integration."""
         if self._bridge is None:
             from narrascape.llm.bridge import BridgeLLMClient
+
             self._bridge = BridgeLLMClient()
 
     def _bridge_provider(self, messages: list[Message], config: LLMConfig) -> LLMResponse:
@@ -228,7 +237,9 @@ class LLMClient:
         last_error = None
 
         # Bridge / AI Assistant mode: only one attempt, no retry (AI assistant handles it)
-        attempts = 1 if is_assistant_bridge_provider(self.config.provider) else (max_format_retries + 1)
+        attempts = (
+            1 if is_assistant_bridge_provider(self.config.provider) else (max_format_retries + 1)
+        )
 
         for attempt in range(attempts):
             start = time.monotonic()
@@ -241,10 +252,20 @@ class LLMClient:
             except (json.JSONDecodeError, ValueError) as e:
                 last_error = f"JSON parse error: {e}"
                 logger.warning(f"[{template_name}] Parse failed (attempt {attempt+1}): {e}")
-                self._log_call(template_name, template.build(**variables), resp.text, None, False, last_error, latency)
+                self._log_call(
+                    template_name,
+                    template.build(**variables),
+                    resp.text,
+                    None,
+                    False,
+                    last_error,
+                    latency,
+                )
 
                 # Add correction instruction for retry (only for non-bridge/ai_assistant)
-                if attempt < max_format_retries and not is_assistant_bridge_provider(self.config.provider):
+                if attempt < max_format_retries and not is_assistant_bridge_provider(
+                    self.config.provider
+                ):
                     correction = f"\n\nYour previous response was not valid JSON. Error: {e}. Please fix the format and return ONLY valid JSON."
                     # Rebuild template with correction appended, then send directly via chat()
                     # 不创建新的 PromptTemplate，避免二次 format 导致大括号解析错误
@@ -256,7 +277,9 @@ class LLMClient:
                         data = resp.extract_json()
                     except (json.JSONDecodeError, ValueError) as e2:
                         last_error = f"JSON parse error (retry): {e2}"
-                        logger.warning(f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}")
+                        logger.warning(
+                            f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}"
+                        )
                         continue
                 else:
                     continue
@@ -264,15 +287,39 @@ class LLMClient:
             # Validate parsed data
             is_valid, error_msg = validator(data)
             if is_valid:
-                self._log_call(template_name, template.build(**variables), resp.text, data, True, None, latency, resp.model, resp.usage)
+                self._log_call(
+                    template_name,
+                    template.build(**variables),
+                    resp.text,
+                    data,
+                    True,
+                    None,
+                    latency,
+                    resp.model,
+                    resp.usage,
+                )
                 return data
 
             last_error = f"Validation error: {error_msg}"
-            logger.warning(f"[{template_name}] Validation failed (attempt {attempt+1}): {error_msg}")
-            self._log_call(template_name, template.build(**variables), resp.text, data, False, last_error, latency, resp.model, resp.usage)
+            logger.warning(
+                f"[{template_name}] Validation failed (attempt {attempt+1}): {error_msg}"
+            )
+            self._log_call(
+                template_name,
+                template.build(**variables),
+                resp.text,
+                data,
+                False,
+                last_error,
+                latency,
+                resp.model,
+                resp.usage,
+            )
 
             # Add correction instruction for retry (only for non-bridge/ai_assistant)
-            if attempt < max_format_retries and not is_assistant_bridge_provider(self.config.provider):
+            if attempt < max_format_retries and not is_assistant_bridge_provider(
+                self.config.provider
+            ):
                 correction = f"\n\nYour previous response had validation errors: {error_msg}. Please correct these issues and return valid JSON."
                 # 不创建新的 PromptTemplate，避免二次 format 导致大括号解析错误
                 messages = template.build(**variables)
@@ -283,16 +330,32 @@ class LLMClient:
                     data = resp.extract_json()
                 except (json.JSONDecodeError, ValueError) as e2:
                     last_error = f"JSON parse error (retry): {e2}"
-                    logger.warning(f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}")
+                    logger.warning(
+                        f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}"
+                    )
                     continue
                 is_valid, error_msg = validator(data)
                 if is_valid:
-                    self._log_call(template_name, template.build(**variables), resp.text, data, True, None, latency, resp.model, resp.usage)
+                    self._log_call(
+                        template_name,
+                        template.build(**variables),
+                        resp.text,
+                        data,
+                        True,
+                        None,
+                        latency,
+                        resp.model,
+                        resp.usage,
+                    )
                     return data
                 last_error = f"Validation error (retry): {error_msg}"
-                logger.warning(f"[{template_name}] Retry validation failed (attempt {attempt+1}): {error_msg}")
+                logger.warning(
+                    f"[{template_name}] Retry validation failed (attempt {attempt+1}): {error_msg}"
+                )
 
-        raise ValueError(f"LLM output validation failed after {attempts} attempts. Last error: {last_error}")
+        raise ValueError(
+            f"LLM output validation failed after {attempts} attempts. Last error: {last_error}"
+        )
 
     def get_logs(self) -> list[LLMCallLog]:
         """Get all LLM call logs for debugging."""
@@ -341,8 +404,8 @@ class LLMClient:
 
     def _openai_fallback_http(self, messages: list[Message], config: LLMConfig) -> LLMResponse:
         """Fallback HTTP implementation when openai package is not installed."""
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         url = f"{config.base_url or 'https://api.openai.com/v1'}/chat/completions"
         payload = {
@@ -409,7 +472,9 @@ class LLMClient:
             usage={
                 "prompt_tokens": resp.usage.input_tokens if resp.usage else 0,
                 "completion_tokens": resp.usage.output_tokens if resp.usage else 0,
-                "total_tokens": (resp.usage.input_tokens + resp.usage.output_tokens) if resp.usage else 0,
+                "total_tokens": (
+                    (resp.usage.input_tokens + resp.usage.output_tokens) if resp.usage else 0
+                ),
             },
             finish_reason=resp.stop_reason,
             raw=resp.model_dump() if hasattr(resp, "model_dump") else None,
@@ -463,6 +528,7 @@ class LLMClient:
     ) -> None:
         """Log an LLM call for debugging."""
         from datetime import datetime
+
         log = LLMCallLog(
             timestamp=datetime.now().isoformat(),
             template_name=template_name,

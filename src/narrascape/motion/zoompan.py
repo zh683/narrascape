@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from narrascape.motion.base import MotionEngine, MotionParams, MotionResult
 from narrascape.utils.ffmpeg import run_ffmpeg
@@ -21,9 +20,13 @@ class ZoomPanEngine(MotionEngine):
 
     def can_handle(self, params: MotionParams) -> bool:
         return params.movement in (
-            "zoom_in", "zoom_slow", "zoom_out",
-            "zoom_in_slow", "zoom_out_slow",
-            "push_in", "pull_out",
+            "zoom_in",
+            "zoom_slow",
+            "zoom_out",
+            "zoom_in_slow",
+            "zoom_out_slow",
+            "push_in",
+            "pull_out",
         )
 
     def generate(self, params: MotionParams) -> MotionResult:
@@ -43,14 +46,29 @@ class ZoomPanEngine(MotionEngine):
             f"{self._build_fade_vf(params)}"
         )
 
-        ok = run_ffmpeg([
-            "-loop", "1", "-i", str(params.image_path),
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-            "-pix_fmt", "yuv420p",
-            "-t", str(params.duration),
-            str(params.output_path),
-        ], desc=f"zoompan {params.movement.value}", validate_output=True)
+        ok = run_ffmpeg(
+            [
+                "-loop",
+                "1",
+                "-i",
+                str(params.image_path),
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                str(params.duration),
+                str(params.output_path),
+            ],
+            desc=f"zoompan {params.movement.value}",
+            validate_output=True,
+        )
 
         return MotionResult(
             output_path=params.output_path,

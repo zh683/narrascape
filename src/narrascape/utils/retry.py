@@ -2,11 +2,13 @@
 
 No external dependencies (e.g. tenacity) — pure stdlib.
 """
+
 from __future__ import annotations
 
 import logging
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 T = TypeVar("T")
 logger = logging.getLogger("narrascape.retry")
@@ -45,13 +47,11 @@ def retry_with_backoff(
                 logger.error(f"All {max_retries} retries exhausted. Last error: {e}")
                 raise
 
-            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay = min(base_delay * (2**attempt), max_delay)
             if on_retry:
                 on_retry(e, attempt + 1, delay)
             else:
-                logger.warning(
-                    f"Retry {attempt + 1}/{max_retries} after {delay:.1f}s: {e}"
-                )
+                logger.warning(f"Retry {attempt + 1}/{max_retries} after {delay:.1f}s: {e}")
             time.sleep(delay)
 
     raise RuntimeError("retry_with_backoff: unreachable")
