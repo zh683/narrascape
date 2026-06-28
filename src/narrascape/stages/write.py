@@ -81,7 +81,7 @@ class WriteStage(Stage):
         # Step 2: Write raw script
         writer = ScriptWriter(llm_client=self.llm_client, style=self.style)
         script = writer.write_from_research(research, self.segment_count)
-        script = writer.write_ending(script, tone="hopeful")
+        script = writer.write_ending(script, tone=config.ending.tone)
 
         # Step 3: Save raw script (before humanization)
         raw_path = scripts_dir / "script_raw.yaml"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -25,7 +26,20 @@ logger = logging.getLogger("narrascape.ffmpeg")
 
 _FFMPEG_EXE: Path | None = None
 _FFPROBE_EXE: Path | None = None
-_MEDIA_EXTENSIONS = (".mp4", ".mp3", ".wav", ".mov", ".mkv", ".m4a", ".aac", ".flac")
+_MEDIA_EXTENSIONS = (
+    ".mp4",
+    ".mp3",
+    ".wav",
+    ".mov",
+    ".mkv",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+)
 
 
 def safe_media_arg(path: str | Path) -> str:
@@ -34,6 +48,11 @@ def safe_media_arg(path: str | Path) -> str:
     if str(path).startswith("-") or p.name.startswith("-"):
         return str(p.resolve())
     return str(p)
+
+
+def safe_output_arg(path: str | Path) -> str:
+    """Return a final ffmpeg output argument guarded from option parsing."""
+    return safe_media_arg(path)
 
 
 def _normalize_ffmpeg_args(args: list[str]) -> list[str]:
@@ -90,6 +109,19 @@ def find_ffmpeg() -> Path:
             logger.debug(f"ffmpeg found at: {_FFMPEG_EXE}")
             return _FFMPEG_EXE
 
+    # 4. Versioned Windows archives, e.g. D:\ffmpeg-2026...\bin\ffmpeg.exe
+    for root in (Path("C:/"), Path("D:/")):
+        if not root.exists():
+            continue
+        try:
+            for candidate in root.glob("ffmpeg*/bin/ffmpeg.exe"):
+                if candidate.exists():
+                    _FFMPEG_EXE = candidate
+                    logger.debug(f"ffmpeg found by versioned scan: {_FFMPEG_EXE}")
+                    return _FFMPEG_EXE
+        except OSError:
+            continue
+
     raise RuntimeError(
         "ffmpeg not found. Please install ffmpeg and ensure it's in PATH, "
         "or set NARRASCAPE_FFMPEG environment variable to the full path."
@@ -143,7 +175,16 @@ def get_duration(path: Path) -> float:
     )
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(f"Cannot get duration for {path}: {r.stderr}")
-    return float(r.stdout.strip())
+    raw = r.stdout.strip()
+    try:
+        duration = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Cannot get duration for {path}: invalid ffprobe duration {raw!r}"
+        ) from exc
+    if not math.isfinite(duration):
+        raise RuntimeError(f"Cannot get duration for {path}: invalid ffprobe duration {raw!r}")
+    return duration
 
 
 def get_media_info(path: Path) -> dict[str, Any]:
@@ -279,6 +320,18 @@ def run_ffmpeg_silent(args: list[str], timeout: int | None = None) -> subprocess
     """Run ffmpeg silently, returning the full result. For internal use."""
     ffmpeg = find_ffmpeg()
     cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + _normalize_ffmpeg_args(args)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def run_ffmpeg_raw(
+    args: list[str],
+    *,
+    timeout: int | None = None,
+    loglevel: str = "error",
+) -> subprocess.CompletedProcess:
+    """Run ffmpeg with normalized media path arguments and return process output."""
+    ffmpeg = find_ffmpeg()
+    cmd = [str(ffmpeg), "-y", "-loglevel", loglevel] + _normalize_ffmpeg_args(args)
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
-from narrascape.utils.safe_io import atomic_write_json
+from narrascape.utils.safe_io import atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.cache")
 
@@ -40,7 +39,7 @@ class BuildCache:
         if not self.index_path.exists():
             return {}
         try:
-            data = json.loads(self.index_path.read_text(encoding="utf-8"))
+            data = load_json_mapping(self.index_path)
             return {k: CacheEntry(**v) for k, v in data.items()}
         except Exception as e:
             logger.warning(f"Cache index corrupted, starting fresh: {e}")
@@ -56,7 +55,7 @@ class BuildCache:
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
-        return h.hexdigest()[:16]
+        return h.hexdigest()[:32]
 
     @staticmethod
     def _hash_config(config: Any) -> str:
@@ -68,7 +67,7 @@ class BuildCache:
             data = json.dumps(config, sort_keys=True, ensure_ascii=False)
         else:
             data = str(config)
-        return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()[:32]
 
     def compute_key(
         self,
@@ -87,10 +86,12 @@ class BuildCache:
             name: self._hash_file(path) for name, path in inputs.items() if path.exists()
         }
         config_hash = self._hash_config(config)
+        import json
+
         combined = json.dumps(
             {"inputs": input_hashes, "config": config_hash, "version": version}, sort_keys=True
         )
-        return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:20]
+        return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:32]
 
     def is_cached(self, key: str, output_path: Path) -> bool:
         """Check if a valid cached entry exists for the given key."""

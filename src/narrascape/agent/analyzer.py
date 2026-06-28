@@ -18,6 +18,9 @@ from narrascape.llm.prompts import get_prompt
 
 logger = logging.getLogger("narrascape.agent.analyzer")
 
+_MAX_BATCH_SEGMENTS = 10
+_MAX_BATCH_CHARS = 12000
+
 
 # ── Rule-based emotion lexicon (fallback only) ───────────────────────────
 
@@ -210,8 +213,15 @@ class ScriptAnalyzer:
         return results
 
     def _llm_analyze_batch(self, script: Script) -> list[SegmentAnalysis]:
-        """Analyze all segments in a single LLM call (bridge mode optimization)."""
-        segments_text = "\n\n".join([f"Segment {seg.id}: {seg.text}" for seg in script.segments])
+        """Analyze all segments with bounded batch prompts for bridge providers."""
+        results: list[SegmentAnalysis] = []
+        for batch in _segment_batches(script.segments):
+            results.extend(self._llm_analyze_batch_segments(batch))
+        return results
+
+    def _llm_analyze_batch_segments(self, segments: list[ScriptSegment]) -> list[SegmentAnalysis]:
+        """Analyze a bounded set of segments in one LLM call."""
+        segments_text = "\n\n".join([f"Segment {seg.id}: {seg.text}" for seg in segments])
 
         prompt = f"""You are a cinematographer analyzing narration script segments for a documentary video.
 
@@ -239,11 +249,15 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
         resp = self.llm_client.complete(prompt, json_mode=True)
         data = resp.extract_json()
 
+        if isinstance(data, dict) and len(segments) == 1:
+            data = [data]
         if not isinstance(data, list):
             raise ValueError(f"Expected JSON array, got {type(data)}")
 
         results = []
         for item in data:
+            if not isinstance(item, dict):
+                raise ValueError(f"Expected analysis object, got {type(item)}")
             results.append(
                 SegmentAnalysis(
                     segment_id=item.get("segment_id", 0),
@@ -427,3 +441,22 @@ def _extract_visual_keywords(text: str) -> list[str]:
         if w.lower() in text_lower:
             found.append(w)
     return found
+
+
+def _segment_batches(segments: list[ScriptSegment]) -> list[list[ScriptSegment]]:
+    batches: list[list[ScriptSegment]] = []
+    current: list[ScriptSegment] = []
+    current_chars = 0
+    for seg in segments:
+        seg_chars = len(seg.text) + 32
+        if current and (
+            len(current) >= _MAX_BATCH_SEGMENTS or current_chars + seg_chars > _MAX_BATCH_CHARS
+        ):
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(seg)
+        current_chars += seg_chars
+    if current:
+        batches.append(current)
+    return batches

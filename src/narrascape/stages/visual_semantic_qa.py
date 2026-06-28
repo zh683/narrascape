@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +9,7 @@ import yaml
 from narrascape.artifacts import validate_artifact
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffmpeg
+from narrascape.utils.ffmpeg import run_ffmpeg_raw
 
 
 class VisualSemanticQAStage(Stage):
@@ -576,13 +575,8 @@ class VisualSemanticQAStage(Stage):
         out_dir.mkdir(parents=True, exist_ok=True)
         output = out_dir / f"segment_{int(segment_id):03d}_frame_001.jpg"
         try:
-            ffmpeg = find_ffmpeg()
-            result = subprocess.run(
+            result = run_ffmpeg_raw(
                 [
-                    str(ffmpeg),
-                    "-y",
-                    "-loglevel",
-                    "error",
                     "-ss",
                     "0.5",
                     "-i",
@@ -593,8 +587,6 @@ class VisualSemanticQAStage(Stage):
                     "2",
                     str(output),
                 ],
-                capture_output=True,
-                text=True,
                 timeout=30,
             )
         except Exception:

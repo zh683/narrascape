@@ -17,6 +17,7 @@ import logging
 import mimetypes
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 logger = logging.getLogger("narrascape.uploader")
 
@@ -66,9 +67,26 @@ class ImageUploader:
         else:
             raise ValueError(f"Unknown upload backend: {self.backend}")
 
+        url = self._validate_upload_url(url)
         self._cache[cache_key] = url
         logger.info(f"Uploaded {p.name} -> {url[:60]}...")
         return url
+
+    def _validate_upload_url(self, url: str) -> str:
+        """Allow only API-safe reference image URL schemes."""
+        value = str(url or "").strip()
+        if not value:
+            raise ValueError("Upload backend returned an empty URL")
+        if value.startswith("data:"):
+            if not value.startswith("data:image/"):
+                raise ValueError("Only data:image/* upload URLs are allowed")
+            if ";base64," not in value[:128]:
+                raise ValueError("Data image upload URL must be base64 encoded")
+            return value
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"Unsupported upload URL scheme: {value[:80]}")
+        return value
 
     def upload_multiple(self, paths: list[str | Path]) -> list[str]:
         """Upload multiple images and return their URLs."""

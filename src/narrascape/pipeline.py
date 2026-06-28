@@ -95,8 +95,22 @@ def get_stage_map() -> dict[str, type[Stage]]:
     """
     global STAGE_MAP
     if STAGE_MAP is None:
-        STAGE_MAP = {cls().name: cls for cls in ALL_STAGES}
+        STAGE_MAP = {_stage_class_name(cls): cls for cls in ALL_STAGES}
     return STAGE_MAP
+
+
+def _stage_class_name(stage_cls: type[Stage]) -> str:
+    name = stage_cls.__dict__.get("name")
+    if isinstance(name, str):
+        return name
+    return stage_cls().name
+
+
+def _stage_class_depends_on(stage_cls: type[Stage]) -> list[str]:
+    depends_on = stage_cls.__dict__.get("depends_on")
+    if isinstance(depends_on, list):
+        return [str(item) for item in depends_on]
+    return list(stage_cls().depends_on)
 
 
 def _resolve_dependencies(
@@ -110,8 +124,7 @@ def _resolve_dependencies(
     # Build dependency graph
     deps: dict[str, set[str]] = {}
     for name, cls in available.items():
-        stage = cls()
-        deps[name] = set(stage.depends_on)
+        deps[name] = set(_stage_class_depends_on(cls))
 
     # Collect all required stages (target + transitive deps)
     required = set()

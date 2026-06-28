@@ -6,8 +6,11 @@ Unified data structures for LLM interactions across all providers.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+logger = logging.getLogger("narrascape.llm.models")
 
 
 @dataclass
@@ -129,17 +132,46 @@ def _json_candidates(text: str) -> list[str]:
         if in_fence:
             block.append(line)
 
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start = stripped.find(opener)
-        end = stripped.rfind(closer)
-        if start != -1 and end > start:
-            candidates.append(stripped[start : end + 1])
+    candidates.extend(_balanced_json_substrings(stripped))
 
     deduped: list[str] = []
     for candidate in candidates:
         if candidate not in deduped:
             deduped.append(candidate)
     return deduped
+
+
+def _balanced_json_substrings(text: str) -> list[str]:
+    """Find balanced JSON object/array substrings while respecting quoted strings."""
+    spans: list[tuple[int, int]] = []
+    pairs = {"{": "}", "[": "]"}
+    for start, opener in enumerate(text):
+        if opener not in pairs:
+            continue
+        stack = [pairs[opener]]
+        in_string = False
+        escape = False
+        for pos in range(start + 1, len(text)):
+            char = text[pos]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char in pairs:
+                stack.append(pairs[char])
+            elif stack and char == stack[-1]:
+                stack.pop()
+                if not stack:
+                    spans.append((start, pos + 1))
+                    break
+    spans.sort(key=lambda span: (span[1] - span[0]), reverse=True)
+    return [text[start:end] for start, end in spans]
 
 
 @dataclass
@@ -180,17 +212,21 @@ class PromptTemplate:
         try:
             user_text = self.user.format(**local_vars)
         except KeyError as e:
-            print(f"MODELS DEBUG: KeyError {e}")
-            print(f"MODELS DEBUG: self id={id(self)}")
-            print(f"MODELS DEBUG: user type={type(self.user)}")
-            print(f"MODELS DEBUG: user id={id(self.user)}")
-            print(f"MODELS DEBUG: user len={len(self.user)}")
-            print(f"MODELS DEBUG: user[:200]={repr(self.user[:200])}")
-            print(f"MODELS DEBUG: local_vars keys={sorted(local_vars.keys())}")
+            logger.debug("PromptTemplate KeyError %s", e)
+            logger.debug("PromptTemplate self id=%s", id(self))
+            logger.debug("PromptTemplate user type=%s", type(self.user))
+            logger.debug("PromptTemplate user id=%s", id(self.user))
+            logger.debug("PromptTemplate user len=%s", len(self.user))
+            logger.debug("PromptTemplate user[:200]=%r", self.user[:200])
+            logger.debug("PromptTemplate local_vars keys=%s", sorted(local_vars.keys()))
             for k in sorted(local_vars.keys()):
                 v = local_vars[k]
-                print(
-                    f"MODELS DEBUG: {k} type={type(v).__name__} len={len(str(v))} has_brace={('{' in str(v) or '}' in str(v))}"
+                logger.debug(
+                    "PromptTemplate var %s type=%s len=%s has_brace=%s",
+                    k,
+                    type(v).__name__,
+                    len(str(v)),
+                    "{" in str(v) or "}" in str(v),
                 )
             # Compare with all known templates
             from narrascape.llm.prompts import (
@@ -204,8 +240,13 @@ class PromptTemplate:
                 ("COMPACT", COMPACT_SHOT_DESIGN_PROMPT),
                 ("ANALYZER", ANALYZER_PROMPT),
             ]:
-                print(f"MODELS DEBUG: {name} id={id(tmpl)} self is {name}: {self is tmpl}")
-                print(f"MODELS DEBUG: {name}.user len={len(tmpl.user)}")
+                logger.debug(
+                    "PromptTemplate known %s id=%s self_is=%s user_len=%s",
+                    name,
+                    id(tmpl),
+                    self is tmpl,
+                    len(tmpl.user),
+                )
             raise
 
         if self.chain_of_thought and self.reasoning_steps:

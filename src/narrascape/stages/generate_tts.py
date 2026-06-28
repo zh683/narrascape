@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -25,7 +24,7 @@ from narrascape.providers import (
     selection_metadata,
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffprobe
+from narrascape.utils.ffmpeg import get_duration
 from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
@@ -223,30 +222,14 @@ class GenerateTTSStage(Stage):
         # Generate timing.json
         logger.info("  Measuring durations...")
         dur = {}
-        ffprobe = find_ffprobe()
         for seg in segments:
             sid = seg.id
             mp3 = tts_dir / f"seg_{sid:02d}.mp3"
             if mp3.exists():
-                r = subprocess.run(
-                    [
-                        ffprobe,
-                        "-v",
-                        "quiet",
-                        "-show_entries",
-                        "format=duration",
-                        "-of",
-                        "csv=p=0",
-                        str(mp3),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
                 try:
-                    dur[str(sid)] = float(r.stdout.strip())
+                    dur[str(sid)] = get_duration(mp3)
                     logger.info(f"  seg_{sid:02d}: {dur[str(sid)]:.1f}s")
-                except ValueError:
+                except RuntimeError:
                     dur[str(sid)] = max(8, len(seg.text) / 7.2)
             else:
                 dur[str(sid)] = max(8, len(seg.text) / 7.2)

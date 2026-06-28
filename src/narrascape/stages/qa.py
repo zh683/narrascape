@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffmpeg, get_media_info, validate_video
+from narrascape.utils.ffmpeg import get_media_info, run_ffmpeg_raw, validate_video
 from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
 
 
@@ -200,10 +199,8 @@ class QAStage(Stage):
 
     def _detect_silence(self, final: Path) -> dict[str, Any]:
         try:
-            ffmpeg = find_ffmpeg()
-            result = subprocess.run(
+            result = run_ffmpeg_raw(
                 [
-                    str(ffmpeg),
                     "-hide_banner",
                     "-nostats",
                     "-i",
@@ -214,9 +211,8 @@ class QAStage(Stage):
                     "null",
                     "-",
                 ],
-                capture_output=True,
-                text=True,
                 timeout=60,
+                loglevel="info",
             )
             output = f"{result.stdout}\n{result.stderr}"
             mean_volume = self._parse_volume(output, "mean_volume")
@@ -234,10 +230,8 @@ class QAStage(Stage):
 
     def _detect_black_frames(self, final: Path, duration: float) -> dict[str, Any]:
         try:
-            ffmpeg = find_ffmpeg()
-            result = subprocess.run(
+            result = run_ffmpeg_raw(
                 [
-                    str(ffmpeg),
                     "-hide_banner",
                     "-nostats",
                     "-i",
@@ -249,9 +243,8 @@ class QAStage(Stage):
                     "null",
                     "-",
                 ],
-                capture_output=True,
-                text=True,
                 timeout=60,
+                loglevel="info",
             )
             output = f"{result.stdout}\n{result.stderr}"
             black_seconds = self._sum_blackdetect_seconds(output)

@@ -63,8 +63,6 @@ class DesignStage(Stage):
                 f"[design] Loaded pre-production: {len(pre_production.get('characters', []))} characters, {len(pre_production.get('environments', []))} scenes, {pre_production.get('storyboard', {}).get('total_frames', 0)} storyboard frames"
             )
 
-        # Load pre-production data if available
-        pre_production = self._load_pre_production(config)
         storyboard_obj = None
         if pre_production:
             sb_data = pre_production.get("storyboard", {})

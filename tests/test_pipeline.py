@@ -6,11 +6,19 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from narrascape.config import LLMConfig, NarrascapeConfig, PipelineConfig, ProjectConfig, Script
+from narrascape.cache import BuildCache
+from narrascape.config import (
+    EndingConfig,
+    LLMConfig,
+    NarrascapeConfig,
+    PipelineConfig,
+    ProjectConfig,
+    Script,
+)
 from narrascape.llm import LLMClient
-from narrascape.pipeline import Pipeline, _resolve_dependencies
+from narrascape.pipeline import Pipeline, _resolve_dependencies, get_stage_map
 from narrascape.stages.audio import AudioRemixStage, AudioStage
-from narrascape.stages.base import StageResult
+from narrascape.stages.base import StageContext, StageResult
 from narrascape.stages.concat import ConcatStage
 from narrascape.stages.design import DesignStage
 from narrascape.stages.film_assemble import FilmAssembleStage
@@ -203,6 +211,21 @@ class TestDependencyResolution:
 
 
 class TestPipelineStageFactory:
+    def test_get_stage_map_uses_class_level_stage_names_without_instantiating(self, monkeypatch):
+        import narrascape.pipeline as pipeline_module
+
+        class ExplodingStage:
+            name = "explode"
+            depends_on = []
+
+            def __init__(self):
+                raise AssertionError("stage should not be instantiated to read name")
+
+        monkeypatch.setattr(pipeline_module, "ALL_STAGES", [ExplodingStage])
+        monkeypatch.setattr(pipeline_module, "STAGE_MAP", None)
+
+        assert get_stage_map() == {"explode": ExplodingStage}
+
     def test_pipeline_passes_llm_client_to_all_llm_stages(self, tmp_path):
         config = NarrascapeConfig(
             project=ProjectConfig(
@@ -241,6 +264,73 @@ class TestPipelineStageFactory:
 
         assert isinstance(pipeline.script, Script)
         assert pipeline.script.segments == []
+
+    def test_write_stage_uses_configured_ending_tone(self, tmp_path, monkeypatch):
+        from narrascape.config import ScriptSegment
+        from narrascape.research.engine import ResearchResult
+
+        seen = {}
+
+        def fake_research(self, topic, depth="standard"):
+            return ResearchResult(topic=topic, findings={"Overview": "A small test story."})
+
+        def fake_write_from_research(self, research, segment_count):
+            return Script(segments=[ScriptSegment(id=1, text="Opening.")])
+
+        def fake_write_ending(self, script, tone="hopeful"):
+            seen["tone"] = tone
+            return script
+
+        monkeypatch.setattr("narrascape.stages.write.ResearchEngine.research", fake_research)
+        monkeypatch.setattr(
+            "narrascape.stages.write.ScriptWriter.write_from_research",
+            fake_write_from_research,
+        )
+        monkeypatch.setattr(
+            "narrascape.stages.write.ScriptWriter.write_ending",
+            fake_write_ending,
+        )
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="write-tone-test",
+                title="Write Tone Test",
+                script_file="scripts/script.yaml",
+            ),
+            ending=EndingConfig(tone="melancholic"),
+            project_dir=tmp_path,
+        )
+
+        result = WriteStage(auto_humanize=False).run(
+            StageContext(
+                config=config,
+                script=Script.model_construct(segments=[]),
+                cache=BuildCache(config.pipeline_dir / ".cache"),
+            )
+        )
+
+        assert result.success is True
+        assert seen["tone"] == "melancholic"
+
+    def test_research_result_markdown_formats_nested_findings(self):
+        from narrascape.research.engine import ResearchResult
+
+        report = ResearchResult(
+            topic="Nested Topic",
+            findings={
+                "facts": {
+                    "timeline": ["first", "second"],
+                    "metadata": {"source": "archive", "confidence": 0.8},
+                }
+            },
+        )
+
+        markdown = report.to_markdown()
+
+        assert "{'timeline'" not in markdown
+        assert "- **timeline:**" in markdown
+        assert "  - first" in markdown
+        assert "- **source:** archive" in markdown
 
     def test_default_stages_include_video_take_select_and_supervisor_loop(self, tmp_path):
         config = NarrascapeConfig(

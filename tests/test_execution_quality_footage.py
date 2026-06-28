@@ -140,6 +140,22 @@ def test_provider_selector_uses_health_circuit_breaker(tmp_path):
     assert selection.tool.name == "local_image"
 
 
+def test_provider_health_store_merges_failure_updates_under_lock(tmp_path):
+    from narrascape.providers.health import ProviderHealthStore
+
+    path = tmp_path / "provider_health.json"
+    first = ProviderHealthStore(path)
+    second = ProviderHealthStore(path)
+
+    first.record_failure("seedream_image", "first")
+    state = second.record_failure("seedream_image", "second")
+
+    assert state.failure_count == 2
+    snapshot = first.snapshot()
+    assert snapshot["seedream_image"].failure_count == 2
+    assert snapshot["seedream_image"].last_error == "second"
+
+
 def test_generate_video_failure_records_provider_health(tmp_path, monkeypatch):
     from narrascape.providers.health import health_store_for_project
     from narrascape.stages.generate_video import GenerateVideoStage
@@ -174,6 +190,25 @@ def test_ffmpeg_media_args_resolve_dash_prefixed_paths(tmp_path):
     relative_args = _normalize_ffmpeg_args(["-i", "-clip.mp4", "-c", "copy", "-out.mp4"])
     assert Path(relative_args[1]).is_absolute()
     assert Path(relative_args[-1]).is_absolute()
+
+
+def test_get_duration_rejects_non_numeric_ffprobe_duration(tmp_path, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    from narrascape.utils.ffmpeg import get_duration
+
+    media = tmp_path / "clip.mp4"
+    media.write_bytes(b"video")
+    monkeypatch.setattr("narrascape.utils.ffmpeg.find_ffprobe", lambda: tmp_path / "ffprobe")
+    monkeypatch.setattr(
+        "narrascape.utils.ffmpeg.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="N/A\n", stderr=""),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid ffprobe duration"):
+        get_duration(media)
 
 
 def test_generate_tts_executes_provider_selected_by_selector(tmp_path, monkeypatch):

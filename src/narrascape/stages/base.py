@@ -7,6 +7,7 @@ from typing import Any
 
 from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, Script
+from narrascape.utils.safe_io import load_json_mapping, load_yaml_mapping
 
 
 @dataclass
@@ -67,6 +68,18 @@ class Stage(ABC):
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         """Check if prerequisites are met. Returns (can_run, reason)."""
         return True, ""
+
+    def _load_yaml(self, path: Path) -> dict[str, Any]:
+        return load_yaml_mapping(path)
+
+    def _load_json(self, path: Path) -> dict[str, Any]:
+        return load_json_mapping(path)
+
+    def _first_existing(self, *paths: Path) -> Path:
+        for path in paths:
+            if path.exists():
+                return path
+        return paths[0] if paths else Path()
 
     @abstractmethod
     def run(self, context: StageContext) -> StageResult:

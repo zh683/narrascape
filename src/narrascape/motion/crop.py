@@ -32,46 +32,34 @@ class CropEngine(MotionEngine):
         )
 
     def generate(self, params: MotionParams) -> MotionResult:
-        pre_scale = f"scale=-1:{params.height},"
-
         w, h = params.width, params.height
+        duration = max(float(params.duration), 0.001)
+        pre_scale = f"scale='max({w},iw*{h}/ih)':'max({h},ih*{w}/iw)',"
 
         if params.movement == "pan_left":
-            crop_expr = (
-                f"crop={w}:{h}:" f"x='(in_w-{w})*t/{params.duration:.3f}':" f"y='(in_h-{h})/2'"
-            )
+            crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})*t/{duration:.3f}':" f"y='(in_h-{h})/2'"
         elif params.movement == "pan_right":
-            crop_expr = (
-                f"crop={w}:{h}:" f"x='(in_w-{w})*(1-t/{params.duration:.3f})':" f"y='(in_h-{h})/2'"
-            )
+            crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})*(1-t/{duration:.3f})':" f"y='(in_h-{h})/2'"
         elif params.movement == "pan_up":
-            crop_expr = (
-                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*(1-t/{params.duration:.3f})'"
-            )
+            crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*(1-t/{duration:.3f})'"
         elif params.movement == "pan_down":
-            crop_expr = (
-                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*t/{params.duration:.3f}'"
-            )
+            crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*t/{duration:.3f}'"
         elif params.movement == "tilt_up":
             # Tilt-up: more dramatic vertical pan + slight zoom (start lower, end higher)
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})/2':"
-                f"y='(in_h-{h})*0.7*(1-t/{params.duration:.3f})'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*0.7*(1-t/{duration:.3f})'"
             )
         elif params.movement == "tilt_down":
             # Tilt-down: start high, end low
             crop_expr = (
-                f"crop={w}:{h}:"
-                f"x='(in_w-{w})/2':"
-                f"y='(in_h-{h})*0.7*(t/{params.duration:.3f})'"
+                f"crop={w}:{h}:" f"x='(in_w-{w})/2':" f"y='(in_h-{h})*0.7*(t/{duration:.3f})'"
             )
         elif params.movement == "drift":
             # Drift: subtle diagonal movement (very gentle)
             crop_expr = (
                 f"crop={w}:{h}:"
-                f"x='(in_w-{w})*(0.2*t/{params.duration:.3f})':"
-                f"y='(in_h-{h})*(0.15*(1-t/{params.duration:.3f}))'"
+                f"x='(in_w-{w})*(0.2*t/{duration:.3f})':"
+                f"y='(in_h-{h})*(0.15*(1-t/{duration:.3f}))'"
             )
         else:  # still
             crop_expr = f"crop={w}:{h}:" f"x='(in_w-{w})/2':y='(in_h-{h})/2'"

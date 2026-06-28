@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from narrascape.config import (
+    EndingConfig,
     ImageMap,
     ImageMapEntry,
     ImagePrompt,
@@ -77,6 +78,13 @@ class TestNarrascapeConfig:
         dumped = cfg.model_dump()
 
         assert "project_dir" not in dumped
+
+
+class TestEndingConfig:
+    def test_ending_tone_is_configurable(self):
+        cfg = EndingConfig(tone="melancholic")
+
+        assert cfg.tone == "melancholic"
 
 
 class TestScript:

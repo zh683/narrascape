@@ -27,15 +27,11 @@ class ResearchResult:
         lines = [f"# Research Report: {self.topic}", ""]
         for section, content in self.findings.items():
             if section == "narrative_arc":
-                lines.append(f"> **Narrative Arc:** {content}")
+                lines.append(f"> **Narrative Arc:** {_markdown_inline(content)}")
                 lines.append("")
                 continue
             lines.append(f"## {section}")
-            if isinstance(content, list):
-                for item in content:
-                    lines.append(f"- {item}")
-            else:
-                lines.append(str(content))
+            lines.extend(_markdown_lines(content))
             lines.append("")
         return "\n".join(lines)
 
@@ -139,3 +135,34 @@ def load_research_report(path: str) -> ResearchResult:
                 findings[current_section] = line.strip()
 
     return ResearchResult("loaded", findings)
+
+
+def _markdown_inline(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        import json
+
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _markdown_lines(value: Any, indent: int = 0) -> list[str]:
+    prefix = "  " * indent
+    if isinstance(value, dict):
+        lines: list[str] = []
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}- **{key}:**")
+                lines.extend(_markdown_lines(item, indent + 1))
+            else:
+                lines.append(f"{prefix}- **{key}:** {_markdown_inline(item)}")
+        return lines or [f"{prefix}-"]
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}-")
+                lines.extend(_markdown_lines(item, indent + 1))
+            else:
+                lines.append(f"{prefix}- {_markdown_inline(item)}")
+        return lines or [f"{prefix}-"]
+    return [f"{prefix}{_markdown_inline(value)}"]

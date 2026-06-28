@@ -101,6 +101,64 @@ class TestEngineSelection:
         engine = build_motion_engine(params)
         assert isinstance(engine, PILEngine)
 
+    def test_crop_engine_uses_cover_scale_before_crop(self, monkeypatch):
+        captured = {}
+
+        def fake_run_ffmpeg(args, **kwargs):
+            captured["args"] = args
+            return True
+
+        monkeypatch.setattr("narrascape.motion.crop.run_ffmpeg", fake_run_ffmpeg)
+        params = MotionParams(
+            image_path=Path("/tmp/test.png"),
+            output_path=Path("/tmp/out.mp4"),
+            duration=10.0,
+            fps=25,
+            width=1920,
+            height=1080,
+            movement=MovementType.PAN_LEFT,
+            shot_type=ShotType.WIDE_ENV,
+            fade_in=1.0,
+            fade_out=1.0,
+        )
+
+        result = CropEngine().generate(params)
+
+        vf = captured["args"][captured["args"].index("-vf") + 1]
+        assert result.success is True
+        assert "scale='max(1920,iw*1080/ih)':'max(1080,ih*1920/iw)'" in vf
+        assert "crop=1920:1080" in vf
+
+    def test_zoompan_engine_builds_single_frame_zoompan_filter(self, monkeypatch):
+        captured = {}
+
+        def fake_run_ffmpeg(args, **kwargs):
+            captured["args"] = args
+            return True
+
+        monkeypatch.setattr("narrascape.motion.zoompan.run_ffmpeg", fake_run_ffmpeg)
+        params = MotionParams(
+            image_path=Path("/tmp/test.png"),
+            output_path=Path("/tmp/out.mp4"),
+            duration=2.0,
+            fps=25,
+            width=1280,
+            height=720,
+            movement=MovementType.ZOOM_IN,
+            shot_type=ShotType.MEDIUM,
+            fade_in=0.5,
+            fade_out=0.5,
+            zoom_start=1.0,
+            zoom_end=1.1,
+        )
+
+        result = ZoomPanEngine().generate(params)
+
+        vf = captured["args"][captured["args"].index("-vf") + 1]
+        assert result.success is True
+        assert "zoompan=" in vf
+        assert "d=1:s=1280x720" in vf
+
 
 class TestKenBurnsResourceControls:
     def test_worker_defaults_are_resource_bounded(self, monkeypatch):

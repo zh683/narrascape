@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -34,6 +35,19 @@ if sys.platform == "win32":
         pass
 
 console = Console(force_terminal=True, emoji=False if sys.platform == "win32" else True)
+
+
+@contextmanager
+def _temporary_env(name: str, value: str):
+    previous = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 def _status_stage_names() -> list[str]:
@@ -888,18 +902,19 @@ def build_cmd(
             "[dim]  You can also approve individual stages later: narrascape approve -p . -s <stage>"
         )
 
-    pipeline = Pipeline(
-        config,
-        dry_run=dry_run,
-        force=force,
-        interactive=interactive,
-        auto_approve=auto_approve,
-        console=console,
-        llm_client=_get_llm_client(config=config),
-        image_api_key=APIKeys.ark(),
-        minimax_api_key=APIKeys.minimax(),
-    )
-    results = pipeline.run(stages)
+    with _temporary_env("NARRASCAPE_KENBURNS_WORKERS", str(parallel)):
+        pipeline = Pipeline(
+            config,
+            dry_run=dry_run,
+            force=force,
+            interactive=interactive,
+            auto_approve=auto_approve,
+            console=console,
+            llm_client=_get_llm_client(config=config),
+            image_api_key=APIKeys.ark(),
+            minimax_api_key=APIKeys.minimax(),
+        )
+        results = pipeline.run(stages)
 
     # Print summary
     table = Table(title="Build Results")
@@ -1033,6 +1048,12 @@ def clean_cmd(
             import shutil
 
             shutil.rmtree(stage_dir)
+        elif stage == ".cache":
+            cache_dir = config.pipeline_dir / ".cache"
+            if cache_dir.exists():
+                import shutil
+
+                shutil.rmtree(cache_dir)
         console.print(f"[bold green]✅ Cleaned {stage}[/]")
     else:
         console.print("[bold yellow]Use --all or --stage <name>[/]")

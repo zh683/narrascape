@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import subprocess
 from pathlib import Path
 
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffmpeg, get_duration, run_ffmpeg
+from narrascape.utils.ffmpeg import get_duration, run_ffmpeg, run_ffmpeg_raw
 
 logger = logging.getLogger("narrascape.stages.audio")
 
@@ -125,13 +124,8 @@ class AudioRemixStage(Stage):
     This stage depends on generate_tts and generate_music to produce mixed_audio.mp3.
     """
 
-    @property
-    def name(self) -> str:
-        return "remix_audio"
-
-    @property
-    def depends_on(self) -> list[str]:
-        return ["generate_tts", "generate_music"]
+    name = "remix_audio"
+    depends_on = ["generate_tts", "generate_music"]
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -229,10 +223,10 @@ class AudioRemixStage(Stage):
         )
         filter_graph = ";".join(filter_lines)
 
-        cmd = [str(find_ffmpeg()), "-y", "-i", str(narration_norm)]
+        args = ["-i", str(narration_norm)]
         for z in timeline:
-            cmd.extend(["-i", str(z["file"])])
-        cmd.extend(
+            args.extend(["-i", str(z["file"])])
+        args.extend(
             [
                 "-filter_complex",
                 filter_graph,
@@ -247,7 +241,7 @@ class AudioRemixStage(Stage):
         )
 
         logger.info(f"Mixing {len(timeline)} BGM zones + narration...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = run_ffmpeg_raw(args)
         if result.returncode != 0:
             logger.error(f"Audio mix failed: {result.stderr[:500]}")
             return StageResult(self.name, False, message="ffmpeg filter_complex failed")

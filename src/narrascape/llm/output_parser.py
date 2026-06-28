@@ -151,26 +151,67 @@ class JSONRepair:
         # Add missing outer braces if it looks like a dict
         if result.startswith('"') and not result.startswith('{"'):
             result = "{" + result
-        if result.count("{") > result.count("}"):
-            result += "}" * (result.count("{") - result.count("}"))
-        if result.count("[") > result.count("]"):
-            result += "]" * (result.count("[") - result.count("]"))
+        result += _missing_json_closers(result)
 
         return result
 
     @staticmethod
     def extract_json_object(text: str) -> str:
         """Extract the first JSON object from text."""
-        import re
-
-        # Try to find JSON object
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            return match.group(0)
-
-        # Try to find JSON array
-        match = re.search(r"\[.*\]", text, re.DOTALL)
-        if match:
-            return match.group(0)
-
+        candidate = _first_balanced_json(text)
+        if candidate:
+            return candidate
         return text
+
+
+def _missing_json_closers(text: str) -> str:
+    """Return closing braces/brackets missing outside JSON strings."""
+    closers: list[str] = []
+    pairs = {"{": "}", "[": "]"}
+    in_string = False
+    escape = False
+    for char in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in pairs:
+            closers.append(pairs[char])
+        elif closers and char == closers[-1]:
+            closers.pop()
+    return "".join(reversed(closers))
+
+
+def _first_balanced_json(text: str) -> str | None:
+    pairs = {"{": "}", "[": "]"}
+    for start, opener in enumerate(text):
+        if opener not in pairs:
+            continue
+        stack = [pairs[opener]]
+        in_string = False
+        escape = False
+        for pos in range(start + 1, len(text)):
+            char = text[pos]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char in pairs:
+                stack.append(pairs[char])
+            elif stack and char == stack[-1]:
+                stack.pop()
+                if not stack:
+                    return text[start : pos + 1]
+    return None

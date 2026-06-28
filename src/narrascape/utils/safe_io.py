@@ -216,11 +216,34 @@ def download_to_path(
             os.fsync(fh.fileno())
         if tmp.stat().st_size < min_bytes:
             raise RuntimeError(f"Downloaded file is too small: {tmp.stat().st_size} bytes")
+        if expected_content_prefixes:
+            _validate_download_signature(tmp, expected_content_prefixes)
         with file_lock(target):
             os.replace(tmp, target)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _validate_download_signature(path: Path, expected_prefixes: tuple[str, ...]) -> None:
+    """Reject obvious HTML/text error bodies when servers omit Content-Type."""
+    sample = Path(path).read_bytes()[:512].lstrip().lower()
+    if not sample:
+        raise RuntimeError(f"Downloaded file is empty: {path}")
+    if sample.startswith((b"<!doctype html", b"<html", b"<?xml")):
+        raise RuntimeError(f"Downloaded file looks like an HTML/XML error page: {path.name}")
+    if any(prefix.lower().startswith("image/") for prefix in expected_prefixes):
+        image_ok = (
+            sample.startswith(b"\x89png\r\n\x1a\n")
+            or sample.startswith(b"\xff\xd8\xff")
+            or sample.startswith(b"bm")
+            or (sample.startswith(b"riff") and sample[8:12] == b"webp")
+        )
+        if not image_ok:
+            raise RuntimeError(f"Downloaded file does not look like an image: {path.name}")
+    if any(prefix.lower().startswith("video/") for prefix in expected_prefixes):
+        if b"ftyp" not in sample[:64] and not sample.startswith((b"\x1aE\xdf\xa3", b"riff")):
+            raise RuntimeError(f"Downloaded file does not look like a video: {path.name}")
 
 
 def _atomic_write_text_unlocked(path: Path, text: str, *, encoding: str) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_subtitle_filter_path_escapes_windows_and_filter_chars(tmp_path):
     from narrascape.stages.subtitles import SubtitleStage
@@ -57,3 +59,17 @@ def test_hard_edge_detection_rejects_smooth_gradient(tmp_path):
     image.save(path)
 
     assert detect_hard_edges(path, threshold=0.12, downsample_width=128) is False
+
+
+def test_image_uploader_rejects_unsafe_returned_urls():
+    from narrascape.uploader.image_uploader import ImageUploader
+
+    uploader = ImageUploader()
+
+    assert uploader._validate_upload_url("https://cdn.example.test/image.png").startswith(
+        "https://"
+    )
+    with pytest.raises(ValueError, match="Unsupported"):
+        uploader._validate_upload_url("javascript:alert(1)")
+    with pytest.raises(ValueError, match="Only data:image"):
+        uploader._validate_upload_url("data:text/html;base64,PGh0bWw+")

@@ -374,6 +374,7 @@ class EndingConfig(BaseModel):
 
     enabled: bool = Field(True)
     duration: float = Field(15.0, ge=1.0, le=60.0)
+    tone: str = Field("hopeful", description="Narrative tone for generated closing narration")
     template: str | None = Field(None)
     lines: list[EndingLine] = Field(default_factory=list)
     quote: str | None = Field(None)

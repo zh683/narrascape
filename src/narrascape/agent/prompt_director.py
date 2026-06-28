@@ -552,11 +552,12 @@ Guidelines:
         )
 
         try:
-            # DEBUG
             template_user = getattr(template, "user", "")[:80]
-            print(f"DEBUG template: {repr(template_user)}")
-            print(f"DEBUG profiles: {repr(character_profiles_str)[:150]}")
-            print(f"DEBUG style: {repr(scene_style_str)[:150]}")
+            logger.debug("PromptDirector template preview: %r", template_user)
+            logger.debug(
+                "PromptDirector character profiles preview: %r", character_profiles_str[:150]
+            )
+            logger.debug("PromptDirector scene style preview: %r", scene_style_str[:150])
 
             design_data = self.llm_client.run_template_validated(
                 template,

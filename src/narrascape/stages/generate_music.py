@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -24,7 +23,7 @@ from narrascape.providers import (
     selection_metadata,
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.ffmpeg import find_ffprobe
+from narrascape.utils.ffmpeg import get_duration
 from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
@@ -203,27 +202,10 @@ class GenerateMusicStage(Stage):
                 time.sleep(2)
 
         total_dur = 0.0
-        ffprobe = find_ffprobe()
         for f in generated:
-            r = subprocess.run(
-                [
-                    ffprobe,
-                    "-v",
-                    "quiet",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "csv=p=0",
-                    str(f),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
             try:
-                if r.stdout.strip():
-                    total_dur += float(r.stdout.strip())
-            except ValueError:
+                total_dur += get_duration(f)
+            except RuntimeError:
                 logger.warning(f"Could not parse music duration for {f}")
 
         logger.info(
@@ -351,25 +333,9 @@ class GenerateMusicStage(Stage):
         atomic_write_bytes(out, raw)
 
         # Check actual duration
-        ffprobe = find_ffprobe()
-        r2 = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "quiet",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "csv=p=0",
-                str(out),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
         try:
-            actual = float(r2.stdout.strip())
-        except ValueError:
+            actual = get_duration(out)
+        except RuntimeError:
             logger.warning(f"    WARN could not parse duration for {out}")
             actual = duration_seconds
         need = duration_seconds / 1.2

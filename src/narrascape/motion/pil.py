@@ -7,7 +7,7 @@ import tempfile
 from PIL import Image
 
 from narrascape.motion.base import MotionEngine, MotionParams, MotionResult
-from narrascape.utils.ffmpeg import find_ffmpeg, validate_video
+from narrascape.utils.ffmpeg import find_ffmpeg, safe_output_arg, validate_video
 
 logger = logging.getLogger("narrascape.motion.pil")
 
@@ -87,7 +87,7 @@ class PILEngine(MotionEngine):
                     "yuv420p",
                     "-t",
                     str(params.duration),
-                    str(params.output_path),
+                    safe_output_arg(params.output_path),
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,

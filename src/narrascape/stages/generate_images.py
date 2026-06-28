@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -28,7 +27,7 @@ from narrascape.providers import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
-from narrascape.utils.ffmpeg import find_ffmpeg
+from narrascape.utils.ffmpeg import run_ffmpeg_raw
 from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import (
     atomic_write_json,
@@ -439,14 +438,20 @@ class GenerateImagesStage(Stage):
         # Download and convert to PNG
         tmp = images_dir / f"_tmp_{out_name}.jpg"
         try:
-            download_to_path(img_url, tmp, timeout=180, min_bytes=128, min_free_mb=32.0)
+            download_to_path(
+                img_url,
+                tmp,
+                timeout=180,
+                min_bytes=128,
+                min_free_mb=32.0,
+                expected_content_prefixes=("image/", "application/octet-stream"),
+            )
             if not tmp.exists() or tmp.stat().st_size == 0:
                 raise RuntimeError("download produced an empty image file")
             ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
-            ffmpeg = find_ffmpeg()
-            subprocess.run(
-                [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
-            )
+            result = run_ffmpeg_raw(["-i", str(tmp), str(out_png)], timeout=60)
+            if result.returncode != 0:
+                raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[:500]}")
             if not out_png.exists() or out_png.stat().st_size == 0:
                 raise RuntimeError("ffmpeg conversion produced an empty PNG")
         except Exception as e:
@@ -511,7 +516,6 @@ class GenerateImagesStage(Stage):
         elif isinstance(data_field, dict) and data_field.get("url"):
             urls = [data_field["url"]]
 
-        ffmpeg = find_ffmpeg()
         for j, gen_idx in enumerate(to_gen_idx):
             if j >= len(urls):
                 logger.error(f"{names[gen_idx]} no URL returned")
@@ -520,11 +524,18 @@ class GenerateImagesStage(Stage):
             out_png = images_dir / f"{name}.png"
             tmp = images_dir / f"_tmp_{name}.jpg"
             try:
-                download_to_path(urls[j], tmp, timeout=180, min_bytes=128, min_free_mb=32.0)
-                ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
-                subprocess.run(
-                    [ffmpeg, "-y", "-i", str(tmp), str(out_png)], check=True, capture_output=True
+                download_to_path(
+                    urls[j],
+                    tmp,
+                    timeout=180,
+                    min_bytes=128,
+                    min_free_mb=32.0,
+                    expected_content_prefixes=("image/", "application/octet-stream"),
                 )
+                ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
+                result = run_ffmpeg_raw(["-i", str(tmp), str(out_png)], timeout=60)
+                if result.returncode != 0:
+                    raise RuntimeError(f"ffmpeg conversion failed: {result.stderr[:500]}")
                 if not out_png.exists() or out_png.stat().st_size == 0:
                     raise RuntimeError("ffmpeg conversion produced an empty PNG")
             except Exception as exc:

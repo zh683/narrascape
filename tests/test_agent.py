@@ -43,6 +43,36 @@ class FakeTimeoutLLMClient(FakeBatchLLMClient):
         raise RuntimeError("Bridge timeout")
 
 
+class FakePromptAwareBatchLLMClient(FakeBatchLLMClient):
+    def __init__(self, provider: str):
+        super().__init__(provider=provider, response_content="")
+        self.prompts = []
+
+    def complete(self, prompt: str, **kwargs):
+        import re
+
+        self.complete_calls += 1
+        self.prompts.append(prompt)
+        ids = [int(value) for value in re.findall(r"Segment (\d+):", prompt)]
+        return LLMResponse(
+            content=str(
+                [
+                    {
+                        "segment_id": seg_id,
+                        "emotion": "calm",
+                        "intensity": 0.3,
+                        "scene_type": "outdoor",
+                        "key_entities": ["river"],
+                        "visual_keywords": ["morning mist"],
+                        "pacing": "slow",
+                    }
+                    for seg_id in ids
+                ]
+            ).replace("'", '"'),
+            model="fake",
+        )
+
+
 class TestAssistantBridgeBatching:
     """AI-assistant providers must use bridge-style batch tasks."""
 
@@ -87,6 +117,19 @@ class TestAssistantBridgeBatching:
         assert client.complete_calls == 1
         assert client.validated_calls == 0
         assert [a.segment_id for a in analyses] == [1, 2]
+
+    def test_script_analyzer_splits_large_ai_assistant_batches(self):
+        from narrascape.agent.analyzer import ScriptAnalyzer
+        from narrascape.config import Script, ScriptSegment
+
+        client = FakePromptAwareBatchLLMClient(provider="ai_assistant")
+        script = Script(segments=[ScriptSegment(id=i, text=f"Text {i}") for i in range(1, 24)])
+
+        analyses = ScriptAnalyzer(llm_client=client).analyze(script)
+
+        assert client.complete_calls == 3
+        assert [analysis.segment_id for analysis in analyses] == list(range(1, 24))
+        assert all(prompt.count(": Text ") <= 10 for prompt in client.prompts)
 
     def test_bridge_archives_response_atomically(self, tmp_path):
         import json
@@ -701,3 +744,18 @@ class TestLLMResponseParsing:
         response = LLMResponse(content='prefix {"status": "ok"} suffix', model="fake")
 
         assert response.extract_json() == {"status": "ok"}
+
+    def test_extract_json_respects_braces_inside_strings(self):
+        response = LLMResponse(
+            content='prefix {"status": "ok", "text": "brace } inside"} suffix',
+            model="fake",
+        )
+
+        assert response.extract_json() == {"status": "ok", "text": "brace } inside"}
+
+    def test_json_repair_ignores_braces_inside_strings(self):
+        from narrascape.llm.output_parser import JSONRepair
+
+        repaired = JSONRepair.repair('{"text": "brace } inside", "items": [1, 2]')
+
+        assert repaired == '{"text": "brace } inside", "items": [1, 2]}'

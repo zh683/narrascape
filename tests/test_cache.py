@@ -19,7 +19,7 @@ class TestBuildCache:
             input_file.write_text("hello world")
 
             key = cache.compute_key({"input": input_file}, {"zoom": 0.15})
-            assert len(key) == 20  # 20-char hex prefix
+            assert len(key) == 32
             assert key == cache.compute_key({"input": input_file}, {"zoom": 0.15})
 
             # Different content → different key
@@ -66,3 +66,12 @@ class TestBuildCache:
 
         assert calls
         assert calls[-1][0] == tmp_path / "cache" / "index.json"
+
+    def test_cache_index_empty_file_loads_as_empty_mapping(self, tmp_path):
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        (cache_dir / "index.json").write_text("", encoding="utf-8")
+
+        cache = BuildCache(cache_dir)
+
+        assert cache._index == {}

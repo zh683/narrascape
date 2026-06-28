@@ -88,3 +88,67 @@ def test_download_to_path_rejects_unexpected_content_type_for_media(tmp_path, mo
         )
 
     assert not target.exists()
+
+
+def test_download_to_path_rejects_html_when_content_type_is_missing(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    from narrascape.utils.safe_io import download_to_path
+
+    class FakeResponse(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+
+        def getcode(self):
+            return 200
+
+        def getheader(self, name, default=None):
+            return default
+
+    def fake_urlopen(*args, **kwargs):
+        return FakeResponse(b"<!doctype html><html>not media</html>")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    target = tmp_path / "video.mp4"
+    with pytest.raises(RuntimeError, match="HTML/XML"):
+        download_to_path(
+            "https://example.test/video.mp4", target, expected_content_prefixes=("video/",)
+        )
+
+    assert not target.exists()
+
+
+def test_download_to_path_rejects_riff_file_when_image_webp_expected(tmp_path, monkeypatch):
+    from io import BytesIO
+
+    from narrascape.utils.safe_io import download_to_path
+
+    class FakeResponse(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+
+        def getcode(self):
+            return 200
+
+        def getheader(self, name, default=None):
+            return default
+
+    def fake_urlopen(*args, **kwargs):
+        return FakeResponse(b"RIFF\x10\x00\x00\x00WAVEfmt ")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    target = tmp_path / "image.webp"
+    with pytest.raises(RuntimeError, match="does not look like an image"):
+        download_to_path(
+            "https://example.test/image.webp", target, expected_content_prefixes=("image/",)
+        )
+
+    assert not target.exists()

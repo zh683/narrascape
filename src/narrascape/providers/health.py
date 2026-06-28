@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from narrascape.utils.safe_io import atomic_write_json, update_json_mapping
+
 
 @dataclass(frozen=True)
 class ProviderHealth:
@@ -47,28 +49,36 @@ class ProviderHealthStore:
         }
 
     def record_success(self, provider_name: str) -> None:
-        data = self._load()
-        data.pop(provider_name, None)
-        self._save(data)
+        def update(data: dict[str, dict[str, Any]]) -> None:
+            data.pop(provider_name, None)
+
+        update_json_mapping(self.path, update, default={})
 
     def record_failure(self, provider_name: str, error: str) -> ProviderHealth:
-        data = self._load()
-        item = data.get(provider_name, {})
-        failure_count = int(item.get("failure_count", 0)) + 1
-        disabled_until = 0.0
-        if failure_count >= self.failure_threshold:
-            disabled_until = time.time() + self.cooldown_seconds
-        data[provider_name] = {
-            "failure_count": failure_count,
-            "disabled_until": disabled_until,
-            "last_error": error[:500],
-            "updated_at": time.time(),
-        }
-        self._save(data)
+        now = time.time()
+        saved: dict[str, Any] = {}
+
+        def update(data: dict[str, dict[str, Any]]) -> None:
+            item = data.get(provider_name, {})
+            failure_count = int(item.get("failure_count", 0)) + 1
+            disabled_until = 0.0
+            if failure_count >= self.failure_threshold:
+                disabled_until = now + self.cooldown_seconds
+            saved.update(
+                {
+                    "failure_count": failure_count,
+                    "disabled_until": disabled_until,
+                    "last_error": error[:500],
+                    "updated_at": now,
+                }
+            )
+            data[provider_name] = dict(saved)
+
+        update_json_mapping(self.path, update, default={})
         return ProviderHealth(
             name=provider_name,
-            failure_count=failure_count,
-            disabled_until=disabled_until,
+            failure_count=int(saved.get("failure_count", 0)),
+            disabled_until=float(saved.get("disabled_until", 0.0)),
             last_error=error[:500],
         )
 
@@ -83,7 +93,7 @@ class ProviderHealthStore:
 
     def _save(self, data: dict[str, dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_json(self.path, data)
 
 
 def health_store_for_project(project_dir: Path) -> ProviderHealthStore:
