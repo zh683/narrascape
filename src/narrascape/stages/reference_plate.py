@@ -80,7 +80,10 @@ class ReferencePlateStage(Stage):
         )
 
     def _load_design(self, config: Any) -> dict[str, Any]:
-        for path in (config.pipeline_dir / "design_report.yaml", config.project_dir / "design_report.yaml"):
+        for path in (
+            config.pipeline_dir / "design_report.yaml",
+            config.project_dir / "design_report.yaml",
+        ):
             if path.exists():
                 return load_yaml_mapping(path)
         return {}
@@ -110,8 +113,7 @@ class ReferencePlateStage(Stage):
             "expected_reference_ids": manifest["expected_reference_ids"],
             "missing_reference_ids": manifest["missing_reference_ids"],
             "reference_assets": [
-                self._compact_reference_asset(asset)
-                for asset in manifest["resolved_references"]
+                self._compact_reference_asset(asset) for asset in manifest["resolved_references"]
             ],
             "compiled_prompts": generation.get("compiled_prompts", {}),
             "provider_negative_prompts": self._provider_negative_prompts(generation),

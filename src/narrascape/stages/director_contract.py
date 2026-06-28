@@ -203,34 +203,34 @@ class DirectorContractStage(Stage):
             shots.append(
                 self._with_compiled_prompts(
                     {
-                    "segment_id": segment_id,
-                    "shot_id": f"shot_{segment_id:03d}",
-                    "story_reason": story_reason,
-                    "emotional_target": emotional_target,
-                    "film_language": {
-                        "shot_type": shot_type,
-                        "camera_motion": movement,
-                        "lighting": lighting,
-                        "composition": metadata.get("composition")
-                        or "composition serves the story beat",
-                    },
-                    "continuity_constraints": {
-                        "characters": characters,
-                        "location": location_text,
-                        "wardrobe": wardrobe_text,
-                        "lighting": lighting,
-                    },
-                    "storyboard_binding": storyboard_binding,
-                    "generation": {
-                        "video_prompt": video_prompt,
-                        "negative_prompt": negative,
-                        "duration": float(design_item.get("duration") or 5.0),
-                        "motion": movement,
-                    },
-                    "qa": {
-                        "must_show": self._must_show(characters, location, wardrobe),
-                        "must_not_show": self._must_not_show(negative),
-                    },
+                        "segment_id": segment_id,
+                        "shot_id": f"shot_{segment_id:03d}",
+                        "story_reason": story_reason,
+                        "emotional_target": emotional_target,
+                        "film_language": {
+                            "shot_type": shot_type,
+                            "camera_motion": movement,
+                            "lighting": lighting,
+                            "composition": metadata.get("composition")
+                            or "composition serves the story beat",
+                        },
+                        "continuity_constraints": {
+                            "characters": characters,
+                            "location": location_text,
+                            "wardrobe": wardrobe_text,
+                            "lighting": lighting,
+                        },
+                        "storyboard_binding": storyboard_binding,
+                        "generation": {
+                            "video_prompt": video_prompt,
+                            "negative_prompt": negative,
+                            "duration": float(design_item.get("duration") or 5.0),
+                            "motion": movement,
+                        },
+                        "qa": {
+                            "must_show": self._must_show(characters, location, wardrobe),
+                            "must_not_show": self._must_not_show(negative),
+                        },
                     }
                 )
             )
@@ -399,9 +399,8 @@ class DirectorContractStage(Stage):
         wardrobes: list[str] = []
         for char_id in characters:
             profile = character_profiles.get(char_id, {})
-            wardrobe = (
-                profile.get("default_outfit")
-                or self._extract_identity_value(profile.get("identity_block", ""), "Wardrobe")
+            wardrobe = profile.get("default_outfit") or self._extract_identity_value(
+                profile.get("identity_block", ""), "Wardrobe"
             )
             if wardrobe:
                 wardrobes.append(str(wardrobe))

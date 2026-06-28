@@ -129,9 +129,7 @@ def video_prompt_quality_findings(
     prompt: str,
 ) -> list[dict[str, Any]]:
     """Return blocking prompt/contract findings before paid video generation."""
-    return list(
-        video_prompt_quality_assessment(shot, provider=provider, prompt=prompt)["findings"]
-    )
+    return list(video_prompt_quality_assessment(shot, provider=provider, prompt=prompt)["findings"])
 
 
 def video_prompt_quality_assessment(

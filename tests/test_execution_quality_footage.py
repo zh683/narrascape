@@ -573,10 +573,14 @@ def test_generate_video_passes_selected_agnes_provider_to_execution(tmp_path, mo
 
     stage = GenerateVideoStage(api_key=None, sleep_between=0)
     monkeypatch.setattr(stage, "_resolve_first_frame", lambda *args, **kwargs: None)
-    monkeypatch.setattr(stage, "_reference_inputs_for_segment", lambda *args, **kwargs: {
-        "uploaded_reference_images": [],
-        "state": {},
-    })
+    monkeypatch.setattr(
+        stage,
+        "_reference_inputs_for_segment",
+        lambda *args, **kwargs: {
+            "uploaded_reference_images": [],
+            "state": {},
+        },
+    )
 
     def fake_generate_one(*args, **kwargs):
         calls.append({"args": args, "kwargs": kwargs})
@@ -593,9 +597,7 @@ def test_generate_video_passes_selected_agnes_provider_to_execution(tmp_path, mo
     assert calls[0]["kwargs"]["provider"] == "agnes"
 
 
-def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(
-    tmp_path, monkeypatch
-):
+def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(tmp_path, monkeypatch):
     from narrascape.stages.generate_video import GenerateVideoStage
 
     config = _config(tmp_path)

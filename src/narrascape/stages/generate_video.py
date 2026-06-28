@@ -278,9 +278,7 @@ class GenerateVideoStage(Stage):
                 atomic_write_json(state_path, state)
 
                 if out_name in done and (videos_dir / f"{out_name}.mp4").exists():
-                    logger.info(
-                        f"  [{job_index}/{total_jobs}] {out_name} skip (cached)"
-                    )
+                    logger.info(f"  [{job_index}/{total_jobs}] {out_name} skip (cached)")
                     ok_count += 1
                     continue
 
@@ -417,9 +415,7 @@ class GenerateVideoStage(Stage):
         self.duration = int(getattr(video_cfg, "duration", self.duration) or self.duration)
         self.frame_rate = int(getattr(video_cfg, "frame_rate", self.frame_rate) or self.frame_rate)
         self.takes = int(getattr(video_cfg, "takes", self.takes) or self.takes)
-        self.resolution = str(
-            getattr(video_cfg, "resolution", self.resolution) or self.resolution
-        )
+        self.resolution = str(getattr(video_cfg, "resolution", self.resolution) or self.resolution)
         configured_model = str(getattr(video_cfg, "model", "") or "")
         if provider == "agnes":
             if configured_model.startswith("agnes-"):
@@ -726,7 +722,9 @@ class GenerateVideoStage(Stage):
         if is_reference_uri(value):
             return value
         path = Path(value)
-        candidates = [path] if path.is_absolute() else [images_dir / value, images_dir.parent / value]
+        candidates = (
+            [path] if path.is_absolute() else [images_dir / value, images_dir.parent / value]
+        )
         for candidate in candidates:
             if candidate.exists():
                 return self.uploader.upload(candidate)
@@ -962,9 +960,7 @@ class GenerateVideoStage(Stage):
         try:
             response = retry_with_backoff(
                 lambda: json.loads(
-                    urllib.request.urlopen(req, timeout=self.AGNES_CREATE_TIMEOUT)
-                    .read()
-                    .decode()
+                    urllib.request.urlopen(req, timeout=self.AGNES_CREATE_TIMEOUT).read().decode()
                 ),
                 max_retries=4,
                 base_delay=65.0,
@@ -1168,7 +1164,9 @@ class GenerateVideoStage(Stage):
     def _extract_negative_prompt(self, prompt: str) -> str:
         return ""
 
-    def _poll_agnes_task(self, task_id: str | None = None, video_id: str | None = None) -> str | None:
+    def _poll_agnes_task(
+        self, task_id: str | None = None, video_id: str | None = None
+    ) -> str | None:
         api_key = self._api_key_for_provider("agnes")
         if not api_key:
             logger.error("Agnes video provider selected but API key is not configured")

@@ -283,9 +283,7 @@ class VisualSemanticQAStage(Stage):
         return findings
 
     def _executed_reference_id_set(self, executed: dict[str, Any]) -> set[str]:
-        values: set[str] = {
-            str(item) for item in executed.get("expected_reference_ids", []) or []
-        }
+        values: set[str] = {str(item) for item in executed.get("expected_reference_ids", []) or []}
         for asset in executed.get("resolved_references", []) or []:
             if not isinstance(asset, dict):
                 continue
@@ -302,8 +300,7 @@ class VisualSemanticQAStage(Stage):
         expected_ids: list[str],
     ) -> dict[str, set[str]]:
         aliases: dict[str, set[str]] = {
-            ref_id: {ref_id, *self._semantic_reference_aliases(ref_id)}
-            for ref_id in expected_ids
+            ref_id: {ref_id, *self._semantic_reference_aliases(ref_id)} for ref_id in expected_ids
         }
         for asset in reference_assets:
             if not isinstance(asset, dict):
@@ -311,9 +308,7 @@ class VisualSemanticQAStage(Stage):
             requested_id = str(asset.get("requested_id") or "")
             if not requested_id:
                 continue
-            aliases.setdefault(requested_id, set()).update(
-                self._reference_asset_aliases(asset)
-            )
+            aliases.setdefault(requested_id, set()).update(self._reference_asset_aliases(asset))
         return aliases
 
     def _reference_asset_aliases(self, asset: dict[str, Any]) -> set[str]:

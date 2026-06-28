@@ -470,9 +470,7 @@ class GenerateImagesStage(Stage):
             logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
         return True
 
-    def _post_image_request(
-        self, req: urllib.request.Request, *, provider: str
-    ) -> dict[str, Any]:
+    def _post_image_request(self, req: urllib.request.Request, *, provider: str) -> dict[str, Any]:
         if provider == "agnes":
             return retry_with_backoff(
                 lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),

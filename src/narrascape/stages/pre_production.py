@@ -119,12 +119,10 @@ class PreProductionStage(Stage):
         if config.images.provider.value == "local":
             characters_data, scenes_data = self._extract_characters_and_scenes(script, config)
             character_sheets = [
-                self._metadata_only_character_reference(item, refs_dir)
-                for item in characters_data
+                self._metadata_only_character_reference(item, refs_dir) for item in characters_data
             ]
             environment_refs = [
-                self._metadata_only_environment_reference(item, refs_dir)
-                for item in scenes_data
+                self._metadata_only_environment_reference(item, refs_dir) for item in scenes_data
             ]
             storyboard = self._generate_storyboard_locally(
                 script, character_sheets, environment_refs, config
@@ -516,7 +514,11 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
     def _color_palette(self, description: str, lighting: str) -> str:
         lower = f"{description} {lighting}".lower()
-        colors = [color for color in ("yellow", "gray", "green", "brown", "black", "snow") if color in lower]
+        colors = [
+            color
+            for color in ("yellow", "gray", "green", "brown", "black", "snow")
+            if color in lower
+        ]
         return ", ".join(colors) if colors else "muted period palette"
 
     def _landmarks_from_text(self, text: str) -> list[str]:
@@ -1097,7 +1099,9 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         the visual composition, camera movement, and character positions.
         """
         if not self.llm_client:
-            return self._generate_storyboard_locally(script, character_sheets, environment_refs, config)
+            return self._generate_storyboard_locally(
+                script, character_sheets, environment_refs, config
+            )
 
         style = self.style_template or (
             config.images.style if config.images else "cinematic documentary"
@@ -1245,7 +1249,11 @@ Guidelines:
         storyboard = Storyboard(project_title=config.project.title)
         character_ids = [sheet.char_id for sheet in character_sheets]
         scene_ids = [env.scene_id for env in environment_refs]
-        style_anchor_ids = ["style_anchor"] if (config.project_dir / "assets" / "references" / "style_anchor.png").exists() else []
+        style_anchor_ids = (
+            ["style_anchor"]
+            if (config.project_dir / "assets" / "references" / "style_anchor.png").exists()
+            else []
+        )
         storyboard_intents = self._storyboard_intent_from_notes(config)
 
         for index, seg in enumerate(script.segments):

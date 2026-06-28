@@ -131,9 +131,10 @@ def test_film_assemble_renders_visual_track_with_video_source_and_image_fallback
     assert (config.pipeline_dir / "timeline_segments" / "v_003.mp4").exists()
     assert (config.pipeline_dir / "film_assembled.mp4").exists()
     concat_lines = (config.pipeline_dir / "film_assemble.txt").read_text(encoding="utf-8")
-    assert str((config.pipeline_dir / "timeline_segments" / "v_001.mp4").resolve()).replace(
-        "\\", "/"
-    ) in concat_lines
+    assert (
+        str((config.pipeline_dir / "timeline_segments" / "v_001.mp4").resolve()).replace("\\", "/")
+        in concat_lines
+    )
     joined_commands = [" ".join(command) for command in commands]
     assert any(
         "assets\\videos\\vid_01.mp4" in cmd or "assets/videos/vid_01.mp4" in cmd

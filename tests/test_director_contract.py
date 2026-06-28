@@ -394,9 +394,9 @@ def test_director_contract_replaces_template_vision_with_storyboard_beat(tmp_pat
     config = _config(tmp_path)
     design_path = config.project_dir / "design_report.yaml"
     design = yaml.safe_load(design_path.read_text(encoding="utf-8"))
-    design["segments"][0]["director_vision"] = (
-        "Visualize the narration as a clear close_up documentary frame."
-    )
+    design["segments"][0][
+        "director_vision"
+    ] = "Visualize the narration as a clear close_up documentary frame."
     design_path.write_text(yaml.safe_dump(design, sort_keys=False), encoding="utf-8")
 
     result = DirectorContractStage().run(_context(config))
@@ -504,12 +504,11 @@ def test_generate_video_prefers_provider_compiled_prompt(tmp_path):
         provider="seedance",
     )
 
-    assert agnes_prompt == contract["shots"][0]["generation"]["compiled_prompts"]["agnes"][
-        "prompt"
-    ]
-    assert seedance_prompt == contract["shots"][0]["generation"]["compiled_prompts"][
-        "seedance"
-    ]["prompt"]
+    assert agnes_prompt == contract["shots"][0]["generation"]["compiled_prompts"]["agnes"]["prompt"]
+    assert (
+        seedance_prompt
+        == contract["shots"][0]["generation"]["compiled_prompts"]["seedance"]["prompt"]
+    )
     assert agnes_prompt != seedance_prompt
 
 
@@ -1209,8 +1208,7 @@ def test_reference_plate_stage_blocks_missing_reference_ids(tmp_path):
     assert report["status"] == "blocked"
     assert "scene_lab_mood" in first["missing_reference_ids"]
     assert any(
-        finding["risk_type"] == "reference_asset_missing"
-        and finding["segment_id"] == 1
+        finding["risk_type"] == "reference_asset_missing" and finding["segment_id"] == 1
         for finding in report["findings"]
     )
 
@@ -1290,8 +1288,7 @@ def test_animatic_stage_blocks_when_panel_source_is_missing(tmp_path, monkeypatc
     report = yaml.safe_load((config.pipeline_dir / "animatic.yaml").read_text(encoding="utf-8"))
     assert report["status"] == "blocked"
     assert any(
-        finding["risk_type"] == "animatic_source_missing"
-        and finding["segment_id"] == 1
+        finding["risk_type"] == "animatic_source_missing" and finding["segment_id"] == 1
         for finding in report["findings"]
     )
 

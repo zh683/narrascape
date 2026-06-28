@@ -430,9 +430,7 @@ def test_rework_execute_queues_director_contract_rewrite(tmp_path):
 
     assert result.success
     queue = yaml.safe_load(
-        (config.pipeline_dir / "director_contract_rewrite_queue.yaml").read_text(
-            encoding="utf-8"
-        )
+        (config.pipeline_dir / "director_contract_rewrite_queue.yaml").read_text(encoding="utf-8")
     )
     assert queue["actions"][0]["action"] == "rewrite_director_contract"
     execution = yaml.safe_load(

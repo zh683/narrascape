@@ -277,9 +277,7 @@ def test_film_timeline_backfills_semantic_locks_from_director_contract(tmp_path)
                             ],
                             "scene_ref": "sonya_room",
                             "wardrobe_lock": "worn dark student coat; plain faded brown dress",
-                            "composition_requirements": [
-                                "Raskolnikov trapped at the frame edge"
-                            ],
+                            "composition_requirements": ["Raskolnikov trapped at the frame edge"],
                         },
                         "generation": {"video_prompt": "Keep both characters visible."},
                         "qa": {
@@ -305,9 +303,7 @@ def test_film_timeline_backfills_semantic_locks_from_director_contract(tmp_path)
     timeline = yaml.safe_load(
         (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
     )
-    segment_2_clips = [
-        clip for clip in timeline["tracks"]["visual"] if clip.get("segment_id") == 2
-    ]
+    segment_2_clips = [clip for clip in timeline["tracks"]["visual"] if clip.get("segment_id") == 2]
     assert segment_2_clips
     for clip in segment_2_clips:
         assert clip["character_ids"] == ["raskolnikov", "sonya"]
@@ -315,9 +311,7 @@ def test_film_timeline_backfills_semantic_locks_from_director_contract(tmp_path)
         assert clip["wardrobe"] == "worn dark student coat; plain faded brown dress"
         assert clip["lighting_scheme"] == "sickly candle and cold window light"
         assert clip["storyboard_frame_ids"] == ["sb_02_01"]
-        assert clip["character_positions"] == [
-            "Sonya beside the candle, Raskolnikov near the door"
-        ]
+        assert clip["character_positions"] == ["Sonya beside the candle, Raskolnikov near the door"]
         assert clip["composition"] == "Raskolnikov trapped at the frame edge"
 
 

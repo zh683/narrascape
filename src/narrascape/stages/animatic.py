@@ -107,9 +107,7 @@ class AnimaticStage(Stage):
                     "reference_plate_id": str(plate.get("shot_id") or ""),
                     "character_positions": list(frame.get("character_positions") or []),
                     "scene_ref": str(frame.get("scene_ref") or plate.get("scene_ref") or ""),
-                    "composition_requirements": list(
-                        plate.get("composition_requirements") or []
-                    ),
+                    "composition_requirements": list(plate.get("composition_requirements") or []),
                 }
                 panels.append(panel)
                 if not image_path.exists():
