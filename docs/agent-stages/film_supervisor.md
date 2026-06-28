@@ -18,6 +18,12 @@
 3. Decide whether the film is approved or needs rework.
 4. Write the next stage list for the next production cycle.
 5. Include `rework_execute` when actions need to be applied.
+6. When an action is `rewrite_director_contract`, include the full creative
+   regeneration chain: `director_contract`, `reference_plate`,
+   `generate_images`, `animatic`, `generate_video`, `take_select`, and
+   `film_timeline`.
+7. Keep downstream validation stages in the next cycle so regenerated shots are
+   assembled, QA checked, reviewed, replanned, and supervised again.
 
 ## Do Not
 

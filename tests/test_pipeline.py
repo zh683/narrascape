@@ -9,6 +9,8 @@ import yaml
 from narrascape.cache import BuildCache
 from narrascape.config import (
     EndingConfig,
+    ImageConfig,
+    ImageProvider,
     LLMConfig,
     NarrascapeConfig,
     PipelineConfig,
@@ -17,6 +19,7 @@ from narrascape.config import (
 )
 from narrascape.llm import LLMClient
 from narrascape.pipeline import Pipeline, _resolve_dependencies, get_stage_map
+from narrascape.stages.animatic import AnimaticStage
 from narrascape.stages.audio import AudioRemixStage, AudioStage
 from narrascape.stages.base import StageContext, StageResult
 from narrascape.stages.concat import ConcatStage
@@ -29,6 +32,7 @@ from narrascape.stages.generate_tts import GenerateTTSStage
 from narrascape.stages.humanize import HumanizeStage
 from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.pre_production import PreProductionStage
+from narrascape.stages.reference_plate import ReferencePlateStage
 from narrascape.stages.research import ResearchStage
 from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.write import WriteStage
@@ -157,7 +161,9 @@ class TestDependencyResolution:
             "design",
             "screenplay_structure",
             "director_contract",
+            "reference_plate",
             "generate_images",
+            "animatic",
             "generate_video",
             "take_select",
             "generate_tts",
@@ -179,7 +185,9 @@ class TestDependencyResolution:
                 "narrascape.stages.director_contract",
                 fromlist=["DirectorContractStage"],
             ).DirectorContractStage,
+            "reference_plate": ReferencePlateStage,
             "generate_images": GenerateImagesStage,
+            "animatic": AnimaticStage,
             "generate_video": __import__(
                 "narrascape.stages.generate_video",
                 fromlist=["GenerateVideoStage"],
@@ -203,6 +211,9 @@ class TestDependencyResolution:
 
         assert order.index("generate_tts") < order.index("film_timeline")
         assert order.index("director_contract") < order.index("generate_video")
+        assert order.index("reference_plate") < order.index("generate_video")
+        assert order.index("reference_plate") < order.index("animatic")
+        assert order.index("animatic") < order.index("generate_video")
         assert order.index("generate_video") < order.index("take_select")
         assert order.index("take_select") < order.index("film_timeline")
         assert order.index("film_timeline") < order.index("film_assemble")
@@ -249,6 +260,37 @@ class TestPipelineStageFactory:
             stage = pipeline._create_stage(stage_cls)
 
             assert stage.llm_client is llm_client
+
+    def test_required_video_pipeline_rejects_missing_llm_client(self, tmp_path):
+        config = NarrascapeConfig.model_construct(
+            project=ProjectConfig(
+                name="required-video",
+                title="Required Video",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(video_generation="required"),
+            llm=LLMConfig(mode="ai_assistant"),
+            project_dir=tmp_path,
+        )
+
+        with pytest.raises(RuntimeError, match="video_generation=required"):
+            Pipeline(config, llm_client=None)
+
+    def test_pipeline_uses_lean_pre_production_for_agnes(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="agnes-prepro-test",
+                title="Agnes Prepro Test",
+                script_file="scripts/script.yaml",
+            ),
+            images=ImageConfig(provider=ImageProvider.AGNES),
+            project_dir=tmp_path,
+        )
+
+        stage = Pipeline(config)._create_stage(PreProductionStage)
+
+        assert stage.generate_turns is False
+        assert stage.generate_expressions is False
 
     def test_pipeline_allows_missing_script_until_writer_creates_it(self, tmp_path):
         config = NarrascapeConfig(
@@ -345,7 +387,10 @@ class TestPipelineStageFactory:
         stages = Pipeline(config)._default_stages()
 
         assert "generate_video" in stages
+        assert "animatic" in stages
         assert "take_select" in stages
+        assert stages.index("reference_plate") < stages.index("animatic")
+        assert stages.index("animatic") < stages.index("generate_video")
         assert stages.index("generate_video") < stages.index("take_select")
         assert stages.index("take_select") < stages.index("film_timeline")
         assert stages[-1] == "film_supervisor"
@@ -365,6 +410,7 @@ class TestPipelineStageFactory:
 
         assert "generate_video" not in stages
         assert "take_select" not in stages
+        assert "animatic" in stages
         assert "film_timeline" in stages
 
     def test_optional_video_stage_can_be_skipped_in_auto_policy(self, tmp_path, monkeypatch):
@@ -661,6 +707,48 @@ class TestPipelineStageFactory:
         assert results["director_review"].success is True
         assert (config.pipeline_dir / "director_review.yaml").exists()
 
+    def test_design_stage_can_preserve_curated_prompt_files(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="curated-design-test",
+                title="Curated Design Test",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(design_overwrite=False),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  shot_type: close_up\n  text: Curated text.\n",
+            encoding="utf-8",
+        )
+        prompts_text = (
+            "prompts:\n"
+            "- id: img_01\n"
+            "  shot_type: close_up\n"
+            "  movement: still\n"
+            "  size: 1920x1080\n"
+            "  description: Curated execution prompt.\n"
+        )
+        map_text = "segments:\n- id: 1\n  images: [img_01]\n"
+        (tmp_path / "image_prompts.yaml").write_text(prompts_text, encoding="utf-8")
+        (tmp_path / "image_map.yaml").write_text(map_text, encoding="utf-8")
+
+        result = DesignStage().run(
+            StageContext(
+                config=config,
+                script=Script.model_construct(segments=[]),
+                cache=BuildCache(config.pipeline_dir / ".cache"),
+            )
+        )
+
+        assert result.success is True
+        assert result.metadata["wrote_image_prompts"] is False
+        assert result.metadata["wrote_image_map"] is False
+        assert (tmp_path / "image_prompts.yaml").read_text(encoding="utf-8") == prompts_text
+        assert (tmp_path / "image_map.yaml").read_text(encoding="utf-8") == map_text
+        assert (config.pipeline_dir / "design_report.yaml").exists()
+
     def test_completed_stage_reruns_when_recorded_output_is_missing(self, tmp_path, monkeypatch):
         calls = []
 
@@ -758,3 +846,33 @@ class TestPipelineStageFactory:
         assert not (config.pipeline_dir / "film_assembled.mp4").exists()
         assert not (config.pipeline_dir / "render_report.yaml").exists()
         assert not (config.pipeline_dir / "director_review.yaml").exists()
+
+    def test_pipeline_clean_removes_rework_execute_queues(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="clean-rework-test",
+                title="Clean Rework Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        config.pipeline_dir.mkdir(parents=True)
+        for filename in (
+            "rework_execution.yaml",
+            "director_contract_rewrite_queue.yaml",
+            "video_regen_queue.yaml",
+            "recut_queue.yaml",
+            "source_media_replacement_queue.yaml",
+        ):
+            (config.pipeline_dir / filename).write_text("artifact", encoding="utf-8")
+
+        Pipeline(config).clean(["rework_execute"])
+
+        for filename in (
+            "rework_execution.yaml",
+            "director_contract_rewrite_queue.yaml",
+            "video_regen_queue.yaml",
+            "recut_queue.yaml",
+            "source_media_replacement_queue.yaml",
+        ):
+            assert not (config.pipeline_dir / filename).exists()

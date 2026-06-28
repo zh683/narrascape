@@ -261,7 +261,18 @@ def _atomic_write_bytes_unlocked(path: Path, data: bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp, target)
+        _replace_with_retry(tmp, target)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _replace_with_retry(src: Path, dst: Path, *, attempts: int = 8, delay: float = 0.05) -> None:
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt >= attempts - 1:
+                raise
+            time.sleep(delay * (attempt + 1))

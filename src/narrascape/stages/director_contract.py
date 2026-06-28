@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
 
 
@@ -43,6 +44,7 @@ class DirectorContractStage(Stage):
         pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")
         storyboard_by_segment = self._storyboard_by_segment(pre_production)
         design_by_segment = self._design_by_segment(design)
+        preproduction_index = self._preproduction_index(pre_production)
 
         llm_status = "not_configured"
         llm_error = ""
@@ -53,11 +55,21 @@ class DirectorContractStage(Stage):
                 )
                 llm_status = "used"
             except Exception as exc:
-                shots = self._compile_locally(design_by_segment, storyboard_by_segment, context)
+                shots = self._compile_locally(
+                    design_by_segment,
+                    storyboard_by_segment,
+                    preproduction_index,
+                    context,
+                )
                 llm_status = "fallback_after_error"
                 llm_error = str(exc)
         else:
-            shots = self._compile_locally(design_by_segment, storyboard_by_segment, context)
+            shots = self._compile_locally(
+                design_by_segment,
+                storyboard_by_segment,
+                preproduction_index,
+                context,
+            )
 
         contract = {
             "schema_version": "director_contract.v1",
@@ -121,7 +133,9 @@ class DirectorContractStage(Stage):
         if not isinstance(shots, list) or not shots:
             raise ValueError("LLM returned no shots")
         return [
-            self._normalize_shot(item, design_by_segment, storyboard_by_segment, context)
+            self._with_compiled_prompts(
+                self._normalize_shot(item, design_by_segment, storyboard_by_segment, context)
+            )
             for item in shots
         ]
 
@@ -129,49 +143,66 @@ class DirectorContractStage(Stage):
         self,
         design_by_segment: dict[int, dict[str, Any]],
         storyboard_by_segment: dict[int, list[dict[str, Any]]],
+        preproduction_index: dict[str, dict[str, dict[str, Any]]],
         context: StageContext,
     ) -> list[dict[str, Any]]:
         shots = []
         for segment in context.script.segments:
             segment_id = int(segment.id)
             design_item = design_by_segment.get(segment_id, {})
+            frames = storyboard_by_segment.get(segment_id, [])
             metadata = (
                 design_item.get("metadata", {})
                 if isinstance(design_item.get("metadata"), dict)
                 else {}
             )
-            story_reason = (
-                design_item.get("director_vision")
-                or f"Translate the narration into a clear cinematic beat: {segment.text}"
-            )
+            story_reason = self._story_reason(design_item, frames, segment.text)
             emotional_target = design_item.get("emotion") or "focused"
             shot_type = design_item.get("shot_type") or "medium"
             movement = design_item.get("movement") or "still"
             lighting = metadata.get("lighting_scheme") or "motivated cinematic lighting"
-            wardrobe = metadata.get("wardrobe") or "consistent wardrobe"
-            location = design_item.get("location_id") or "story location"
+            storyboard_binding = self._storyboard_binding(segment_id, design_item, frames)
             characters = self._characters_from_design(design_item)
+            if not characters:
+                characters = self._characters_from_storyboard(frames)
+            location = design_item.get("location_id") or storyboard_binding.get("scene_ref")
+            character_profiles = preproduction_index["characters"]
+            scene_profiles = preproduction_index["scenes"]
+            wardrobe = (
+                metadata.get("wardrobe")
+                or storyboard_binding.get("wardrobe_lock")
+                or self._wardrobe_for_characters(characters, character_profiles)
+            )
+            if wardrobe and not storyboard_binding.get("wardrobe_lock"):
+                storyboard_binding["wardrobe_lock"] = wardrobe
+            if not lighting or lighting == "motivated cinematic lighting":
+                lighting = self._scene_lighting(location or "", scene_profiles) or lighting
+            character_blocks = self._character_blocks(characters, character_profiles)
+            scene_block = self._scene_block(location or "", scene_profiles)
             image_prompt = design_item.get("image_prompt") or segment.text
             negative = (
                 metadata.get("negative_prompt")
                 or "text, watermark, low quality, inconsistent character, extra characters"
             )
-            storyboard_binding = self._storyboard_binding(
-                segment_id,
-                design_item,
-                storyboard_by_segment.get(segment_id, []),
-            )
+            show_target = ", ".join(characters) if characters else "the named character"
+            location_text = location or "the specified scene"
+            wardrobe_text = wardrobe or "the locked wardrobe"
+            negative = self._video_negative_prompt(negative)
             video_prompt = (
                 f"{story_reason} Emotional target: {emotional_target}. "
                 f"{shot_type} shot, {movement} camera movement, {lighting}. "
-                f"Show {', '.join(characters) if characters else 'the subject'} in {location}, wearing {wardrobe}. "
+                f"Show {show_target} in {location_text}, wearing {wardrobe_text}. "
+                f"{character_blocks} {scene_block} "
+                f"Keep {show_target} visible throughout the clip with the same face, age, body, and wardrobe from the reference image. "
+                f"Maintain a character-led frame with clear story action and coherent scene geography. "
                 f"Storyboard frames {', '.join(storyboard_binding['storyboard_frame_ids']) or 'none'}; "
                 f"character positions: {', '.join(storyboard_binding['character_positions']) or 'unspecified'}; "
                 f"composition requirements: {', '.join(storyboard_binding['composition_requirements']) or 'serve the story beat'}. "
                 f"Visual details: {image_prompt}. Cinematic motion, coherent continuity, high quality."
             )
             shots.append(
-                {
+                self._with_compiled_prompts(
+                    {
                     "segment_id": segment_id,
                     "shot_id": f"shot_{segment_id:03d}",
                     "story_reason": story_reason,
@@ -185,8 +216,8 @@ class DirectorContractStage(Stage):
                     },
                     "continuity_constraints": {
                         "characters": characters,
-                        "location": location,
-                        "wardrobe": wardrobe,
+                        "location": location_text,
+                        "wardrobe": wardrobe_text,
                         "lighting": lighting,
                     },
                     "storyboard_binding": storyboard_binding,
@@ -200,7 +231,8 @@ class DirectorContractStage(Stage):
                         "must_show": self._must_show(characters, location, wardrobe),
                         "must_not_show": self._must_not_show(negative),
                     },
-                }
+                    }
+                )
             )
         return shots
 
@@ -266,12 +298,52 @@ class DirectorContractStage(Stage):
             },
         }
 
+    def _with_compiled_prompts(self, shot: dict[str, Any]) -> dict[str, Any]:
+        generation = shot.setdefault("generation", {})
+        generation["prompt_schema_version"] = SCHEMA_VERSION
+        generation["compiled_prompts"] = compile_video_prompts(shot)
+        return shot
+
     def _must_show(self, characters: list[str], location: str, wardrobe: str) -> list[str]:
         values = [*characters, location, wardrobe]
         return [value for value in values if value]
 
     def _must_not_show(self, negative_prompt: str) -> list[str]:
         return [part.strip() for part in negative_prompt.split(",") if part.strip()]
+
+    def _video_negative_prompt(self, negative_prompt: str) -> str:
+        standard = [
+            "still-life replacement",
+            "empty room",
+            "generic scenery",
+            "unrelated props",
+            "readable text",
+            "watermark",
+        ]
+        parts = [part.strip() for part in str(negative_prompt or "").split(",") if part.strip()]
+        lower_parts = {part.lower() for part in parts}
+        for item in standard:
+            if item.lower() not in lower_parts:
+                parts.append(item)
+        return ", ".join(parts)
+
+    def _story_reason(
+        self,
+        design_item: dict[str, Any],
+        frames: list[dict[str, Any]],
+        segment_text: str,
+    ) -> str:
+        director_vision = str(design_item.get("director_vision") or "")
+        if director_vision and not self._is_template_director_vision(director_vision):
+            return director_vision
+        for frame in frames:
+            description = str(frame.get("description") or "").strip()
+            if description:
+                return f"Execute storyboard beat: {description}"
+        return f"Translate the narration into a clear cinematic beat: {segment_text}"
+
+    def _is_template_director_vision(self, value: str) -> bool:
+        return value.lower().startswith("visualize the narration as a clear ")
 
     def _design_by_segment(self, design: dict[str, Any]) -> dict[int, dict[str, Any]]:
         return {
@@ -297,6 +369,92 @@ class DirectorContractStage(Stage):
         for segment_frames in result.values():
             segment_frames.sort(key=lambda item: int(item.get("frame_index") or 0))
         return result
+
+    def _preproduction_index(
+        self,
+        pre_production: dict[str, Any],
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        return {
+            "characters": {
+                str(item.get("char_id")): item
+                for item in pre_production.get("characters", []) or []
+                if item.get("char_id")
+            },
+            "scenes": {
+                str(item.get("scene_id")): item
+                for item in pre_production.get("environments", []) or []
+                if item.get("scene_id")
+            },
+        }
+
+    def _characters_from_storyboard(self, frames: list[dict[str, Any]]) -> list[str]:
+        values = [ref for frame in frames for ref in (frame.get("character_refs") or [])]
+        return self._list_or(values, [])
+
+    def _wardrobe_for_characters(
+        self,
+        characters: list[str],
+        character_profiles: dict[str, dict[str, Any]],
+    ) -> str:
+        wardrobes: list[str] = []
+        for char_id in characters:
+            profile = character_profiles.get(char_id, {})
+            wardrobe = (
+                profile.get("default_outfit")
+                or self._extract_identity_value(profile.get("identity_block", ""), "Wardrobe")
+            )
+            if wardrobe:
+                wardrobes.append(str(wardrobe))
+        if len(wardrobes) == 1:
+            return wardrobes[0]
+        labeled = []
+        for char_id, wardrobe in zip(characters, wardrobes, strict=False):
+            labeled.append(f"{char_id}: {wardrobe}")
+        if labeled:
+            return "; ".join(labeled)
+        return "; ".join(wardrobes)
+
+    def _character_blocks(
+        self,
+        characters: list[str],
+        character_profiles: dict[str, dict[str, Any]],
+    ) -> str:
+        blocks = []
+        for char_id in characters:
+            profile = character_profiles.get(char_id, {})
+            identity = profile.get("identity_block") or profile.get("name") or char_id
+            blocks.append(f"{char_id} identity lock: {identity}")
+        return " ".join(blocks)
+
+    def _scene_block(
+        self,
+        scene_id: str,
+        scene_profiles: dict[str, dict[str, Any]],
+    ) -> str:
+        scene = scene_profiles.get(scene_id, {})
+        if not scene:
+            return ""
+        parts = [
+            scene.get("scene_name") or scene_id,
+            scene.get("description"),
+            scene.get("lighting_signature"),
+            scene.get("color_palette"),
+        ]
+        return "Scene lock: " + "; ".join(str(part) for part in parts if part) + "."
+
+    def _scene_lighting(
+        self,
+        scene_id: str,
+        scene_profiles: dict[str, dict[str, Any]],
+    ) -> str:
+        return str(scene_profiles.get(scene_id, {}).get("lighting_signature") or "")
+
+    def _extract_identity_value(self, identity: str, label: str) -> str:
+        marker = f"{label}:"
+        if marker not in identity:
+            return ""
+        value = identity.split(marker, 1)[1]
+        return value.split(".", 1)[0].strip()
 
     def _storyboard_binding(
         self,

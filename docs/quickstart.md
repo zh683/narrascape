@@ -64,7 +64,8 @@ The default build graph is:
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_video -> take_select -> generate_tts -> film_timeline
+-> reference_plate -> generate_images -> animatic -> generate_video
+-> take_select -> generate_tts -> film_timeline
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -124,6 +125,8 @@ stage with Seedance:
 ```
 
 This requires `ARK_API_KEY` and generated images.
+It also pulls in `reference_plate` and `animatic`, so missing storyboard
+references or panel images are caught before provider execution.
 
 `film_timeline` prefers `assets/videos/vid_*.mp4`, then source footage, then
 generated-image fallback.

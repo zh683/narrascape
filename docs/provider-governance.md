@@ -47,6 +47,20 @@ the selector before execution. Each stage writes `provider_selection` into
 `StageResult.metadata` and its persistent state file. The selected provider is
 the branch that executes.
 
+Configured media providers include:
+
+| Capability | Provider options | Credential |
+| --- | --- | --- |
+| image_generation | `seedream`, `agnes`, `local` | `ARK_API_KEY` or `AGNES_API_KEY` |
+| video_generation | `seedance`, `agnes` | `ARK_API_KEY` or `AGNES_API_KEY` |
+| tts | `minimax`, `local` | `MINIMAX_API_KEY` |
+| music | `minimax`, `local` | `MINIMAX_API_KEY` |
+
+Agnes image generation follows the official `/v1/images/generations` payload
+shape, including `extra_body.response_format`. Agnes video generation creates
+`/v1/videos` tasks and polls the returned `video_id`, then writes the same
+`assets/videos/vid_*.mp4` files consumed by timeline assembly and QA.
+
 ## Canonical Artifacts
 
 `narrascape.artifacts` validates lightweight canonical artifacts:

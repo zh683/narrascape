@@ -293,6 +293,52 @@ def test_film_supervisor_reads_director_reports_and_decides_next_stages(tmp_path
     assert report["decision"]["rework_action_count"] == 3
 
 
+def test_film_supervisor_reruns_contract_chain_for_director_contract_rewrite(tmp_path):
+    from narrascape.stages.creative_review import CreativeReviewStage
+    from narrascape.stages.film_supervisor import FilmSupervisorStage
+    from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+
+    config = _config(tmp_path)
+    (config.pipeline_dir / "rework_plan.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "rework_plan.v1",
+                "status": "needs_rework",
+                "actions": [
+                    {
+                        "segment_id": 2,
+                        "action": "rewrite_director_contract",
+                        "reason": "overloaded_camera_motion",
+                        "priority": "medium",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    CreativeReviewStage().run(_context(config))
+    VisualSemanticQAStage().run(_context(config))
+
+    result = FilmSupervisorStage().run(_context(config))
+
+    assert result.success
+    report = yaml.safe_load(
+        (config.pipeline_dir / "film_supervisor.yaml").read_text(encoding="utf-8")
+    )
+    assert report["status"] == "needs_rework"
+    assert report["next_stages"][:7] == [
+        "rework_execute",
+        "director_contract",
+        "reference_plate",
+        "generate_images",
+        "animatic",
+        "generate_video",
+        "take_select",
+    ]
+    assert "film_timeline" in report["next_stages"]
+
+
 def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(tmp_path):
     from narrascape.stages.rework_execute import ReworkExecuteStage
 
@@ -335,6 +381,68 @@ def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(t
     pipeline_state = json.loads((config.pipeline_dir / "state.json").read_text(encoding="utf-8"))
     assert pipeline_state["stages"]["generate_video"] == "pending"
     assert pipeline_state["stages"]["film_timeline"] == "pending"
+
+
+def test_rework_execute_queues_director_contract_rewrite(tmp_path):
+    from narrascape.stages.rework_execute import ReworkExecuteStage
+
+    config = _config(tmp_path)
+    (config.pipeline_dir / "rework_plan.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "rework_plan.v1",
+                "status": "needs_rework",
+                "actions": [
+                    {
+                        "segment_id": 2,
+                        "action": "rewrite_director_contract",
+                        "reason": "overloaded_camera_motion",
+                        "priority": "medium",
+                        "source": "video_prompt_quality",
+                    }
+                ],
+                "actions_by_type": {"rewrite_director_contract": []},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (config.pipeline_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "version": "2.0",
+                "stages": {
+                    "director_contract": "completed",
+                    "reference_plate": "completed",
+                    "generate_video": "completed",
+                },
+                "stage_outputs": {
+                    "director_contract": ["director_contract.yaml"],
+                    "generate_video": ["video_gen_state.json"],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ReworkExecuteStage().run(_context(config))
+
+    assert result.success
+    queue = yaml.safe_load(
+        (config.pipeline_dir / "director_contract_rewrite_queue.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert queue["actions"][0]["action"] == "rewrite_director_contract"
+    execution = yaml.safe_load(
+        (config.pipeline_dir / "rework_execution.yaml").read_text(encoding="utf-8")
+    )
+    assert execution["executed_actions"][0]["operation"] == "queue_director_contract_rewrite"
+    state = json.loads((config.pipeline_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["stages"]["director_contract"] == "pending"
+    assert state["stages"]["reference_plate"] == "pending"
+    assert state["stages"]["generate_video"] == "pending"
 
 
 def test_creative_review_uses_llm_when_available(tmp_path):

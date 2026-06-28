@@ -130,6 +130,22 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
                     )
                 )
         elif config.llm.mode == "none":
+            if config.pipeline.video_generation == "required":
+                console.print(
+                    "[bold yellow]AI Assistant Mode[/] - video_generation=required cannot "
+                    "run with llm.mode=none; using project-local assistant bridge"
+                )
+                os.environ["NARRASCAPE_LLM_MODE"] = "ai_assistant"
+                return LLMClient(
+                    LLMClientConfig(
+                        provider="ai_assistant",
+                        temperature=config.llm.temperature,
+                        max_tokens=config.llm.max_tokens,
+                        max_retries=3,
+                        retry_delay=2.0,
+                        json_mode=True,
+                    )
+                )
             console.print("[bold yellow]Offline LLM Mode[/] - using deterministic/template stages")
             return None
 
@@ -911,7 +927,6 @@ def build_cmd(
             auto_approve=auto_approve,
             console=console,
             llm_client=_get_llm_client(config=config),
-            image_api_key=APIKeys.ark(),
             minimax_api_key=APIKeys.minimax(),
         )
         results = pipeline.run(stages)

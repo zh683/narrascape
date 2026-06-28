@@ -6,8 +6,11 @@ Supports reference images for character consistency and sequential batch mode.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +22,7 @@ from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_image_prompts
+from narrascape.prompt_safety import sanitize_prompt_for_provider
 from narrascape.providers import (
     record_provider_failure,
     record_provider_success,
@@ -61,10 +65,14 @@ class GenerateImagesStage(Stage):
         sleep_between: float = 1.5,
         default_sample_strength: float = 0.5,
         uploader_backend: str = "base64",
+        agnes_model: str = "agnes-image-2.1-flash",
+        agnes_base_url: str = "https://apihub.agnes-ai.com/v1/images/generations",
     ):
-        self.api_key = api_key or APIKeys.ark()
+        self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.agnes_model = agnes_model
+        self.agnes_base_url = agnes_base_url
         self.sequential_batch = sequential_batch
         self.ref_image = ref_image
         self.sleep_between = sleep_between
@@ -81,9 +89,11 @@ class GenerateImagesStage(Stage):
         )
         if selection.tool.name == "local_image":
             return True, ""
-        if not self.api_key:
+        api_key = self._api_key_for_provider(selection.tool.provider)
+        if not api_key:
+            required = selection.tool.requires[0] if selection.tool.requires else "API key"
             return False, (
-                f"{selection.tool.name} selected but ARK_API_KEY not found. "
+                f"{selection.tool.name} selected but {required} not found. "
                 "Set env var or .env file."
             )
         return True, ""
@@ -99,6 +109,7 @@ class GenerateImagesStage(Stage):
             config, "image_generation", intent=self._intent_for_config(config)
         )
         provider_meta = selection_metadata(selection)
+        provider_name = selection.tool.provider
 
         # Load prompts
         try:
@@ -162,11 +173,11 @@ class GenerateImagesStage(Stage):
             ref_image_b64 = self._load_ref_image(self.ref_image)
             logger.info(f"Reference image: {self.ref_image}")
 
-        logger.info(f"Seedream: {len(targets)} images to generate")
+        logger.info(f"{selection.tool.name}: {len(targets)} images to generate")
 
         ok_count, fail_count = 0, 0
 
-        if self.sequential_batch > 0:
+        if self.sequential_batch > 0 and provider_name != "agnes":
             # Batch mode
             for batch_start in range(0, len(targets), self.sequential_batch):
                 batch = targets[batch_start : batch_start + self.sequential_batch]
@@ -241,6 +252,7 @@ class GenerateImagesStage(Stage):
                     negative_prompt=negative_prompt,
                     model=seedream_model,
                     sample_strength=sample_strength,
+                    provider=provider_name,
                 ):
                     ok_count += 1
                     done.add(pid)
@@ -254,7 +266,7 @@ class GenerateImagesStage(Stage):
                 else:
                     fail_count += 1
                 if i < len(targets) - 1:
-                    time.sleep(self.sleep_between)
+                    time.sleep(self._sleep_between_for_provider(provider_name))
 
         logger.info(f"Done: {ok_count} OK, {fail_count} failed")
         if fail_count == 0:
@@ -287,6 +299,18 @@ class GenerateImagesStage(Stage):
         if self.ref_image:
             return "reference"
         return "creative"
+
+    def _api_key_for_provider(self, provider: str) -> str | None:
+        if self.api_key:
+            return self.api_key
+        if provider == "agnes":
+            return APIKeys.agnes()
+        return APIKeys.ark()
+
+    def _sleep_between_for_provider(self, provider: str) -> float:
+        if provider == "agnes":
+            return max(self.sleep_between, 65.0)
+        return self.sleep_between
 
     def _generate_local_placeholder(
         self, prompt: Any, out: Path, index: int, config: NarrascapeConfig
@@ -363,6 +387,7 @@ class GenerateImagesStage(Stage):
         model: str | None = None,
         sample_strength: float | None = None,
         seed: int | None = None,
+        provider: str = "seedream",
     ) -> bool:
         out_png = images_dir / f"{out_name}.png"
         if out_png.exists():
@@ -371,45 +396,29 @@ class GenerateImagesStage(Stage):
         # Use per-prompt model or default
         use_model = model or self.model
 
-        payload = {
-            "model": use_model,
-            "prompt": prompt,
-            "n": 1,
-            "size": size,
-            "response_format": "url",
-            "watermark": False,
-        }
-        if ref_image:
-            # Seedream supports string (single) or array (multi, max 14)
-            # Upload local paths via ImageUploader (base64/HTTP/Volcengine)
-            if isinstance(ref_image, list):
-                payload["image"] = [
-                    self._load_ref_image(r) if r and not r.startswith(("http", "data:")) else r
-                    for r in ref_image
-                ]
-            elif isinstance(ref_image, str) and not ref_image.startswith(("http", "data:")):
-                payload["image"] = self._load_ref_image(ref_image)
-            else:
-                payload["image"] = ref_image
-        if negative_prompt:
-            payload["negative_prompt"] = negative_prompt
-        if sample_strength is not None:
-            payload["sample_strength"] = sample_strength
-        if seed is not None:
-            payload["seed"] = seed
+        api_key = self._api_key_for_provider(provider)
+        if not api_key:
+            logger.error(f"{provider} image provider selected but API key is not configured")
+            return False
+
+        payload, request_url = self._build_image_payload(
+            provider=provider,
+            prompt=prompt,
+            size=size,
+            ref_image=ref_image,
+            negative_prompt=negative_prompt,
+            model=use_model,
+            sample_strength=sample_strength,
+            seed=seed,
+        )
 
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(self.base_url, data=data, method="POST")
-        req.add_header("Authorization", f"Bearer {self.api_key}")
+        req = urllib.request.Request(request_url, data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {api_key}")
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = retry_with_backoff(
-                lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
-                max_retries=3,
-                base_delay=2.0,
-                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-            )
+            r = self._post_image_request(req, provider=provider)
         except urllib.error.HTTPError as e:
             # Log response body for debugging
             try:
@@ -422,30 +431,26 @@ class GenerateImagesStage(Stage):
             logger.error(f"HTTP/API error: {e}")
             return False
 
-        data_field = r.get("data", [])
-        img_url = None
-        if isinstance(data_field, list) and data_field:
-            img_url = data_field[0].get("url")
-        elif isinstance(data_field, dict):
-            img_url = data_field.get("url")
-        else:
-            img_url = r.get("url") or r.get("image_url")
+        img_url, b64_json = self._extract_image_response(r)
 
-        if not img_url:
+        if not img_url and not b64_json:
             logger.error(f"No URL in response: {json.dumps(r, ensure_ascii=False)[:200]}")
             return False
 
-        # Download and convert to PNG
+        # Download or decode and convert to PNG
         tmp = images_dir / f"_tmp_{out_name}.jpg"
         try:
-            download_to_path(
-                img_url,
-                tmp,
-                timeout=180,
-                min_bytes=128,
-                min_free_mb=32.0,
-                expected_content_prefixes=("image/", "application/octet-stream"),
-            )
+            if b64_json:
+                self._write_b64_image(b64_json, tmp)
+            else:
+                download_to_path(
+                    img_url,
+                    tmp,
+                    timeout=180,
+                    min_bytes=128,
+                    min_free_mb=32.0,
+                    expected_content_prefixes=("image/", "application/octet-stream"),
+                )
             if not tmp.exists() or tmp.stat().st_size == 0:
                 raise RuntimeError("download produced an empty image file")
             ensure_min_free_space(out_png, min_free_mb=32.0, purpose=f"write {out_png.name}")
@@ -462,8 +467,137 @@ class GenerateImagesStage(Stage):
         finally:
             tmp.unlink(missing_ok=True)
 
-        logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
+            logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
         return True
+
+    def _post_image_request(
+        self, req: urllib.request.Request, *, provider: str
+    ) -> dict[str, Any]:
+        if provider == "agnes":
+            return retry_with_backoff(
+                lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
+                max_retries=4,
+                base_delay=65.0,
+                max_delay=75.0,
+                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                on_retry=self._log_agnes_retry,
+            )
+        return retry_with_backoff(
+            lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
+            max_retries=3,
+            base_delay=2.0,
+            retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+        )
+
+    def _log_agnes_retry(self, exc: Exception, attempt: int, delay: float) -> None:
+        retry_delay = delay
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+            retry_delay = max(delay, self._retry_after_from_http_error(exc))
+        logger.warning(f"Agnes retry {attempt} after {retry_delay:.1f}s: {exc}")
+
+    def _retry_after_from_http_error(self, exc: urllib.error.HTTPError) -> float:
+        header = exc.headers.get("Retry-After") if exc.headers else None
+        if header:
+            try:
+                return float(header)
+            except ValueError:
+                pass
+        try:
+            body = exc.read().decode(errors="ignore")
+        except Exception:
+            body = ""
+        minute_match = re.search(r"(\d+)\s+minute", body, flags=re.IGNORECASE)
+        if minute_match:
+            return max(65.0, float(minute_match.group(1)) * 65.0)
+        return 65.0
+
+    def _build_image_payload(
+        self,
+        *,
+        provider: str,
+        prompt: str,
+        size: str,
+        ref_image: str | list[str] | None,
+        negative_prompt: str,
+        model: str,
+        sample_strength: float | None,
+        seed: int | None,
+    ) -> tuple[dict[str, Any], str]:
+        safe_prompt = sanitize_prompt_for_provider(provider, prompt)
+        safe_negative_prompt = sanitize_prompt_for_provider(
+            provider, negative_prompt, append_safety_suffix=False
+        )
+        if provider == "agnes":
+            payload: dict[str, Any] = {
+                "model": model if model.startswith("agnes-") else self.agnes_model,
+                "prompt": safe_prompt,
+                "size": size,
+                "extra_body": {"response_format": "url"},
+            }
+            ref_values = self._normalize_reference_images(ref_image, max_items=14)
+            if ref_values:
+                payload["extra_body"]["image"] = ref_values
+            if safe_negative_prompt:
+                payload["negative_prompt"] = safe_negative_prompt
+            if seed is not None:
+                payload["seed"] = seed
+            return payload, self.agnes_base_url
+
+        payload = {
+            "model": model,
+            "prompt": safe_prompt,
+            "n": 1,
+            "size": size,
+            "response_format": "url",
+            "watermark": False,
+        }
+        ref_values = self._normalize_reference_images(ref_image, max_items=14)
+        if ref_values:
+            payload["image"] = ref_values if isinstance(ref_image, list) else ref_values[0]
+        if safe_negative_prompt:
+            payload["negative_prompt"] = safe_negative_prompt
+        if sample_strength is not None:
+            payload["sample_strength"] = sample_strength
+        if seed is not None:
+            payload["seed"] = seed
+        return payload, self.base_url
+
+    def _normalize_reference_images(
+        self, ref_image: str | list[str] | None, *, max_items: int
+    ) -> list[str]:
+        if not ref_image:
+            return []
+        refs = ref_image if isinstance(ref_image, list) else [ref_image]
+        normalized: list[str] = []
+        for ref in refs[:max_items]:
+            if not ref:
+                continue
+            value = (
+                self._load_ref_image(ref)
+                if isinstance(ref, str) and not ref.startswith(("http", "data:"))
+                else str(ref)
+            )
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    def _extract_image_response(self, response: dict[str, Any]) -> tuple[str | None, str | None]:
+        data_field = response.get("data", [])
+        item: dict[str, Any] = {}
+        if isinstance(data_field, list) and data_field:
+            item = data_field[0] if isinstance(data_field[0], dict) else {}
+        elif isinstance(data_field, dict):
+            item = data_field
+        img_url = item.get("url") or response.get("url") or response.get("image_url")
+        b64_json = item.get("b64_json") or response.get("b64_json")
+        return img_url, b64_json
+
+    def _write_b64_image(self, value: str, path: Path) -> None:
+        raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+        try:
+            path.write_bytes(base64.b64decode(raw))
+        except (binascii.Error, ValueError) as exc:
+            raise RuntimeError("invalid base64 image response") from exc
 
     def _generate_sequential(
         self,
@@ -495,7 +629,11 @@ class GenerateImagesStage(Stage):
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(self.base_url, data=data, method="POST")
-        req.add_header("Authorization", f"Bearer {self.api_key}")
+        api_key = self._api_key_for_provider("seedream")
+        if not api_key:
+            logger.error("seedream image provider selected but API key is not configured")
+            return results
+        req.add_header("Authorization", f"Bearer {api_key}")
         req.add_header("Content-Type", "application/json")
 
         try:

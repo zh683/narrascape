@@ -114,13 +114,17 @@ execution contract:
 - storyboard binding: frame ids, character positions, scene reference, wardrobe
   lock, composition requirements, and reference image ids
 - generation instructions: video prompt, negative prompt, duration, and motion
+- provider-specific compiled prompts under `generation.compiled_prompts`, so
+  Seedance and Agnes can receive different prompt grammar from the same shot
+  contract
 - QA assertions: `must_show` and `must_not_show`
 
 When an LLM client is configured, this stage asks the model to act as a
 top-tier film director and prompt compiler. Without an LLM, it creates a
 deterministic contract from existing design fields. The important boundary is
 that artistic ideas do not remain vague advice: every idea must compile into
-prompt text, continuity constraints, or QA checks consumed by later stages.
+prompt text, provider-specific execution prompts, continuity constraints, or QA
+checks consumed by later stages.
 
 ### Continuity Director
 
@@ -163,7 +167,8 @@ It merges findings into executable actions grouped as:
 
 ### Multi-Take Director
 
-`take_select` reads existing `vid_<segment>_take_<take>.mp4` files and writes
+`generate_video` can create `vid_<segment>_take_<take>.mp4` candidates when
+`video.takes > 1`. `take_select` reads those files and writes
 `take_selection.yaml`. When an LLM client is configured, the stage calls the LLM
 as a take judge with QA evidence and candidate metadata. Without an LLM, it uses
 a deterministic QA proxy score. When the file exists, `film_timeline` uses the

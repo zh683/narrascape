@@ -30,6 +30,11 @@ class ArtifactSchema:
 
 SCHEMAS = {
     "asset_manifest": ArtifactSchema("asset_manifest", ("assets",)),
+    "animatic": ArtifactSchema(
+        "animatic",
+        ("schema_version", "status", "panels", "findings"),
+        "animatic.v1",
+    ),
     "continuity_bible": ArtifactSchema(
         "continuity_bible",
         ("schema_version", "characters", "locations", "continuity_risks"),
@@ -62,6 +67,11 @@ SCHEMAS = {
         "film_timeline.v1",
     ),
     "render_report": ArtifactSchema("render_report", ("output", "checks")),
+    "reference_plates": ArtifactSchema(
+        "reference_plates",
+        ("schema_version", "status", "plates", "findings"),
+        "reference_plates.v1",
+    ),
     "rework_execution": ArtifactSchema(
         "rework_execution",
         ("schema_version", "status", "executed_actions", "queues"),
@@ -86,6 +96,11 @@ SCHEMAS = {
         "visual_semantic_report",
         ("schema_version", "status", "review_process", "findings"),
         "visual_semantic_report.v1",
+    ),
+    "video_prompt_quality": ArtifactSchema(
+        "video_prompt_quality",
+        ("schema_version", "status", "findings"),
+        "video_prompt_quality.v1",
     ),
 }
 

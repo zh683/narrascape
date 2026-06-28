@@ -78,9 +78,17 @@ class ImageProvider(str, Enum):
     """Supported image generation providers."""
 
     SEEDREAM = "seedream"
+    AGNES = "agnes"
     FLUX = "flux"
     OPENAI = "openai"
     LOCAL = "local"
+
+
+class VideoProvider(str, Enum):
+    """Supported video generation providers."""
+
+    SEEDANCE = "seedance"
+    AGNES = "agnes"
 
 
 class MusicProvider(str, Enum):
@@ -152,6 +160,13 @@ class PipelineConfig(BaseModel):
     name: str = Field("animated-explainer", description="Pipeline type identifier")
     category: str | None = Field(None, description="Pipeline category")
     version: str = Field("2.0", description="Pipeline version string")
+    design_overwrite: bool = Field(
+        True,
+        description=(
+            "Whether the design stage rewrites image_prompts.yaml and image_map.yaml. "
+            "Set false for curated projects that should preserve authored prompt files."
+        ),
+    )
     video_generation: Literal["auto", "required", "off"] = Field(
         "auto",
         description=(
@@ -220,6 +235,23 @@ class ImageConfig(BaseModel):
     width: int = Field(2560, ge=640, le=8192)
     height: int = Field(1440, ge=480, le=8192)
     count: int | None = Field(None, description="Number of images (auto-detected)")
+
+
+class VideoConfig(BaseModel):
+    """Generated-video provider configuration."""
+
+    provider: VideoProvider = Field(VideoProvider.SEEDANCE)
+    model: str = Field("jimeng-video-seedance-2.0")
+    resolution: str = Field("720p")
+    ratio: str = Field("16:9")
+    duration: int = Field(5, ge=1, le=18)
+    frame_rate: int = Field(24, ge=1, le=60)
+    takes: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description="Generated-video candidates per shot. Values above 1 create multi-take clips for take_select.",
+    )
 
 
 # ───────────────────────────────────────────
@@ -393,6 +425,7 @@ class BudgetConfig(BaseModel):
     tts_estimated: float | None = Field(None)
     images_estimated: float | None = Field(None)
     music_estimated: float | None = Field(None)
+    video_estimated: float | None = Field(None)
     total_estimated: float | None = Field(None)
     mode: Literal["observe", "warn", "cap"] = Field("warn")
     per_action_threshold: float = Field(0.5, ge=0.0)
@@ -411,6 +444,7 @@ class NarrascapeConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     images: ImageConfig = Field(default_factory=ImageConfig)
+    video: VideoConfig = Field(default_factory=VideoConfig)
     visual: VisualConfig = Field(default_factory=VisualConfig)
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -421,6 +455,16 @@ class NarrascapeConfig(BaseModel):
 
     # Runtime-derived paths (not in YAML)
     project_dir: Path = Field(default=Path("."), exclude=True)
+
+    @model_validator(mode="after")
+    def validate_production_policies(self) -> NarrascapeConfig:
+        if self.pipeline.video_generation == "required" and self.llm.mode == "none":
+            raise ValueError(
+                "pipeline.video_generation=required requires llm.mode to be "
+                "auto, ai_assistant, bridge, or api. llm.mode=none is only for "
+                "offline/local verification."
+            )
+        return self
 
     @model_validator(mode="after")
     def derive_project_dir(self) -> NarrascapeConfig:

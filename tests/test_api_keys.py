@@ -24,3 +24,15 @@ def test_env_file_is_cached_until_reset(monkeypatch):
         assert calls == ["read", "read"]
     finally:
         APIKeys.reset_cache()
+
+
+def test_agnes_key_reads_environment(monkeypatch):
+    from narrascape.api_keys import APIKeys
+
+    APIKeys.reset_cache()
+    monkeypatch.setenv("AGNES_API_KEY", "agnes-key")
+
+    try:
+        assert APIKeys.agnes() == "agnes-key"
+    finally:
+        APIKeys.reset_cache()

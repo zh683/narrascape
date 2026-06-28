@@ -4,7 +4,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from narrascape.config import ImageProvider, MusicProvider, NarrascapeConfig, TTSProvider
+from narrascape.config import (
+    ImageProvider,
+    MusicProvider,
+    NarrascapeConfig,
+    TTSProvider,
+    VideoProvider,
+)
 
 
 class ProviderCapability(str, Enum):
@@ -145,6 +151,23 @@ def build_default_registry(config: NarrascapeConfig) -> ProviderRegistry:
             requires=["ARK_API_KEY"],
         )
     )
+    registry.register(
+        ProviderTool(
+            name="agnes_image",
+            capability=ProviderCapability.IMAGE_GENERATION,
+            provider="agnes",
+            status=_status(config.images.provider == ImageProvider.AGNES),
+            quality=0.82,
+            control=0.75,
+            reliability=0.75,
+            cost_efficiency=0.65,
+            latency=0.65,
+            continuity=0.7,
+            task_fit={"creative": 0.88, "reference": 0.8},
+            notes="Agnes Image 2.1 Flash text-to-image and image-to-image",
+            requires=["AGNES_API_KEY"],
+        )
+    )
 
     registry.register(
         ProviderTool(
@@ -195,12 +218,29 @@ def build_default_registry(config: NarrascapeConfig) -> ProviderRegistry:
             name="seedance_video",
             capability=ProviderCapability.VIDEO_GENERATION,
             provider="seedance",
-            status="available",
+            status=_status(config.video.provider == VideoProvider.SEEDANCE),
             quality=0.8,
             control=0.7,
             continuity=0.85,
             cost_efficiency=0.4,
             requires=["ARK_API_KEY"],
+        )
+    )
+    registry.register(
+        ProviderTool(
+            name="agnes_video",
+            capability=ProviderCapability.VIDEO_GENERATION,
+            provider="agnes",
+            status=_status(config.video.provider == VideoProvider.AGNES),
+            quality=0.82,
+            control=0.75,
+            reliability=0.75,
+            continuity=0.78,
+            cost_efficiency=0.65,
+            latency=0.55,
+            task_fit={"creative": 0.9, "reference": 0.82},
+            notes="Agnes Video V2.0 async text/image/multi-image generation",
+            requires=["AGNES_API_KEY"],
         )
     )
     registry.register(

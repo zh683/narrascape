@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.cache import BuildCache
-from narrascape.config import NarrascapeConfig, Script, load_script
+from narrascape.config import ImageProvider, NarrascapeConfig, Script, load_script
 from narrascape.pipeline_approval import PipelineApproval
+from narrascape.stages.animatic import AnimaticStage
 from narrascape.stages.audio import AudioRemixStage, AudioStage
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.concat import ConcatStage
@@ -29,6 +30,7 @@ from narrascape.stages.humanize import HumanizeStage
 from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.pre_production import PreProductionStage
 from narrascape.stages.qa import QAStage
+from narrascape.stages.reference_plate import ReferencePlateStage
 from narrascape.stages.research import ResearchStage
 from narrascape.stages.rework_execute import ReworkExecuteStage
 from narrascape.stages.rework_plan import ReworkPlanStage
@@ -62,6 +64,8 @@ ALL_STAGES: list[type[Stage]] = [
     DesignStage,
     ScriptSceneDirectorStage,
     DirectorContractStage,
+    ReferencePlateStage,
+    AnimaticStage,
     GenerateImagesStage,
     GenerateVideoStage,
     TakeSelectStage,
@@ -263,6 +267,11 @@ class Pipeline:
         self.auto_approve = auto_approve
         self.console = console
         self.llm_client = llm_client
+        if self.config.pipeline.video_generation == "required" and self.llm_client is None:
+            raise RuntimeError(
+                "pipeline.video_generation=required requires an LLM client. "
+                "Use llm.mode=ai_assistant, bridge, api, or auto before running an AI-film build."
+            )
         self.image_api_key = image_api_key
         self.minimax_api_key = minimax_api_key
         # Script may not exist yet (research/write stages create it)
@@ -295,17 +304,22 @@ class Pipeline:
         from narrascape.stages.generate_video import GenerateVideoStage
         from narrascape.stages.humanize import HumanizeStage
         from narrascape.stages.pre_production import PreProductionStage
+        from narrascape.stages.reference_plate import ReferencePlateStage
         from narrascape.stages.research import ResearchStage
         from narrascape.stages.take_select import TakeSelectStage
         from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
         from narrascape.stages.write import WriteStage
 
         style = self.config.images.style if self.config.images else "cinematic documentary"
+        image_provider = self.config.images.provider if self.config.images else None
+        lean_reference_pass = image_provider == ImageProvider.AGNES
 
         if stage_cls == PreProductionStage:
             return PreProductionStage(
                 llm_client=self.llm_client,
                 style_template=style,
+                generate_turns=not lean_reference_pass,
+                generate_expressions=not lean_reference_pass,
                 image_api_key=self.image_api_key,
             )
         elif stage_cls == DesignStage:
@@ -315,6 +329,10 @@ class Pipeline:
             )
         elif stage_cls == DirectorContractStage:
             return DirectorContractStage(llm_client=self.llm_client)
+        elif stage_cls == ReferencePlateStage:
+            return ReferencePlateStage()
+        elif stage_cls == AnimaticStage:
+            return AnimaticStage()
         elif stage_cls == GenerateImagesStage:
             return GenerateImagesStage(api_key=self.image_api_key)
         elif stage_cls == GenerateVideoStage:
@@ -349,7 +367,9 @@ class Pipeline:
             "design",
             "screenplay_structure",
             "director_contract",
+            "reference_plate",
             "generate_images",
+            "animatic",
             "generate_tts",
         ]
         video_policy = self.config.pipeline.video_generation
@@ -780,6 +800,14 @@ class Pipeline:
                     self.config.pipeline_dir / "image_gen_state.json",
                 ]
             )
+        if stages is None or "generate_video" in stages:
+            dirs_to_clean.extend(
+                [
+                    self.config.pipeline_dir / "video_gen_state.json",
+                    self.config.pipeline_dir / "video_prompt_quality.yaml",
+                    self.config.project_dir / "assets" / "videos" / "vid_*.mp4",
+                ]
+            )
         if stages is None or "generate_tts" in stages:
             dirs_to_clean.extend(
                 [
@@ -818,6 +846,17 @@ class Pipeline:
             dirs_to_clean.append(self.config.pipeline_dir / "screenplay_structure.yaml")
         if stages is None or "director_contract" in stages:
             dirs_to_clean.append(self.config.pipeline_dir / "director_contract.yaml")
+        if stages is None or "reference_plate" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "reference_plates.yaml")
+        if stages is None or "animatic" in stages:
+            dirs_to_clean.extend(
+                [
+                    self.config.pipeline_dir / "animatic.yaml",
+                    self.config.pipeline_dir / "animatic.mp4",
+                    self.config.pipeline_dir / "animatic.txt",
+                    self.config.pipeline_dir / "animatic_panels",
+                ]
+            )
         if stages is None or "continuity_bible" in stages:
             dirs_to_clean.append(self.config.pipeline_dir / "continuity_bible.yaml")
         if stages is None or "editing_review" in stages:
@@ -836,6 +875,7 @@ class Pipeline:
             dirs_to_clean.extend(
                 [
                     self.config.pipeline_dir / "rework_execution.yaml",
+                    self.config.pipeline_dir / "director_contract_rewrite_queue.yaml",
                     self.config.pipeline_dir / "video_regen_queue.yaml",
                     self.config.pipeline_dir / "recut_queue.yaml",
                     self.config.pipeline_dir / "source_media_replacement_queue.yaml",

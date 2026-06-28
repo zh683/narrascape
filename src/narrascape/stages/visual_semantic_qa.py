@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
@@ -201,6 +202,7 @@ class VisualSemanticQAStage(Stage):
                 )
             contract = contract_by_segment.get(segment_id, {})
             findings.extend(self._contract_findings(segment_id, clip, contract))
+            findings.extend(self._contract_quality_findings(segment_id, contract))
             findings.extend(self._storyboard_binding_findings(segment_id, clip, contract))
         return findings
 
@@ -226,9 +228,15 @@ class VisualSemanticQAStage(Stage):
                     }
                 )
             if expected_ids and clip.get("source") == "generated_video":
-                executed_ids = set(executed.get("expected_reference_ids") or [])
+                executed_ids = self._executed_reference_id_set(executed)
+                expected_aliases = self._reference_aliases_by_expected_id(
+                    reference_assets,
+                    expected_ids,
+                )
                 missing_from_execution = [
-                    ref_id for ref_id in expected_ids if ref_id not in executed_ids
+                    ref_id
+                    for ref_id in expected_ids
+                    if not (expected_aliases.get(ref_id, {ref_id}) & executed_ids)
                 ]
                 uploaded_count = int(executed.get("uploaded_reference_count") or 0)
                 if not executed:
@@ -274,6 +282,63 @@ class VisualSemanticQAStage(Stage):
                 )
         return findings
 
+    def _executed_reference_id_set(self, executed: dict[str, Any]) -> set[str]:
+        values: set[str] = {
+            str(item) for item in executed.get("expected_reference_ids", []) or []
+        }
+        for asset in executed.get("resolved_references", []) or []:
+            if not isinstance(asset, dict):
+                continue
+            values.update(self._reference_asset_aliases(asset))
+        for asset in executed.get("uploaded_reference_assets", []) or []:
+            if not isinstance(asset, dict):
+                continue
+            values.update(self._reference_asset_aliases(asset))
+        return {value for value in values if value}
+
+    def _reference_aliases_by_expected_id(
+        self,
+        reference_assets: list[dict[str, Any]],
+        expected_ids: list[str],
+    ) -> dict[str, set[str]]:
+        aliases: dict[str, set[str]] = {
+            ref_id: {ref_id, *self._semantic_reference_aliases(ref_id)}
+            for ref_id in expected_ids
+        }
+        for asset in reference_assets:
+            if not isinstance(asset, dict):
+                continue
+            requested_id = str(asset.get("requested_id") or "")
+            if not requested_id:
+                continue
+            aliases.setdefault(requested_id, set()).update(
+                self._reference_asset_aliases(asset)
+            )
+        return aliases
+
+    def _reference_asset_aliases(self, asset: dict[str, Any]) -> set[str]:
+        aliases = {
+            str(asset.get("requested_id") or ""),
+            str(asset.get("asset_id") or ""),
+        }
+        path = str(asset.get("path") or "")
+        if path:
+            stem = Path(path).stem
+            aliases.add(stem)
+            aliases.update(self._semantic_reference_aliases(stem))
+        return {alias for alias in aliases if alias}
+
+    def _semantic_reference_aliases(self, ref_id: str) -> set[str]:
+        aliases: set[str] = set()
+        if ref_id.startswith("char_") and ref_id.endswith("_anchor"):
+            aliases.add(ref_id.removeprefix("char_").removesuffix("_anchor"))
+        if ref_id.startswith("scene_") and ref_id.endswith("_mood"):
+            scene_id = ref_id.removeprefix("scene_").removesuffix("_mood")
+            aliases.update({scene_id, f"{scene_id}_mood"})
+        if not ref_id.startswith(("char_", "scene_")):
+            aliases.update({f"char_{ref_id}_anchor", f"scene_{ref_id}_mood", f"{ref_id}_mood"})
+        return aliases
+
     def _contract_findings(
         self,
         segment_id: int,
@@ -308,6 +373,25 @@ class VisualSemanticQAStage(Stage):
                         "evidence": f"contract forbids {value!r}, but timeline metadata contains it",
                     }
                 )
+        return findings
+
+    def _contract_quality_findings(
+        self,
+        segment_id: int,
+        contract: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if not contract:
+            return []
+        prompt = str(contract.get("generation", {}).get("video_prompt") or "")
+        assessment = video_prompt_quality_assessment(
+            contract,
+            provider="timeline",
+            prompt=prompt,
+        )
+        findings = assessment["findings"]
+        for item in findings:
+            if item["risk_type"] == "under_specified_video_prompt":
+                item["risk_type"] = "under_specified_director_contract"
         return findings
 
     def _storyboard_binding_findings(
@@ -549,12 +633,37 @@ class VisualSemanticQAStage(Stage):
                         self._compact_reference_asset(asset)
                         for asset in reference_manifest["resolved_references"]
                     ]
-                    item["executed_reference_input"] = video_state.get("reference_inputs", {}).get(
-                        f"vid_{segment_id_int:02d}", {}
+                    item["executed_reference_input"] = self._executed_reference_input_for_clip(
+                        item,
+                        segment_id_int,
+                        video_state,
                     )
             item["extracted_frames"] = self._extract_clip_frames(item, path, context)
             evidence.append(item)
         return evidence
+
+    def _executed_reference_input_for_clip(
+        self,
+        clip: dict[str, Any],
+        segment_id: int,
+        video_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        reference_inputs = video_state.get("reference_inputs", {})
+        if not isinstance(reference_inputs, dict):
+            return {}
+        keys: list[str] = []
+        asset_ref = clip.get("asset_ref")
+        if asset_ref:
+            keys.append(str(asset_ref))
+        path = clip.get("path")
+        if path:
+            keys.append(Path(str(path)).stem)
+        keys.append(f"vid_{segment_id:02d}")
+        for key in keys:
+            value = reference_inputs.get(key)
+            if isinstance(value, dict):
+                return value
+        return {}
 
     def _extract_clip_frames(
         self,

@@ -84,6 +84,18 @@ class FilmSupervisorStage(Stage):
         if actions or creative_recommendations or visual_findings or blocking_errors:
             stages.append("rework_execute")
         all_actions = actions + creative_recommendations
+        if any(item.get("action") == "rewrite_director_contract" for item in all_actions):
+            stages.extend(
+                [
+                    "director_contract",
+                    "reference_plate",
+                    "generate_images",
+                    "animatic",
+                    "generate_video",
+                    "take_select",
+                    "film_timeline",
+                ]
+            )
         if any(item.get("action") == "regenerate_video" for item in all_actions) or visual_findings:
             stages.extend(["generate_video", "take_select", "film_timeline"])
         if any(item.get("action") == "replace_source_media" for item in all_actions):

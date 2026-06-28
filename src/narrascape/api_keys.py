@@ -1,7 +1,7 @@
 """API key and credential management.
 
 Reads API keys from environment variables or .env file.
-Supports: MINIMAX_API_KEY, ARK_API_KEY (Volcengine), OPENAI_API_KEY, etc.
+Supports: MINIMAX_API_KEY, ARK_API_KEY (Volcengine), AGNES_API_KEY, OPENAI_API_KEY, etc.
 """
 
 from __future__ import annotations
@@ -64,6 +64,11 @@ class APIKeys:
     def ark(cls) -> str | None:
         """Volcengine Ark API key (for Seedream)."""
         return cls.get("ARK_API_KEY")
+
+    @classmethod
+    def agnes(cls) -> str | None:
+        """Agnes AI API key (for image and video generation)."""
+        return cls.get("AGNES_API_KEY")
 
     @classmethod
     def ark_model_id(cls) -> str | None:

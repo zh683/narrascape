@@ -8,10 +8,14 @@ from pathlib import Path
 import pytest
 
 from narrascape.config import (
+    BudgetConfig,
     EndingConfig,
+    ImageConfig,
     ImageMap,
     ImageMapEntry,
     ImagePrompt,
+    ImageProvider,
+    LLMConfig,
     NarrascapeConfig,
     PipelineConfig,
     ProjectConfig,
@@ -19,7 +23,10 @@ from narrascape.config import (
     ScriptSegment,
     ShotType,
     SupersampleMode,
+    VideoConfig,
+    VideoProvider,
     VisualConfig,
+    load_config,
 )
 
 
@@ -62,12 +69,43 @@ class TestNarrascapeConfig:
         cfg = PipelineConfig()
 
         assert cfg.video_generation == "auto"
+        assert cfg.design_overwrite is True
         assert cfg.auto_rework is True
         assert cfg.max_rework_cycles == 1
+
+    def test_pipeline_can_preserve_curated_design_files(self):
+        cfg = PipelineConfig(design_overwrite=False)
+
+        assert cfg.design_overwrite is False
 
     def test_pipeline_rejects_invalid_video_generation_policy(self):
         with pytest.raises(ValueError):
             PipelineConfig(video_generation="sometimes")
+
+    def test_video_required_rejects_offline_llm_mode(self):
+        with pytest.raises(ValueError, match="video_generation=required"):
+            NarrascapeConfig(
+                project=ProjectConfig(
+                    name="required-video",
+                    title="Required Video",
+                    script_file="scripts/script.yaml",
+                ),
+                pipeline=PipelineConfig(video_generation="required"),
+                llm=LLMConfig(mode="none"),
+            )
+
+    def test_crime_and_punishment_agnes_example_uses_ai_director_llm(self):
+        config_path = (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "crime-and-punishment"
+            / "config.agnes.yaml"
+        )
+
+        cfg = load_config(config_path)
+
+        assert cfg.pipeline.video_generation == "required"
+        assert cfg.llm.mode == "ai_assistant"
 
     def test_project_dir_is_not_serialized(self):
         cfg = NarrascapeConfig(
@@ -78,6 +116,11 @@ class TestNarrascapeConfig:
         dumped = cfg.model_dump()
 
         assert "project_dir" not in dumped
+
+    def test_budget_video_estimate_is_configurable(self):
+        cfg = BudgetConfig(video_estimated=0.0)
+
+        assert cfg.video_estimated == 0.0
 
 
 class TestEndingConfig:
@@ -118,6 +161,28 @@ class TestImagePrompts:
 
         # Valid size should pass
         ImagePrompt(id="img_01", description="Test", size="100x100")
+
+    def test_agnes_image_provider_is_valid(self):
+        cfg = ImageConfig(provider=ImageProvider.AGNES, model="agnes-image-2.1-flash")
+
+        assert cfg.provider == ImageProvider.AGNES
+
+
+class TestVideoConfig:
+    def test_agnes_video_provider_is_valid(self):
+        cfg = VideoConfig(provider=VideoProvider.AGNES, model="agnes-video-v2.0")
+
+        assert cfg.provider == VideoProvider.AGNES
+        assert cfg.frame_rate == 24
+        assert cfg.takes == 1
+
+    def test_video_take_count_is_configurable(self):
+        cfg = VideoConfig(takes=3)
+
+        assert cfg.takes == 3
+
+        with pytest.raises(ValueError):
+            VideoConfig(takes=0)
 
 
 class TestImageMap:

@@ -123,13 +123,37 @@ class TestBudgetTracker:
             state_path = Path(tmp) / "budget_state.json"
             budget = BudgetTracker(
                 BudgetConfig(
-                    total_usd=10.0, images_estimated=0.1, tts_estimated=0.002, music_estimated=0.05
+                    total_usd=10.0,
+                    images_estimated=0.1,
+                    tts_estimated=0.002,
+                    music_estimated=0.05,
+                    video_estimated=0.25,
                 ),
                 state_path,
             )
             assert budget.get_cost_estimate("image", 5) == 0.5
             assert budget.get_cost_estimate("tts", 10) == 0.02
             assert budget.get_cost_estimate("music", 2) == 0.1
+            assert budget.get_cost_estimate("video", 2) == 0.5
+
+    def test_get_cost_estimate_accepts_explicit_zero_for_free_providers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "budget_state.json"
+            budget = BudgetTracker(
+                BudgetConfig(
+                    total_usd=0.0,
+                    images_estimated=0.0,
+                    tts_estimated=0.0,
+                    music_estimated=0.0,
+                    video_estimated=0.0,
+                ),
+                state_path,
+            )
+
+            assert budget.get_cost_estimate("image", 5) == 0.0
+            assert budget.get_cost_estimate("tts", 10) == 0.0
+            assert budget.get_cost_estimate("music", 2) == 0.0
+            assert budget.get_cost_estimate("video", 2) == 0.0
 
     def test_remaining_calculation(self):
         with tempfile.TemporaryDirectory() as tmp:

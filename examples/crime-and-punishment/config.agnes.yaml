@@ -1,0 +1,146 @@
+project:
+  name: "crime-and-punishment"
+  title: "罪与罚"
+  subtitle: "Narrascape public-domain AI-film prototype"
+  author: "Narrascape"
+  year: 2026
+  series: "Narrascape First Film"
+  episode: 1
+  script_file: "scripts/script.yaml"
+  segment_count: 12
+  style: "psychological literary feature film"
+
+pipeline:
+  name: "ai-film-prototype"
+  category: "public_domain_literary_drama"
+  version: "2.0"
+  design_overwrite: false
+  video_generation: required
+  auto_rework: true
+  max_rework_cycles: 1
+
+llm:
+  mode: ai_assistant
+  temperature: 0.7
+  max_tokens: 4000
+
+tts:
+  provider: local
+  model: "speech-2.8-hd"
+  voice_id: "male-qn-jingying"
+  speed: 0.86
+  pitch: -2
+  vol: 1.0
+  sample_rate: 32000
+  continuous_sound: true
+  text_normalization: true
+  language_boost: "Chinese"
+  add_pauses: true
+
+images:
+  provider: agnes
+  model: "agnes-image-2.1-flash"
+  style: "Photorealistic 19th-century Russian psychological literary drama, 1860s Saint Petersburg, cramped yellow rooms, wet cobblestones, canal fog, candlelight, worn clothing, moral tension, 35mm cinema still, NOT anime, NOT illustration, no text, no watermark."
+  aspect_ratio: "16:9"
+  width: 1920
+  height: 1080
+  count: 12
+
+video:
+  provider: agnes
+  model: "agnes-video-v2.0"
+  resolution: "720p"
+  ratio: "16:9"
+  duration: 5
+  frame_rate: 24
+
+visual:
+  type: "ken_burns"
+  zoom_rate: 0.0006
+  zoom_cap: 1.1
+  fade_in_duration: 1.0
+  supersample: auto
+  segment_gap: 0.7
+  gap_map:
+    4: 1.1
+    8: 1.3
+    10: 1.2
+
+subtitles:
+  engine: srt
+  font: "Microsoft YaHei"
+  font_size: 24
+  max_chars_per_line: 18
+  strip_punctuation: true
+  alignment: 2
+  primary_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+  outline: 2
+  shadow: 1
+  margin_v: 60
+
+audio:
+  narration:
+    provider: local
+    format: mp3
+    sample_rate: 32000
+  music:
+    provider: local
+    model: "music-2.6-free"
+    sample_rate: 44100
+    bitrate: 256000
+    volume: 0.2
+    music_boost_db: 1.5
+    sidechain_threshold: 0.05
+    sidechain_ratio: 3
+    sidechain_attack: 20
+    sidechain_release: 600
+    narration_lufs: -16
+    target_lufs: -14
+    fade_out_seconds: 5
+
+bgm_map:
+  zone_crossfade: 1.2
+  zones:
+    - id: bgm_pressure
+      covers: [1, 4]
+      label: "Petersburg Pressure"
+      prompt: "Low cello, muted piano, distant city rumble, humid psychological tension, 52 BPM, D minor"
+      min_duration: 70
+    - id: bgm_fever
+      covers: [5, 7]
+      label: "Fever Logic"
+      prompt: "Prepared piano pulses, thin strings, unstable breathing texture, restrained dread, 60 BPM, F minor"
+      min_duration: 70
+    - id: bgm_mercy
+      covers: [8, 10]
+      label: "Sonya and Confession"
+      prompt: "Soft harmonium, solo cello, fragile candlelit mercy, slow moral surrender, 48 BPM, A minor"
+      min_duration: 70
+    - id: bgm_dawn
+      covers: [11, 12]
+      label: "Siberian Dawn"
+      prompt: "Sparse strings, low piano, cold air, distant choir pad without lyrics, austere hope, 44 BPM, E minor"
+      min_duration: 55
+
+encode:
+  width: 1920
+  height: 1080
+  fps: 24
+  crf: 18
+  preset: "medium"
+  codec: "libx264"
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+
+ending:
+  enabled: false
+
+budget:
+  total_usd: 0.0
+  mode: observe
+  per_action_threshold: 0.0
+  images_estimated: 0.0
+  video_estimated: 0.0
+  tts_estimated: 0.0
+  music_estimated: 0.0

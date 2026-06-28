@@ -366,6 +366,40 @@ def test_rework_director_merges_review_editing_and_continuity_into_action_plan(t
     assert plan["actions_by_type"]["replace_source_media"]
 
 
+def test_rework_director_includes_video_prompt_quality_actions(tmp_path):
+    from narrascape.stages.rework_plan import ReworkPlanStage
+
+    config = _config(tmp_path)
+    (config.pipeline_dir / "video_prompt_quality.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "video_prompt_quality.v1",
+                "status": "blocked",
+                "findings": [
+                    {
+                        "segment_id": 2,
+                        "risk_type": "overloaded_camera_motion",
+                        "severity": "medium",
+                        "provider": "seedance",
+                        "evidence": "push, pan, tilt, zoom",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = ReworkPlanStage().run(_context(config))
+
+    assert result.success
+    plan = yaml.safe_load((config.pipeline_dir / "rework_plan.yaml").read_text(encoding="utf-8"))
+    actions = {(item["segment_id"], item["action"], item["reason"]) for item in plan["actions"]}
+    assert (2, "rewrite_director_contract", "overloaded_camera_motion") in actions
+    assert (2, "regenerate_video", "overloaded_camera_motion") in actions
+    assert plan["actions_by_type"]["rewrite_director_contract"]
+
+
 def test_multi_take_director_selects_best_take_and_timeline_uses_it(tmp_path):
     from narrascape.stages.film_timeline import FilmTimelineStage
     from narrascape.stages.take_select import TakeSelectStage

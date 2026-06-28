@@ -195,6 +195,24 @@ def test_film_timeline_can_run_requires_design_report(tmp_path):
     assert "design_report.yaml not found" in reason
 
 
+def test_film_timeline_can_run_without_timing_json_and_estimates_duration(tmp_path):
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.pipeline_dir / "timing.json").unlink()
+
+    can_run, reason = FilmTimelineStage().can_run(_context(config))
+    result = FilmTimelineStage().run(_context(config))
+
+    assert can_run, reason
+    assert result.success
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
+    first_narration = timeline["tracks"]["narration"][0]
+    assert first_narration["duration"] > 1.0
+
+
 def test_film_timeline_prefers_generated_video_over_source_and_image(tmp_path):
     from narrascape.stages.film_timeline import FilmTimelineStage
 
@@ -225,6 +243,82 @@ def test_film_timeline_prefers_generated_video_over_source_and_image(tmp_path):
     ]
     assert [clip["source"] for clip in story_clips] == ["generated_video", "generated_video"]
     assert timeline["tracks"]["visual"][0]["asset_ref"] == "vid_01"
+
+
+def test_film_timeline_backfills_semantic_locks_from_director_contract(tmp_path):
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.pipeline_dir / "director_contract.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "director_contract.v1",
+                "compile_process": {
+                    "mode": "deterministic_prompt_compiler",
+                    "llm_status": "not_configured",
+                },
+                "shots": [
+                    {
+                        "segment_id": 2,
+                        "film_language": {
+                            "lighting": "sickly candle and cold window light",
+                            "composition": "Raskolnikov trapped at the frame edge",
+                        },
+                        "continuity_constraints": {
+                            "characters": ["raskolnikov", "sonya"],
+                            "location": "sonya_room",
+                            "wardrobe": "worn dark student coat; plain faded brown dress",
+                            "lighting": "sickly candle and cold window light",
+                        },
+                        "storyboard_binding": {
+                            "storyboard_frame_ids": ["sb_02_01"],
+                            "character_positions": [
+                                "Sonya beside the candle, Raskolnikov near the door"
+                            ],
+                            "scene_ref": "sonya_room",
+                            "wardrobe_lock": "worn dark student coat; plain faded brown dress",
+                            "composition_requirements": [
+                                "Raskolnikov trapped at the frame edge"
+                            ],
+                        },
+                        "generation": {"video_prompt": "Keep both characters visible."},
+                        "qa": {
+                            "must_show": [
+                                "raskolnikov",
+                                "sonya",
+                                "sonya_room",
+                                "worn dark student coat; plain faded brown dress",
+                            ],
+                            "must_not_show": [],
+                        },
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = FilmTimelineStage().run(_context(config))
+
+    assert result.success
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
+    segment_2_clips = [
+        clip for clip in timeline["tracks"]["visual"] if clip.get("segment_id") == 2
+    ]
+    assert segment_2_clips
+    for clip in segment_2_clips:
+        assert clip["character_ids"] == ["raskolnikov", "sonya"]
+        assert clip["location_id"] == "sonya_room"
+        assert clip["wardrobe"] == "worn dark student coat; plain faded brown dress"
+        assert clip["lighting_scheme"] == "sickly candle and cold window light"
+        assert clip["storyboard_frame_ids"] == ["sb_02_01"]
+        assert clip["character_positions"] == [
+            "Sonya beside the candle, Raskolnikov near the door"
+        ]
+        assert clip["composition"] == "Raskolnikov trapped at the frame edge"
 
 
 def test_film_timeline_ignores_invalid_external_segment_ids(tmp_path):

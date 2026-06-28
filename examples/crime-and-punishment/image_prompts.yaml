@@ -1,0 +1,110 @@
+prompts:
+  - id: img_01
+    shot_type: establishing
+    movement: drift
+    size: "1920x1080"
+    description: >
+      Photorealistic 19th-century Russian psychological literary film still. 1860s Saint Petersburg alley near a canal,
+      wet cobblestones, yellow plaster walls, green-gray humid sky, canal fog, narrow shopfronts, distant horse cart,
+      Raskolnikov small in frame wearing a worn dark student coat and old cap, oppressive city mood, 35mm cinema,
+      no readable text, no logos, no subtitles, no watermark.
+    negative_prompt: "anime, illustration, modern cars, neon signs, readable text, logo, watermark, clean tourist street"
+  - id: img_02
+    shot_type: medium
+    movement: push_in
+    size: "1920x1080"
+    description: >
+      Raskolnikov in his cramped attic rented room, gaunt young former student, hollow eyes, worn dark student coat,
+      faded waistcoat, loose collar, scuffed boots, hiding an axe inside his coat. Sloped ceiling, yellow wallpaper,
+      narrow bed, small table, worn books, sickly window light, claustrophobic 35mm frame, photorealistic period drama.
+    negative_prompt: "modern apartment, leather trench coat, heroic pose, clean room, readable book text, watermark"
+  - id: img_03
+    shot_type: close_up
+    movement: still
+    size: "1920x1080"
+    description: >
+      Pawnbroker's flat close quarters: elderly pawnbroker woman in dark old dress and headscarf, small metal spectacles,
+      keys at waist, suspicious eyes behind a heavy door chain. Candlelight catches metal keys and worn wood,
+      cramped 1860s apartment, tense but grounded, no graphic violence, cinematic close-up.
+    negative_prompt: "witch makeup, horror monster, fantasy costume, modern lock, readable labels, watermark"
+  - id: img_04
+    shot_type: detail
+    movement: tilt_down
+    size: "1920x1080"
+    description: >
+      Aftermath implied without gore: fallen keys on a faded carpet, overturned wooden chair, candle still burning,
+      Raskolnikov's nervous hand shaking at the edge of frame, dark student coat sleeve visible, cramped pawnshop room,
+      moral shock in still objects, photorealistic 19th-century drama, no graphic injury.
+    negative_prompt: "blood splatter, gore, horror effects, readable text, modern furniture, watermark, extra fingers"
+  - id: img_05
+    shot_type: medium
+    movement: push_in
+    size: "1920x1080"
+    description: >
+      Raskolnikov burying small stolen objects beneath a loose stone in a neglected courtyard, worn dark coat,
+      old cap, pale tense face, wet stone, gray daylight, distant Petersburg walls, hands trembling, guilt rather
+      than triumph, photorealistic feature film composition.
+    negative_prompt: "treasure chest, modern city, police tape, readable text, flashy jewelry, watermark"
+  - id: img_06
+    shot_type: wide_env
+    movement: drift
+    size: "1920x1080"
+    description: >
+      Fever walk through crowded 1860s Petersburg street in light rain, Raskolnikov moving through blurred faces,
+      yellow walls, wet cobblestones, canal mist, pedestrians in period clothing seeming to glance toward him,
+      oppressive psychological atmosphere, shallow focus, 35mm cinema still.
+    negative_prompt: "modern crowds, cars, umbrellas with logos, neon, anime, readable signs, watermark"
+  - id: img_07
+    shot_type: two_shot
+    movement: push_in
+    size: "1920x1080"
+    description: >
+      Police office psychological interrogation: Porfiry, rounded face, alert eyes, dark civil-service coat,
+      neat waistcoat, pocket watch, simple spectacles, leaning back with a courteous smile. Raskolnikov sits tense
+      opposite him in worn student coat. Papers, ink, dark wood, frosted windows, gray daylight, no modern props.
+    negative_prompt: "modern detective office, police uniform brute, gun, badge, computer, readable paperwork, watermark"
+  - id: img_08
+    shot_type: close_up
+    movement: still
+    size: "1920x1080"
+    description: >
+      Sonya in her poor but carefully kept room, pale young woman with tired steady eyes, plain faded brown dress,
+      modest shawl, small cross at neck, worn gloves on table. Candle between her and Raskolnikov, icon corner,
+      cold window, intimate moral stillness, photorealistic 19th-century drama.
+    negative_prompt: "saintly glow, luxury dress, modern makeup, glamor lighting, readable book text, watermark"
+  - id: img_09
+    shot_type: medium
+    movement: push_in
+    size: "1920x1080"
+    description: >
+      Raskolnikov collapsing inward before confession in Sonya's room, gaunt face, hollow eyes, worn student coat,
+      hands loosening, no theatrical pose. Sonya's candlelight and small cross visible nearby, yellow shadows,
+      moral surrender, restrained cinematic realism.
+    negative_prompt: "stage melodrama, heroic kneeling, fantasy light beams, modern room, readable text, watermark"
+  - id: img_10
+    shot_type: wide_env
+    movement: pull_out
+    size: "1920x1080"
+    description: >
+      Rain-dark public square in 1860s Petersburg, black wet cobblestones, crowd in period clothing, Raskolnikov
+      bending down in the middle distance, worn student coat and old cap, city facades pressing inward,
+      confession as public moral weight, cinematic wide shot, no readable signs.
+    negative_prompt: "modern plaza, cars, streetlights, protest banners, readable text, watermark"
+  - id: img_11
+    shot_type: wide_env
+    movement: drift
+    size: "1920x1080"
+    description: >
+      Siberian prison yard near a cold river at gray dawn, snow crust, rough timber fence, distant church shape,
+      Raskolnikov isolated in plain worn prison coat, no heroic pose, other prisoners blurred in background,
+      austere punishment and endurance, photorealistic period film still.
+    negative_prompt: "modern prison, orange jumpsuit, barbed wire, fantasy snowstorm, readable text, watermark"
+  - id: img_12
+    shot_type: detail
+    movement: pull_out
+    size: "1920x1080"
+    description: >
+      Quiet dawn by a Siberian river, Raskolnikov's hand touching a small cross at his chest, worn sleeve,
+      pale cold light, Sonya standing distant and small in a plain shawl, snow and river mist, restrained hope,
+      photorealistic literary film ending, no text, no watermark.
+    negative_prompt: "romantic sunset, glowing halo, modern clothes, readable text, anime, illustration, watermark"

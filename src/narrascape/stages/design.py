@@ -22,6 +22,8 @@ from narrascape.config import (
     NarrascapeConfig,
     Script,
     ShotType,
+    load_image_map,
+    load_image_prompts,
     load_script,
 )
 from narrascape.motion.factory import SHOT_SIZE_MAP
@@ -221,17 +223,31 @@ class DesignStage(Stage):
         map_path = project_dir / "image_map.yaml"
         report_path = config.pipeline_dir / "design_report.yaml"
 
-        # Write image_prompts.yaml (rich format with metadata)
+        wrote_prompts = True
+        wrote_map = True
+
+        # Write image_prompts.yaml (rich format with metadata), unless the
+        # project intentionally keeps curated prompt files as its execution source.
         prompts_data = report.to_image_prompts()
-        with open(prompts_path, "w", encoding="utf-8") as f:
-            yaml.dump(prompts_data, f, allow_unicode=True, sort_keys=False)
-        logger.info(f"[design] Wrote {prompts_path}")
+        if config.pipeline.design_overwrite or not prompts_path.exists():
+            with open(prompts_path, "w", encoding="utf-8") as f:
+                yaml.dump(prompts_data, f, allow_unicode=True, sort_keys=False)
+            logger.info(f"[design] Wrote {prompts_path}")
+        else:
+            load_image_prompts(prompts_path)
+            wrote_prompts = False
+            logger.info(f"[design] Preserved curated {prompts_path}")
 
         # Write image_map.yaml
         map_data = report.to_image_map()
-        with open(map_path, "w", encoding="utf-8") as f:
-            yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
-        logger.info(f"[design] Wrote {map_path}")
+        if config.pipeline.design_overwrite or not map_path.exists():
+            with open(map_path, "w", encoding="utf-8") as f:
+                yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
+            logger.info(f"[design] Wrote {map_path}")
+        else:
+            load_image_map(map_path)
+            wrote_map = False
+            logger.info(f"[design] Preserved curated {map_path}")
 
         # Write design report (full director metadata for human review)
         report_dict = (
@@ -268,6 +284,9 @@ class DesignStage(Stage):
                 "bgm_zones": len(report.bgm_zones),
                 "style_template": report.style_template,
                 "director_mode": "prompt_director",
+                "design_overwrite": config.pipeline.design_overwrite,
+                "wrote_image_prompts": wrote_prompts,
+                "wrote_image_map": wrote_map,
             },
         )
 

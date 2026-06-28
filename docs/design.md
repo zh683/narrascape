@@ -33,7 +33,13 @@ pre_production -> design -> image_prompts.yaml + image_map.yaml
         |        director_contract -> director_contract.yaml
         |             |
         |             v
+        |        reference_plate -> reference_plates.yaml
+        |             |
+        |             v
         |        generate_images -> assets/images/*.png
+        |             |
+        |             v
+        |        animatic -> animatic.yaml + animatic.mp4
         |             |
         |             v
         |        generate_video -> assets/videos/*.mp4
@@ -127,6 +133,7 @@ branch.
 Canonical artifacts can be validated before they flow downstream:
 
 - `asset_manifest`
+- `animatic`
 - `continuity_bible`
 - `creative_review`
 - `design_report`
@@ -135,6 +142,7 @@ Canonical artifacts can be validated before they flow downstream:
 - `film_supervisor`
 - `film_timeline`
 - `render_report`
+- `reference_plates`
 - `rework_execution`
 - `rework_plan`
 - `screenplay_structure`
@@ -154,6 +162,12 @@ director layers:
   writes `director_contract.yaml` with story intent, film language, executable
   video prompts, negative prompts, continuity constraints, storyboard binding,
   and QA assertions.
+- `reference_plate` reads `director_contract.yaml`, `pre_production.yaml`, and
+  the design report, then writes `reference_plates.yaml` with the resolved
+  per-shot style, character, scene, storyboard, provider-prompt, and QA handoff.
+- `animatic` reads storyboard frames, reference plates, generated images, and
+  timing data, then writes a low-cost preview so rhythm and missing panel
+  sources are caught before video generation.
 - `continuity_bible` reads `film_timeline.yaml` and the screenplay structure,
   then writes `continuity_bible.yaml` with character appearances, locations,
   wardrobe, lighting, screen axis, and continuity risks.
@@ -163,6 +177,7 @@ director layers:
 - `rework_plan` reads `director_review.yaml`, `editing_review.yaml`, and
   `continuity_bible.yaml`, then writes `rework_plan.yaml` grouped by
   `regenerate_video`, `recut`, and `replace_source_media`.
+- `generate_video` can write generated multi-take clips when `video.takes > 1`.
 - `take_select` reads generated multi-take clips and QA context, then writes
   `take_selection.yaml`. `film_timeline` consumes that file when present, so
   selected takes enter the assembly path.
@@ -210,9 +225,17 @@ This is now the default visual input to the audio stage.
 
 `generate_video` consumes `director_contract.yaml` when it is present. That
 makes the contract the handoff between director thinking and AI video
-generation: the model's creative choices become the exact prompt, negative
-prompt, motion, continuity, storyboard frame binding, and QA expectations for
-each shot.
+generation: the model's creative choices become portable prompts,
+provider-specific compiled prompts, negative prompts, motion, continuity,
+storyboard frame binding, and QA expectations for each shot. `reference_plate`
+then resolves those requirements into a per-shot plate. `animatic` previews the
+storyboard timing with generated stills, and `generate_video` uses the plate
+after that preview before uploading references to the provider. Before any
+provider call, `generate_video` writes `video_prompt_quality.yaml` and blocks
+under-specified prompts so template-like contracts do not burn generation
+budget. The report records per-shot prompt ingredients and camera-motion risks;
+`rework_plan` consumes those findings and can queue `rewrite_director_contract`
+before the next generated-video pass.
 
 ## Source Media
 
@@ -253,9 +276,10 @@ video coverage, and missing timeline video files are marked for
 marked for regeneration review.
 
 `rework_plan` completes that loop by merging QA-driven director review,
-timeline-level editing review, and continuity-bible risks into a single action
-plan. This gives downstream automation one file to decide whether a segment
-should be regenerated, recut, or replaced with source media.
+timeline-level editing review, continuity-bible risks, and video prompt-quality
+findings into a single action plan. This gives downstream automation one file
+to decide whether a segment should have its director contract rewritten, be
+regenerated, be recut, or be replaced with source media.
 
 `creative_review`, `visual_semantic_qa`, and `film_supervisor` extend the loop
 from individual reports to production supervision. `visual_semantic_qa` also

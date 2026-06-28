@@ -34,12 +34,22 @@ class ReworkExecuteStage(Stage):
         executed: list[dict[str, Any]] = []
 
         regen_queue: list[dict[str, Any]] = []
+        contract_rewrite_queue: list[dict[str, Any]] = []
         recut_queue: list[dict[str, Any]] = []
         replacement_queue: list[dict[str, Any]] = []
 
         for action in actions:
             action_type = action.get("action")
-            if action_type == "regenerate_video":
+            if action_type == "rewrite_director_contract":
+                contract_rewrite_queue.append(action)
+                executed.append(
+                    {
+                        "segment_id": int(action["segment_id"]),
+                        "operation": "queue_director_contract_rewrite",
+                        "reason": action.get("reason"),
+                    }
+                )
+            elif action_type == "regenerate_video":
                 executed.append(self._invalidate_generated_video(context, action))
                 regen_queue.append(action)
             elif action_type == "recut":
@@ -62,6 +72,10 @@ class ReworkExecuteStage(Stage):
                 )
 
         queues = {
+            "director_contract_rewrite_queue": self._write_queue(
+                config.pipeline_dir / "director_contract_rewrite_queue.yaml",
+                contract_rewrite_queue,
+            ),
             "video_regen_queue": self._write_queue(
                 config.pipeline_dir / "video_regen_queue.yaml", regen_queue
             ),
@@ -73,7 +87,12 @@ class ReworkExecuteStage(Stage):
         }
         self._mark_stages_pending(
             config.pipeline_dir / "state.json",
-            self._stages_to_rerun(regen_queue, recut_queue, replacement_queue),
+            self._stages_to_rerun(
+                contract_rewrite_queue,
+                regen_queue,
+                recut_queue,
+                replacement_queue,
+            ),
         )
         execution = {
             "schema_version": "rework_execution.v1",
@@ -141,11 +160,24 @@ class ReworkExecuteStage(Stage):
 
     def _stages_to_rerun(
         self,
+        contract_rewrite_queue: list[dict[str, Any]],
         regen_queue: list[dict[str, Any]],
         recut_queue: list[dict[str, Any]],
         replacement_queue: list[dict[str, Any]],
     ) -> list[str]:
         stages: list[str] = []
+        if contract_rewrite_queue:
+            stages.extend(
+                [
+                    "director_contract",
+                    "reference_plate",
+                    "generate_images",
+                    "animatic",
+                    "generate_video",
+                    "take_select",
+                    "film_timeline",
+                ]
+            )
         if regen_queue:
             stages.extend(["generate_video", "take_select", "film_timeline"])
         if replacement_queue:

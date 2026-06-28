@@ -36,7 +36,9 @@ pre_production
 design
 screenplay_structure
 director_contract
+reference_plate
 generate_images
+animatic
 generate_video
 take_select
 generate_tts
@@ -68,8 +70,8 @@ controlled by `pipeline.video_generation`: `auto` includes `generate_video` and
 Default full build:
 
 ```text
-pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_video -> take_select -> generate_tts -> film_timeline
+pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
+-> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -95,10 +97,12 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 | `design` | `pre_production` |
 | `screenplay_structure` | `design` |
 | `director_contract` | `screenplay_structure` |
+| `reference_plate` | `director_contract` |
 | `film_timeline` | `design`, `generate_images`, `generate_tts` |
 | `film_assemble` | `film_timeline` |
 | `generate_images` | `design` |
-| `generate_video` | `director_contract`, `generate_images` |
+| `animatic` | `reference_plate`, `generate_images` |
+| `generate_video` | `animatic`, `generate_images` |
 | `take_select` | `generate_video` |
 | `generate_tts` | none |
 | `generate_music` | `generate_tts` |
@@ -183,6 +187,8 @@ The post-design director layers are implemented as regular stages:
 
 - `ScriptSceneDirectorStage` writes `screenplay_structure.yaml`.
 - `DirectorContractStage` writes `director_contract.yaml`.
+- `ReferencePlateStage` writes `reference_plates.yaml`.
+- `AnimaticStage` writes `animatic.yaml` and `animatic.mp4`.
 - `ContinuityBibleStage` writes `continuity_bible.yaml`.
 - `EditingReviewStage` writes `editing_review.yaml`.
 - `ReworkPlanStage` writes `rework_plan.yaml`.
@@ -217,16 +223,36 @@ The exported YAML is loaded by `DesignStage` when available, then used to enrich
 
 `GenerateMusicStage` selects a music provider, reads `bgm_map.zones`, and writes BGM files.
 
-`GenerateVideoStage` selects the video provider and runs the Seedance task workflow when requested.
-When `director_contract.yaml` exists, it uses each shot's
-`generation.video_prompt` as the provider prompt; otherwise it falls back to
-the legacy design-report prompt construction. Contract prompts include
-storyboard frame ids, scene reference, wardrobe lock, character positions, and
-composition requirements when pre-production storyboard data is available.
-`TakeSelectStage` can select among `vid_<segment>_take_<take>.mp4` variants and
-write the selected take for `FilmTimelineStage`. The pipeline factory injects
-the LLM client when available, so take selection can use QA evidence plus an LLM
-judge; otherwise it falls back to deterministic QA proxy scoring.
+`ReferencePlateStage` turns the director contract and pre-production assets into
+per-shot reference plates. Each plate records storyboard frame ids, expected
+reference ids, resolved style/character/scene assets, missing references,
+compiled provider prompts, provider negative prompts, and QA requirements.
+
+`AnimaticStage` renders a cheap storyboard timing preview from generated stills
+and storyboard duration hints. It blocks when a required panel source image is
+missing, so expensive generated-video calls do not start before the storyboard
+has a reviewable visual rhythm.
+
+`GenerateVideoStage` selects the video provider and runs the selected provider
+task workflow when requested. When `director_contract.yaml` exists, it prefers
+`generation.compiled_prompts.<provider>.prompt` plus the matching negative
+prompt; otherwise it falls back to `generation.video_prompt` and then legacy
+design-report prompt construction. Contract prompts include storyboard frame
+ids, scene reference, wardrobe lock, character positions, and composition
+requirements when pre-production storyboard data is available. The stage reads
+`reference_plates.yaml` as its resolved reference handoff and runs after the
+animatic preview before uploading references to the selected provider. It also
+writes `video_prompt_quality.yaml` and blocks provider execution when a compiled
+prompt still looks like a template or lacks executable video ingredients such as
+subject, action, scene, wardrobe, camera language, composition, lighting, style,
+or reference binding. The same report also records overloaded camera-motion
+risks so rework can simplify a shot before another provider call.
+When `video.takes > 1`, `GenerateVideoStage` writes
+`vid_<segment>_take_<take>.mp4` variants and records them in
+`video_gen_state.json`. `TakeSelectStage` selects among those variants and writes
+the selected take for `FilmTimelineStage`. The pipeline factory injects the LLM
+client when available, so take selection can use QA evidence plus an LLM judge;
+otherwise it falls back to deterministic QA proxy scoring.
 
 `FilmTimelineStage` writes `film_timeline.yaml`, unifying director shot data,
 generated videos, source footage, generated imagery, narration clips, music
@@ -260,7 +286,7 @@ missing generated-video clips, continuity risk, and pacing risk.
 
 `ContinuityBibleStage`, `EditingReviewStage`, and `ReworkPlanStage` extend that
 loop into film-direction artifacts: continuity state, timeline rhythm review,
-and an executable rework plan grouped by action type.
+prompt-quality repair, and an executable rework plan grouped by action type.
 
 `CreativeReviewStage` and `VisualSemanticQAStage` add LLM-assisted review for
 creative coherence and visual semantic match. `VisualSemanticQAStage` includes
@@ -268,10 +294,14 @@ creative coherence and visual semantic match. `VisualSemanticQAStage` includes
 fallback mode. Its fallback checks also compare storyboard-bound scene,
 wardrobe, character-position, and composition metadata when present.
 `FilmSupervisorStage` reads those reports and outputs the next stages to run.
+For `rewrite_director_contract` actions, it requests the full creative
+regeneration chain from `director_contract` through `film_timeline` before the
+downstream QA/review stages.
 `ReworkExecuteStage` is an explicit stage that applies a plan by quarantining
 failed generated clips, writing `video_regen_queue.yaml`, `recut_queue.yaml`,
-and `source_media_replacement_queue.yaml`, then marking affected pipeline
-stages pending.
+`director_contract_rewrite_queue.yaml`, and
+`source_media_replacement_queue.yaml`, then marking affected pipeline stages
+pending.
 
 `SourceMediaStage` is optional and writes `asset_manifest.yaml` plus
 `footage_timeline.yaml` from local files under `source_media/`.

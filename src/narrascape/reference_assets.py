@@ -225,6 +225,8 @@ def _index_environment(
             image_id = image.get("image_id")
             image_ref = image.get("url") or image.get("local_path")
             aliases = [alias for alias in [image_id] if alias]
+            if image_id and scene_id and str(image_id).startswith(f"scene_{scene_id}_"):
+                aliases.append(str(image_id).replace(f"scene_{scene_id}_", f"{scene_id}_", 1))
             _add_reference(index, project_dir, aliases, image_ref, role="scene", source=source)
 
 

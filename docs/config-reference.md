@@ -38,6 +38,7 @@ pipeline:
   name: animated-explainer
   category: null
   version: "2.0"
+  design_overwrite: true
   video_generation: auto   # auto | required | off
   auto_rework: true
   max_rework_cycles: 1
@@ -48,8 +49,11 @@ pipeline:
 | `video_generation: auto` | Include `generate_video` and `take_select`, but skip video generation when required credentials or multi-take clips are unavailable. |
 | `video_generation: required` | Treat missing generated video as a blocking production issue and queue regeneration. |
 | `video_generation: off` | Omit generated-video stages and rely on source footage or generated-image fallback. |
+| `design_overwrite` | When true, `design` rewrites root `image_prompts.yaml` and `image_map.yaml`. Set false for hand-curated projects that should preserve authored prompt files while still writing `pipeline/<name>/design_report.yaml`. |
 | `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
 | `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
+
+`video_generation: required` is an AI-film production policy. It rejects `llm.mode: none` during config validation because required generated-video workflows need an AI Director client for script breakdown, director contract, take selection, semantic QA, and rework decisions.
 
 ## LLM
 
@@ -74,6 +78,8 @@ llm:
 | `none` | Disable LLM calls and use deterministic local fallbacks. |
 
 `none` is useful for offline tests. It is not a creative production mode.
+
+`llm.mode: none` is only valid with `pipeline.video_generation: auto` or `off`. A project with `pipeline.video_generation: required` must use `auto`, `ai_assistant`, `bridge`, or `api`, and the pipeline also refuses to start if no LLM client is supplied.
 
 ## TTS
 
@@ -100,7 +106,7 @@ tts:
 
 ```yaml
 images:
-  provider: seedream       # seedream | flux | openai | local
+  provider: seedream       # seedream | agnes | flux | openai | local
   engine: null
   model: doubao-seedream-5-0-260128
   style: "cinematic documentary"
@@ -111,6 +117,41 @@ images:
 ```
 
 `provider: local` creates deterministic placeholder PNG files.
+`provider: agnes` uses Agnes Image 2.1 Flash through `AGNES_API_KEY`.
+
+## Video
+
+```yaml
+video:
+  provider: seedance       # seedance | agnes
+  model: jimeng-video-seedance-2.0
+  resolution: 720p
+  ratio: "16:9"
+  duration: 5
+  frame_rate: 24
+  takes: 1
+```
+
+For Agnes Video V2.0, use:
+
+```yaml
+video:
+  provider: agnes
+  model: agnes-video-v2.0
+```
+
+Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
+shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.
+Multi-take output writes `assets/videos/vid_01_take_01.mp4`,
+`assets/videos/vid_01_take_02.mp4`, and so on, then `take_select` chooses the
+clip that enters `film_timeline.yaml`.
+
+Agnes video tasks are asynchronous. Narrascape creates the task, polls by
+`video_id`, downloads the completed video, and writes generated clips for
+downstream `take_select`, `film_timeline`, QA, and rework stages. Agnes
+image-to-video and multi-image workflows require image URLs that the Agnes API
+can access; configure an HTTP/object-storage upload backend for production
+reference images.
 
 ## Visual Rendering
 
@@ -221,10 +262,13 @@ budget:
   tts_estimated: null
   images_estimated: null
   music_estimated: null
+  video_estimated: null
   total_estimated: null
   mode: warn              # observe | warn | cap
   per_action_threshold: 0.5
 ```
+
+Set any `*_estimated` value to `0.0` for providers that are free but still rate-limited. `null` means Narrascape uses its conservative default estimate.
 
 ## Script File
 
@@ -284,5 +328,6 @@ For multi-image segments, `timing` must match image count and sum to `1.0`.
 | `ANTHROPIC_API_KEY` | Anthropic provider. |
 | `DEEPSEEK_API_KEY` | DeepSeek provider. |
 | `ARK_API_KEY` | Volcengine Seedream/Seedance. |
+| `AGNES_API_KEY` | Agnes Image 2.1 Flash and Agnes Video V2.0. |
 | `MINIMAX_API_KEY` | MiniMax TTS/music. |
 | `NARRASCAPE_UPLOAD_ENDPOINT` | HTTP uploader endpoint for reference images. |

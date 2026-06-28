@@ -20,8 +20,8 @@ Narrascape is a staged video-production pipeline for narration-driven documentar
 ## Default Build Graph
 
 ```text
-pre_production -> design -> screenplay_structure -> director_contract
--> generate_images -> generate_video -> take_select -> generate_tts -> film_timeline
+pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
+-> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -52,7 +52,9 @@ build.
 | `design` | Use AI Director or local fallback to design shots | `design_report.yaml`, `image_prompts.yaml`, `image_map.yaml` |
 | `screenplay_structure` | Split story into act, scene, sequence, shot | `pipeline/<name>/screenplay_structure.yaml` |
 | `director_contract` | Compile director intent into video prompts and QA assertions | `pipeline/<name>/director_contract.yaml` |
+| `reference_plate` | Resolve per-shot style, character, scene, and storyboard references | `pipeline/<name>/reference_plates.yaml` |
 | `generate_images` | Generate Seedream or local images | `assets/images/*.png` |
+| `animatic` | Render a storyboard timing preview before expensive video generation | `pipeline/<name>/animatic.yaml`, `pipeline/<name>/animatic.mp4` |
 | `generate_video` | Seedance clips from generated images when enabled | `assets/videos/*.mp4` |
 | `take_select` | Multi-take selection when takes exist | `pipeline/<name>/take_selection.yaml` |
 | `generate_tts` | Generate narration audio and timing | `assets/tts/*.mp3`, `pipeline/<name>/timing.json` |

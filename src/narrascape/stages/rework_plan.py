@@ -33,11 +33,13 @@ class ReworkPlanStage(Stage):
         director_review = self._load_yaml(config.pipeline_dir / "director_review.yaml")
         editing_review = self._load_yaml(config.pipeline_dir / "editing_review.yaml")
         continuity_bible = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
+        prompt_quality = self._load_yaml(config.pipeline_dir / "video_prompt_quality.yaml")
 
         actions: list[dict[str, Any]] = []
         actions.extend(self._from_director_review(director_review))
         actions.extend(self._from_editing_review(editing_review))
         actions.extend(self._from_continuity_bible(continuity_bible))
+        actions.extend(self._from_prompt_quality(prompt_quality))
         actions = self._dedupe_and_prioritize(actions)
         plan = {
             "schema_version": "rework_plan.v1",
@@ -50,6 +52,9 @@ class ReworkPlanStage(Stage):
                 "director_review": (config.pipeline_dir / "director_review.yaml").as_posix(),
                 "editing_review": (config.pipeline_dir / "editing_review.yaml").as_posix(),
                 "continuity_bible": (config.pipeline_dir / "continuity_bible.yaml").as_posix(),
+                "video_prompt_quality": (
+                    config.pipeline_dir / "video_prompt_quality.yaml"
+                ).as_posix(),
             },
             "actions": actions,
             "actions_by_type": self._actions_by_type(actions),
@@ -107,6 +112,47 @@ class ReworkPlanStage(Stage):
             )
         return actions
 
+    def _from_prompt_quality(self, quality: dict[str, Any]) -> list[dict[str, Any]]:
+        actions = []
+        rewrite_reasons = {
+            "under_specified_video_prompt",
+            "video_prompt_too_short",
+            "missing_action_beat",
+            "missing_camera_language",
+            "missing_lighting_palette",
+            "missing_style_quality_anchor",
+            "overloaded_camera_motion",
+            "missing_character_lock",
+            "missing_scene_lock",
+            "missing_wardrobe_lock",
+            "missing_composition_requirements",
+        }
+        for finding in quality.get("findings", []) or []:
+            segment_id = finding.get("segment_id")
+            if segment_id is None:
+                continue
+            reason = str(finding.get("risk_type") or "video_prompt_quality")
+            if reason in rewrite_reasons:
+                actions.append(
+                    {
+                        "segment_id": int(segment_id),
+                        "action": "rewrite_director_contract",
+                        "reason": reason,
+                        "priority": self._priority_for(reason, "rewrite_director_contract"),
+                        "source": "video_prompt_quality",
+                    }
+                )
+            actions.append(
+                {
+                    "segment_id": int(segment_id),
+                    "action": "regenerate_video",
+                    "reason": reason,
+                    "priority": self._priority_for(reason, "regenerate_video"),
+                    "source": "video_prompt_quality",
+                }
+            )
+        return actions
+
     def _dedupe_and_prioritize(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         merged: dict[tuple[int, str, str], dict[str, Any]] = {}
         priority_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -134,6 +180,7 @@ class ReworkPlanStage(Stage):
 
     def _actions_by_type(self, actions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         grouped = {
+            "rewrite_director_contract": [],
             "regenerate_video": [],
             "recut": [],
             "replace_source_media": [],
@@ -146,12 +193,25 @@ class ReworkPlanStage(Stage):
         if reason in {
             "missing_visual",
             "missing_video_clip",
+            "under_specified_video_prompt",
+            "video_prompt_too_short",
+            "missing_character_lock",
+            "missing_scene_lock",
+            "missing_wardrobe_lock",
             "continuity_risk",
             "wardrobe_jump",
             "screen_axis_flip",
         }:
             return "high"
-        if action == "recut" or reason in {"pacing_risk", "repeated_visual_asset"}:
+        if action == "recut" or reason in {
+            "pacing_risk",
+            "repeated_visual_asset",
+            "missing_action_beat",
+            "missing_camera_language",
+            "missing_lighting_palette",
+            "overloaded_camera_motion",
+            "missing_composition_requirements",
+        }:
             return "medium"
         return "low"
 

@@ -36,6 +36,7 @@ This page describes the implemented product surface as it exists in the codebase
 - `PromptDirector` designs shots when an LLM client is configured.
 - Bridge-backed assistant modes batch script analysis and shot design to avoid task-file explosions.
 - Offline mode uses `_design_locally()` for deterministic verification.
+- Required generated-video projects cannot use `llm.mode: none`; config validation and pipeline startup fail before deterministic fallbacks can silently replace the AI Director.
 - Design exports:
   - `design_report.yaml`
   - `image_prompts.yaml`
@@ -71,6 +72,7 @@ This page describes the implemented product surface as it exists in the codebase
 ## Image Generation
 
 - Seedream provider path with prompt metadata and reference-image fields.
+- Agnes Image 2.1 Flash provider path with official `extra_body.response_format` and image-to-image reference handling.
 - Local provider that creates deterministic PNG placeholders for offline end-to-end tests.
 - Provider selector is executed before generation and records the selected provider in `image_gen_state.json`.
 - Per-prompt fields:
@@ -87,13 +89,17 @@ This page describes the implemented product surface as it exists in the codebase
 
 ## Video Generation
 
-- Configurable Seedance async task workflow through `pipeline.video_generation`.
+- Configurable Seedance and Agnes async task workflows through `pipeline.video_generation` and `video.provider`.
 - Uses generated images as first frames when available.
 - Uses `pipeline/<project>/director_contract.yaml` prompts when available, so director intent reaches the video provider instead of remaining review-only metadata.
+- Writes `video_prompt_quality.yaml` with per-shot ingredient scores for subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding.
+- Blocks provider calls when prompts are still generic or missing the executable ingredients needed for controllable video generation.
 - Supports model mapping from internal names to Volcengine Ark IDs.
+- Agnes Video V2.0 uses `/v1/videos` task creation, `video_id` result polling, and the same `assets/videos/vid_*.mp4` downstream contract.
 - Persists video generation state for resumability.
-- Provider selector is executed before generation and records `seedance_video` selection and requirements.
-- `take_select` can choose among `vid_<segment>_take_<take>.mp4` candidates, using an LLM judge when configured and deterministic QA proxy scoring otherwise.
+- Provider selector is executed before generation and records the selected video provider and requirements.
+- `video.takes` can ask `generate_video` to create multiple `vid_<segment>_take_<take>.mp4` candidates per shot.
+- `take_select` chooses among those candidates, using an LLM judge when configured and deterministic QA proxy scoring otherwise.
 - The default `pipeline.video_generation: auto` path includes `generate_video` and `take_select`; missing credentials or missing multi-take clips are skipped so the build can continue through fallback visuals. `required` makes generated video blocking, and `off` removes those stages.
 
 ## Source Media
@@ -174,8 +180,8 @@ This page describes the implemented product surface as it exists in the codebase
 | Area | Implemented paths |
 | --- | --- |
 | LLM | AI assistant bridge, file bridge, OpenAI-compatible APIs, Anthropic, DeepSeek, Volcengine, local HTTP chat |
-| Images | Seedream, local placeholder |
-| Video | Seedance async task API |
+| Images | Seedream, Agnes Image 2.1 Flash, local placeholder |
+| Video | Seedance async task API, Agnes Video V2.0 async task API |
 | TTS | MiniMax, local tone provider |
 | Music | MiniMax, local tone provider |
 | Rendering | ffmpeg, PIL |

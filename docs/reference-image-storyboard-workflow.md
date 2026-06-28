@@ -36,6 +36,12 @@ image_map.yaml
 director_contract.yaml
         |
         v
+reference_plates.yaml
+        |
+        v
+animatic.yaml + animatic.mp4
+        |
+        v
 generate_video -> video_gen_state.json
         |
         v
@@ -118,15 +124,30 @@ shot as `storyboard_binding`:
 - `composition_requirements`
 - `reference_image_ids`
 
-`GenerateVideoStage` receives those bindings in two ways:
+`ReferencePlateStage` receives those bindings and writes one reviewable plate per
+shot. A plate contains:
 
 - `generation.video_prompt` carries the director's text instructions.
+- `generation.compiled_prompts.<provider>.prompt` carries the selected
+  provider's execution prompt when available.
 - `storyboard_binding.reference_image_ids` resolves to actual style, character,
   and scene images under `assets/references/` or paths recorded in
   `pre_production.yaml`.
+- missing reference ids, if a storyboard or continuity lock points to an asset
+  that cannot be resolved.
+- `qa_requirements`, so visual QA sees the same must-show and must-not-show
+  constraints as generation.
 
-The video stage sends those resolved images to Seedance as `reference_image`
-inputs and records the execution handoff in `video_gen_state.json`.
+`GenerateVideoStage` reads `reference_plates.yaml`, sends resolved images to
+Seedance as `reference_image` inputs or to Agnes as image/keyframe payload
+inputs, passes provider-specific negative prompts when supported, and records
+the execution handoff in `video_gen_state.json`.
+
+`AnimaticStage` runs between `generate_images` and `generate_video`. It turns
+storyboard frames plus generated stills into `animatic.mp4`, preserving frame
+ids, panel durations, scene refs, composition requirements, and reference plate
+ids in `animatic.yaml`. Missing panel images block the stage before paid video
+generation begins.
 
 `VisualSemanticQAStage` then checks the same binding against timeline metadata,
 reference-image execution records, and extracted clip frames. In LLM mode, the
@@ -161,7 +182,7 @@ storyboard_binding:
     - scene_lab_mood
 ```
 
-`GenerateVideoStage` resolves those ids using:
+`ReferencePlateStage` resolves those ids using:
 
 - `pre_production.yaml` character sheets
 - `pre_production.yaml` environment references
@@ -170,9 +191,23 @@ storyboard_binding:
 - design report reference chains
 
 The stage always tries to include the style anchor when it is available, then
-adds storyboard, character, and scene references. The resolved references are
-sent as video generation reference images and persisted in
-`video_gen_state.json`.
+adds storyboard, character, and scene references. Missing references make
+`reference_plates.yaml` `status: blocked`. In
+`pipeline.video_generation: required` mode this blocks the stage, preventing
+production video generation
+from quietly running without the intended character or scene locks. In `auto` or
+`off` mode, the finding is preserved while offline/local fallback verification
+continues.
+Resolved references are then sent as video generation reference images and
+persisted in `video_gen_state.json`.
+
+For bookended video generation, the design report may also define
+`reference_image_chains` whose `usage_mode` is `last_frame`. A shot can list that
+chain in `reference_chain_ids`; `GenerateVideoStage` resolves the chain's
+`generated_images`, `reference_urls`, or `reference_local_paths` into the
+provider `last_frame` input. Ordinary character, scene, and style reference
+chains are not used as last frames unless they are explicitly marked for that
+purpose.
 
 ## Production Review Checklist
 
@@ -183,6 +218,9 @@ Before final image generation, review:
 - Does the prompt explicitly describe how each reference should be used?
 - Does `seedream_sample_strength` match the task?
 - Do storyboard cues match the narration pacing?
+- Is `reference_plates.yaml` `status: ready`, with no missing references?
+- Does `animatic.mp4` make the storyboard timing and shot order reviewable
+  before video generation?
 - Does `video_gen_state.json` show the expected reference ids were uploaded for
   each generated video?
 - Does `visual_semantic_report.yaml` contain extracted frame evidence for

@@ -75,7 +75,7 @@ class FilmAssembleStage(Stage):
 
         concat_file = config.pipeline_dir / "film_assemble.txt"
         concat_file.write_text(
-            "\n".join(f"file '{path.as_posix()}'" for path in rendered),
+            "\n".join(f"file '{path.resolve().as_posix()}'" for path in rendered),
             encoding="utf-8",
         )
         assembled = config.pipeline_dir / "film_assembled.mp4"
@@ -87,8 +87,15 @@ class FilmAssembleStage(Stage):
                 "0",
                 "-i",
                 str(concat_file),
-                "-c",
-                "copy",
+                "-c:v",
+                config.encode.codec,
+                "-preset",
+                config.encode.preset,
+                "-crf",
+                str(config.encode.crf),
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
                 str(assembled),
             ],
             desc="film timeline assemble",

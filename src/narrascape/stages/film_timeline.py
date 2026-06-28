@@ -26,8 +26,6 @@ class FilmTimelineStage(Stage):
         )
         if not design_path.exists():
             return False, "design_report.yaml not found"
-        if not (config.pipeline_dir / "timing.json").exists():
-            return False, "timing.json not found. Run generate_tts first."
         return True, ""
 
     def run(self, context: StageContext) -> StageResult:
@@ -43,11 +41,15 @@ class FilmTimelineStage(Stage):
         image_map = self._load_yaml(config.project_dir / "image_map.yaml")
         footage_timeline = self._load_yaml(config.project_dir / "footage_timeline.yaml")
         asset_manifest = self._load_yaml(config.project_dir / "asset_manifest.yaml")
+        director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         video_state = self._load_json(config.pipeline_dir / "video_gen_state.json")
         take_selection = self._load_yaml(config.pipeline_dir / "take_selection.yaml")
 
         script_segments = list(context.script.segments)
         design_by_segment = self._items_by_int_key(design.get("segments", []), "segment_id")
+        contract_by_segment = self._items_by_int_key(
+            director_contract.get("shots", []), "segment_id"
+        )
         image_map_by_segment = self._items_by_int_key(image_map.get("segments", []), "id")
         footage_by_segment = self._items_by_int_key(
             footage_timeline.get("edits", []), "target_segment_id"
@@ -71,6 +73,8 @@ class FilmTimelineStage(Stage):
             segment_id = int(segment.id)
             duration = float(timing.get(str(segment_id), 0.0)) or max(1.0, len(segment.text) / 18.0)
             design_item = design_by_segment.get(segment_id, {})
+            contract_item = contract_by_segment.get(segment_id, {})
+            semantic_fields = self._semantic_fields(design_item, contract_item)
             footage_item = footage_by_segment.get(segment_id)
             generated_video = generated_video_by_segment.get(segment_id)
             if generated_video:
@@ -90,9 +94,7 @@ class FilmTimelineStage(Stage):
                         "movement": design_item.get("movement"),
                         "emotion": design_item.get("emotion"),
                         "intensity": design_item.get("intensity"),
-                        "character_ids": design_item.get("character_ids", []),
-                        "location_id": design_item.get("location_id"),
-                        **self._continuity_fields(design_item),
+                        **semantic_fields,
                     }
                 )
             elif footage_item:
@@ -116,9 +118,7 @@ class FilmTimelineStage(Stage):
                         "movement": design_item.get("movement"),
                         "emotion": design_item.get("emotion"),
                         "intensity": design_item.get("intensity"),
-                        "character_ids": design_item.get("character_ids", []),
-                        "location_id": design_item.get("location_id"),
-                        **self._continuity_fields(design_item),
+                        **semantic_fields,
                     }
                 )
             else:
@@ -153,9 +153,7 @@ class FilmTimelineStage(Stage):
                                 "movement": design_item.get("movement"),
                                 "emotion": design_item.get("emotion"),
                                 "intensity": design_item.get("intensity"),
-                                "character_ids": design_item.get("character_ids", []),
-                                "location_id": design_item.get("location_id"),
-                                **self._continuity_fields(design_item),
+                                **semantic_fields,
                             }
                         )
                 else:
@@ -297,6 +295,62 @@ class FilmTimelineStage(Stage):
             "lighting_scheme": metadata.get("lighting_scheme"),
             "screen_axis": metadata.get("screen_axis"),
         }
+
+    def _semantic_fields(
+        self,
+        design_item: dict[str, Any],
+        contract_item: dict[str, Any],
+    ) -> dict[str, Any]:
+        continuity = (
+            contract_item.get("continuity_constraints", {})
+            if isinstance(contract_item.get("continuity_constraints"), dict)
+            else {}
+        )
+        binding = (
+            contract_item.get("storyboard_binding", {})
+            if isinstance(contract_item.get("storyboard_binding"), dict)
+            else {}
+        )
+        film_language = (
+            contract_item.get("film_language", {})
+            if isinstance(contract_item.get("film_language"), dict)
+            else {}
+        )
+        fields = self._continuity_fields(design_item)
+        character_ids = design_item.get("character_ids") or continuity.get("characters") or []
+        composition_requirements = list(binding.get("composition_requirements") or [])
+        return {
+            "character_ids": character_ids,
+            "location_id": self._first_value(
+                design_item.get("location_id"),
+                continuity.get("location"),
+                binding.get("scene_ref"),
+            ),
+            "wardrobe": self._first_value(
+                fields.get("wardrobe"),
+                continuity.get("wardrobe"),
+                binding.get("wardrobe_lock"),
+            ),
+            "lighting_scheme": self._first_value(
+                fields.get("lighting_scheme"),
+                continuity.get("lighting"),
+                film_language.get("lighting"),
+            ),
+            "screen_axis": fields.get("screen_axis"),
+            "storyboard_frame_ids": list(binding.get("storyboard_frame_ids") or []),
+            "character_positions": list(binding.get("character_positions") or []),
+            "composition": self._first_value(
+                design_item.get("composition"),
+                film_language.get("composition"),
+                composition_requirements[0] if composition_requirements else None,
+            ),
+        }
+
+    def _first_value(self, *values: Any) -> Any:
+        for value in values:
+            if value not in (None, "", []):
+                return value
+        return None
 
     def _ratio_for(self, ratios: list[float], index: int, count: int) -> float:
         if ratios and len(ratios) == count:

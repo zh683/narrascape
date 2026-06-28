@@ -26,6 +26,7 @@ from narrascape.config import (
     MusicAudioConfig,
     MusicProvider,
     NarrascapeConfig,
+    PipelineConfig,
     ProjectConfig,
     ShotType,
     TTSConfig,
@@ -181,6 +182,27 @@ class TestLLMArchitecture:
             client = _get_llm_client(config=temp_project)
 
         assert client is None
+
+    def test_cli_llm_client_required_video_never_uses_none_mode(self, tmp_path):
+        """AI-film/video-required projects must get a real director LLM client."""
+        from narrascape.cli import _get_llm_client
+
+        config = NarrascapeConfig.model_construct(
+            project=ProjectConfig(
+                name="required-video",
+                title="Required Video",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(video_generation="required"),
+            llm=LLMConfig(mode="none"),
+            project_dir=tmp_path,
+        )
+
+        with patch.dict("os.environ", {}, clear=True):
+            client = _get_llm_client(config=config)
+
+        assert client is not None
+        assert client.config.provider == "ai_assistant"
 
     def test_llm_config_rejects_invalid_mode(self):
         """LLMConfig rejects invalid mode."""

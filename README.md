@@ -21,7 +21,9 @@ script
   -> design
   -> screenplay_structure
   -> director_contract
+  -> reference_plate
   -> generate_images
+  -> animatic
   -> generate_video
   -> take_select
   -> film_timeline
@@ -46,7 +48,9 @@ script
 generated video -> source footage -> generated image fallback
 ```
 
-By default, `pipeline.video_generation: auto` tries the generated-video path when it can run. If Seedance/Ark credentials are missing, the video stage is skipped and the timeline continues through source footage or generated-image fallback. Use `pipeline.video_generation: required` to make missing generated video a blocking production issue, or `off` to omit video generation stages.
+By default, `pipeline.video_generation: auto` tries the generated-video path when it can run. If the configured video provider credentials are missing, the video stage is skipped and the timeline continues through source footage or generated-image fallback. Use `pipeline.video_generation: required` to make missing generated video a blocking production issue, or `off` to omit video generation stages.
+
+`pipeline.video_generation: required` is treated as an AI-film production mode, so it cannot run with `llm.mode: none`. Required-video projects must use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`; otherwise configuration loading or pipeline startup fails before deterministic templates can silently take over.
 
 The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework_cycles: 1`. After `film_supervisor`, a `needs_rework` decision automatically executes `rework_execute`, then reruns the supervisor's requested stages such as `generate_video -> take_select -> film_timeline -> qa -> film_supervisor`.
 
@@ -55,7 +59,9 @@ The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework
 The AI Director is not just a prompt template. It now produces durable production artifacts:
 
 - `screenplay_structure.yaml`: act, scene, sequence, and shot hierarchy.
-- `director_contract.yaml`: per-shot story intent, film language, continuity constraints, storyboard binding, video prompt, negative prompt, and QA assertions.
+- `director_contract.yaml`: per-shot story intent, film language, continuity constraints, storyboard binding, portable video prompt, provider-compiled prompts, negative prompts, and QA assertions.
+- `reference_plates.yaml`: per-shot resolved style, character, scene, and storyboard reference handoff.
+- `animatic.yaml` plus `animatic.mp4`: low-cost storyboard timing preview before expensive video generation.
 - `continuity_bible.yaml`: character, location, wardrobe, lighting, and screen-axis state.
 - `editing_review.yaml`: pacing, repetition, and emotional rhythm review.
 - `director_review.yaml`: QA-driven shot rework queue.
@@ -73,7 +79,7 @@ The AI Director is not just a prompt template. It now produces durable productio
 - `composition_requirements`
 - `reference_image_ids`
 
-`generate_video` consumes the compiled `generation.video_prompt`, and `visual_semantic_qa` checks the same contract for scene, wardrobe, character-position, and composition mismatches.
+`generate_video` consumes `generation.compiled_prompts.<provider>.prompt` when available, passes the matching negative prompt into the provider request, and falls back to `generation.video_prompt` for legacy contracts. It writes `video_prompt_quality.yaml`, scores each prompt for executable video ingredients such as subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding, then blocks generic or under-specified prompts before provider execution. `visual_semantic_qa` checks the same contract for scene, wardrobe, character-position, and composition mismatches.
 
 ## Quick Start
 
@@ -107,6 +113,38 @@ audio:
     provider: local
 ```
 
+For Agnes image and video generation, set `AGNES_API_KEY` in your environment or `.env`, then configure:
+
+```yaml
+llm:
+  mode: ai_assistant
+pipeline:
+  video_generation: required
+images:
+  provider: agnes
+  model: agnes-image-2.1-flash
+video:
+  provider: agnes
+  model: agnes-video-v2.0
+  resolution: 720p
+  duration: 5
+  frame_rate: 24
+  takes: 1
+```
+
+Agnes image generation supports text-to-image and image-to-image through the existing `reference_images` fields. Agnes video generation writes the same generated-video contract as Seedance, so `take_select`, `film_timeline`, QA, and rework loops continue unchanged. Set `video.takes` above `1` to generate multiple candidates per shot for `take_select`. For image-to-video or multi-image video, Agnes expects publicly reachable image URLs; use an HTTP/object-storage upload backend for production reference images.
+
+## First Film Project
+
+The current starter film is [罪与罚 / Crime and Punishment](examples/crime-and-punishment/README.md), a public-domain AI-film prototype based on Fyodor Dostoevsky's 1866 novel.
+
+It includes a 12-segment Chinese narration script, director notes, character and wardrobe locks, scene continuity rules, Agnes-ready image/video prompts, and local-preview config:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/crime-and-punishment --approve
+```
+
 ## Common Commands
 
 ```bash
@@ -132,8 +170,8 @@ narrascape clean -p my-video --all
 ## Provider Families
 
 - LLM: AI assistant bridge, file bridge, OpenAI-compatible APIs, Anthropic, DeepSeek, Volcengine, local HTTP chat.
-- Images: Seedream, local placeholder generation.
-- Video: Seedance async image-to-video generation.
+- Images: Seedream, Agnes Image 2.1 Flash, local placeholder generation.
+- Video: Seedance async image-to-video generation, Agnes Video V2.0 async text/image/multi-image generation.
 - TTS: MiniMax, local tone generation.
 - Music: MiniMax, local tone generation.
 - Source media: local media discovery and footage timeline planning.
@@ -164,6 +202,9 @@ my-video/
     pre_production.yaml
     screenplay_structure.yaml
     director_contract.yaml
+    reference_plates.yaml
+    animatic.yaml
+    animatic.mp4
     render_report.yaml
     continuity_bible.yaml
     editing_review.yaml

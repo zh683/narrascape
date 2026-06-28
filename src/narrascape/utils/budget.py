@@ -147,13 +147,24 @@ class BudgetTracker:
     def get_cost_estimate(self, item_type: str, count: int) -> float:
         """Get estimated cost for a batch of items."""
         defaults = {
-            "tts": self.budget.tts_estimated or DEFAULT_COSTS["tts_per_segment"],
-            "image": self.budget.images_estimated or DEFAULT_COSTS["image_per_image"],
-            "music": self.budget.music_estimated or DEFAULT_COSTS["music_per_zone"],
-            "video": DEFAULT_COSTS["video_per_segment"],
+            "tts": self._configured_or_default(
+                self.budget.tts_estimated, DEFAULT_COSTS["tts_per_segment"]
+            ),
+            "image": self._configured_or_default(
+                self.budget.images_estimated, DEFAULT_COSTS["image_per_image"]
+            ),
+            "music": self._configured_or_default(
+                self.budget.music_estimated, DEFAULT_COSTS["music_per_zone"]
+            ),
+            "video": self._configured_or_default(
+                self.budget.video_estimated, DEFAULT_COSTS["video_per_segment"]
+            ),
         }
         per_item = defaults.get(item_type, 0.0)
         return per_item * count
+
+    def _configured_or_default(self, configured: float | None, default: float) -> float:
+        return default if configured is None else configured
 
     def reset(self) -> None:
         """Reset spent counter."""

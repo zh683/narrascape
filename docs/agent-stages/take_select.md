@@ -12,7 +12,7 @@
 
 ## Procedure
 
-1. Discover multi-take generated-video candidates.
+1. Discover multi-take generated-video candidates created by `generate_video` when `video.takes > 1`.
 2. Ignore candidates not marked done when `video_gen_state.json` has a done list.
 3. Score takes with deterministic QA proxy data.
 4. If an LLM client is configured, ask the LLM judge to choose from the QA-scored candidates.

@@ -16,6 +16,30 @@ def test_atomic_json_write_and_load_mapping(tmp_path):
     assert not (tmp_path / "state.json.lock").exists()
 
 
+def test_atomic_json_write_retries_transient_replace_permission_error(tmp_path, monkeypatch):
+    import os
+
+    from narrascape.utils.safe_io import atomic_write_json, load_json_mapping
+
+    path = tmp_path / "state.json"
+    attempts = 0
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("temporarily locked")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+
+    atomic_write_json(path, {"done": ["b"]})
+
+    assert attempts == 2
+    assert load_json_mapping(path)["done"] == ["b"]
+
+
 def test_json_loader_treats_empty_file_as_default_mapping(tmp_path):
     from narrascape.utils.safe_io import load_json_mapping
 
