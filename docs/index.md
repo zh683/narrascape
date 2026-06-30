@@ -1,35 +1,59 @@
 # Narrascape Documentation
 
-Narrascape is a staged video-production pipeline for narration-driven documentary and explainer videos.
+Narrascape is a staged AI film-production pipeline. It turns a script into
+inspectable production artifacts: pre-production references, AI Director
+contracts, generated/source media, a film timeline, final assembly, QA reports,
+and rework queues.
 
-## Read This First
+## Start Here
 
-- [Product Introduction / 产品介绍](product-introduction.md): a bilingual, product-level overview for creators and GitHub visitors.
-- [Quick Start](quickstart.md): create a project and build a video.
-- [Complete Feature Map](features.md): what is implemented and which providers each part uses.
-- [System Design](design.md): how the whole workflow is connected.
-- [Architecture](architecture.md): code-level stage graph and runtime behavior.
-- [AI Director](ai-director.md): how PromptDirector uses LLM output and when it falls back to local templates.
-- [Bridge / AI Assistant Mode](BRIDGE_MODE.md): file-based assistant integration.
-- [Configuration Reference](config-reference.md): `config.yaml` and script schema.
-- [Provider Governance](provider-governance.md): provider registry, selector scoring, source media, and QA.
-- [Film Capability Roadmap](film-capability-roadmap.md): path from video pipeline to AI film studio.
-- [Type Checking](type-checking.md): enforced mypy gate and expansion plan.
-- [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md): pre-production assets.
-- [Storyboard Sheet Stage](agent-stages/storyboard_sheet.md): review board for storyboard frames.
-- [Remotion Preview Stage](agent-stages/remotion_preview.md): visual timeline handoff from `film_timeline.yaml`.
-- [Style Consistency](style-consistency.md): reference images and consistency rules.
+| Need | Read |
+| --- | --- |
+| Understand the product in Chinese and English | [Product Introduction / 产品介绍](product-introduction.md) |
+| Run the project locally | [Quick Start](quickstart.md) |
+| See what is implemented today | [Complete Feature Map](features.md) |
+| Understand the whole workflow | [System Design](design.md) |
+| Understand the code architecture | [Architecture](architecture.md) |
+| Understand AI Director behavior and boundaries | [AI Director](ai-director.md) |
+| Configure a project | [Configuration Reference](config-reference.md) |
+| Understand provider selection | [Provider Governance](provider-governance.md) |
+| Use reference images and storyboard bindings | [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md) |
+| Track long-term film capability | [Film Capability Roadmap](film-capability-roadmap.md) |
+
+## Recommended Paths
+
+For a first local run:
+
+1. Read [Quick Start](quickstart.md).
+2. Run an offline local-provider build.
+3. Inspect `film_timeline.yaml`, `director_contract.yaml`, and
+   `pipeline/<project>/render_report.yaml`.
+
+For AI-film production work:
+
+1. Read [Product Introduction / 产品介绍](product-introduction.md).
+2. Run [examples/golden-sample](../examples/golden-sample/README.md) with
+   `--production`.
+3. Review [AI Director](ai-director.md), [production_readiness](agent-stages/production_readiness.md),
+   [generate_video](agent-stages/generate_video.md), and
+   [visual_semantic_qa](agent-stages/visual_semantic_qa.md).
+
+For provider integration:
+
+1. Read [Provider Governance](provider-governance.md).
+2. Review `src/narrascape/providers/`.
+3. Review the relevant stage docs under [Agent Stage Docs](#agent-stage-docs).
 
 ## Default Build Graph
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
--> storyboard_sheet -> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
--> remotion_preview
--> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
--> continuity_bible -> editing_review -> director_review -> rework_plan
--> creative_review -> visual_semantic_qa -> film_supervisor
--> rework_execute + rerun requested stages when rework is needed
+-> generate_images -> storyboard_sheet -> animatic -> production_readiness
+-> generate_video -> take_select -> generate_tts -> film_timeline
+-> remotion_preview -> film_assemble -> generate_music -> remix_audio
+-> audio -> subtitles -> qa -> continuity_bible -> editing_review
+-> director_review -> rework_plan -> creative_review -> visual_semantic_qa
+-> film_supervisor -> rework_execute + rerun requested stages when needed
 ```
 
 If `scripts/script.yaml` does not exist, the pipeline prepends:
@@ -38,61 +62,72 @@ If `scripts/script.yaml` does not exist, the pipeline prepends:
 research -> write
 ```
 
-`humanize` is available as a script-polishing command or explicit stage.
 `source_media` and `footage_edit` are optional real-footage documentary stages.
-`generate_video` is controlled by `pipeline.video_generation`: `auto` includes
-it but skips it when credentials are unavailable, `required` makes it blocking,
-and `off` omits it. Generated clips are consumed by the next `film_timeline`
-build.
+`humanize` is available as a script-polishing command or explicit stage.
 
-## Stage Outputs
+`generate_video` is controlled by `pipeline.video_generation`:
 
-| Stage | Purpose | Main outputs |
-| --- | --- | --- |
-| `research` | Prepare source material from a topic | `research_report.md` |
-| `write` | Generate segmented narration | `scripts/script.yaml` |
-| `humanize` | Rewrite narration to reduce AI-like patterns | updated script |
-| `pre_production` | Create visual references and storyboard data | `pipeline/<name>/pre_production.yaml`, `assets/references/` |
-| `design` | Use AI Director or local fallback to design shots | `design_report.yaml`, `image_prompts.yaml`, `image_map.yaml` |
-| `screenplay_structure` | Split story into act, scene, sequence, shot | `pipeline/<name>/screenplay_structure.yaml` |
-| `director_contract` | Compile director intent into video prompts and QA assertions | `pipeline/<name>/director_contract.yaml` |
-| `reference_plate` | Resolve per-shot style, character, scene, and storyboard references | `pipeline/<name>/reference_plates.yaml` |
-| `generate_images` | Generate Seedream or local images | `assets/images/*.png` |
-| `animatic` | Render a storyboard timing preview before expensive video generation | `pipeline/<name>/animatic.yaml`, `pipeline/<name>/animatic.mp4` |
-| `generate_video` | Seedance clips from generated images when enabled | `assets/videos/*.mp4` |
-| `take_select` | Multi-take selection when takes exist | `pipeline/<name>/take_selection.yaml` |
-| `generate_tts` | Generate narration audio and timing | `assets/tts/*.mp3`, `pipeline/<name>/timing.json` |
-| `film_timeline` | Build unified film timeline | `film_timeline.yaml` |
-| `remotion_preview` | Export a Remotion visual timeline handoff | `pipeline/<name>/remotion_preview.yaml`, `pipeline/<name>/remotion_preview/` |
-| `film_assemble` | Render the film timeline visual track | `pipeline/<name>/film_assembled.mp4`, `pipeline/<name>/timeline_segments/*.mp4` |
-| `generate_music` | Generate BGM zones | `assets/music/*.mp3` |
-| `remix_audio` | Mix narration and BGM | `pipeline/<name>/mixed_audio.mp3` |
-| `kenburns` | Optional legacy animated-image segment renderer | `pipeline/<name>/video_segments/*.mp4` |
-| `concat` | Optional legacy silent visual joiner | `pipeline/<name>/final_nosub.mp4` |
-| `audio` | Add mixed audio | `output/<name>-clean.mp4` |
-| `subtitles` | Burn subtitles | `output/<name>-sub.mp4` |
-| `qa` | Validate final render | `pipeline/<name>/render_report.yaml` |
-| `continuity_bible` | Preserve character, scene, wardrobe, lighting, and axis state | `pipeline/<name>/continuity_bible.yaml` |
-| `editing_review` | Review pacing, repetition, and emotion curve | `pipeline/<name>/editing_review.yaml` |
-| `director_review` | Convert QA findings into rework actions | `pipeline/<name>/director_review.yaml` |
-| `rework_plan` | Merge director findings into executable rework actions | `pipeline/<name>/rework_plan.yaml` |
-| `creative_review` | LLM or fallback creative supervision | `pipeline/<name>/creative_review.yaml` |
-| `visual_semantic_qa` | LLM or fallback visual semantic QA | `pipeline/<name>/visual_semantic_report.yaml` |
-| `film_supervisor` | Decide the next production stages | `pipeline/<name>/film_supervisor.yaml` |
-| `rework_execute` | Execute rework queues and quarantine invalid generated media, automatically in default rework cycles | `pipeline/<name>/rework_execution.yaml`, rework queue YAML files |
-| `source_media` | Discover local clips/images and plan footage cuts | `asset_manifest.yaml`, `footage_timeline.yaml` |
-| `footage_edit` | Render a source-media rough cut | `pipeline/<name>/footage_roughcut.mp4` |
+- `auto`: include generated-video stages and skip them when credentials are unavailable.
+- `required`: generated video is a blocking production requirement.
+- `off`: omit generated-video stages.
+
+## Core Artifacts
+
+| Artifact | Role |
+| --- | --- |
+| `pre_production.yaml` | character, scene, style, and storyboard preparation |
+| `design_report.yaml` | shot design and image prompt plan |
+| `screenplay_structure.yaml` | act, scene, sequence, and shot hierarchy |
+| `director_contract.yaml` | executable per-shot director contract |
+| `reference_plates.yaml` | resolved style, character, scene, and storyboard references |
+| `storyboard_sheet.yaml/png/pdf` | reviewable storyboard contact sheet |
+| `animatic.yaml/mp4` | low-cost timing preview before video generation |
+| `production_readiness.yaml` | pre-video quality gate |
+| `video_prompt_quality.yaml` | prompt ingredient audit before provider calls |
+| `take_selection.yaml` | selected generated-video takes |
+| `film_timeline.yaml` | default editorial spine |
+| `render_report.yaml` | final render QA report |
+| `rework_plan.yaml` | grouped regeneration, recut, and replacement actions |
+| `film_supervisor.yaml` | next-stage production decision |
+
+## Agent Stage Docs
+
+These docs are written for AI assistants and developers implementing or
+debugging one stage at a time:
+
+- [animatic](agent-stages/animatic.md)
+- [continuity_bible](agent-stages/continuity_bible.md)
+- [creative_review](agent-stages/creative_review.md)
+- [design](agent-stages/design.md)
+- [director_contract](agent-stages/director_contract.md)
+- [director_review](agent-stages/director_review.md)
+- [editing_review](agent-stages/editing_review.md)
+- [film_assemble](agent-stages/film_assemble.md)
+- [film_supervisor](agent-stages/film_supervisor.md)
+- [film_timeline](agent-stages/film_timeline.md)
+- [footage_edit](agent-stages/footage_edit.md)
+- [generate_images](agent-stages/generate_images.md)
+- [generate_video](agent-stages/generate_video.md)
+- [production_readiness](agent-stages/production_readiness.md)
+- [qa](agent-stages/qa.md)
+- [reference_plate](agent-stages/reference_plate.md)
+- [remotion_preview](agent-stages/remotion_preview.md)
+- [rework_execute](agent-stages/rework_execute.md)
+- [rework_plan](agent-stages/rework_plan.md)
+- [screenplay_structure](agent-stages/screenplay_structure.md)
+- [source_media](agent-stages/source_media.md)
+- [storyboard_sheet](agent-stages/storyboard_sheet.md)
+- [take_select](agent-stages/take_select.md)
+- [visual_semantic_qa](agent-stages/visual_semantic_qa.md)
 
 ## Verification
-
-The main local verification command is:
 
 ```powershell
 $env:PYTHONPATH = "src"
 .\.venv_test\Scripts\python.exe -m pytest -q --tb=short --no-cov
 ```
 
-For a no-network pipeline smoke test, configure:
+For a no-network smoke test, configure local providers:
 
 ```yaml
 llm:

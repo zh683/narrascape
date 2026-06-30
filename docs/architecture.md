@@ -38,12 +38,14 @@ screenplay_structure
 director_contract
 reference_plate
 storyboard_sheet
-generate_images
 animatic
+production_readiness
+generate_images
 generate_video
 take_select
 generate_tts
 film_timeline
+remotion_preview
 film_assemble
 generate_music
 remix_audio
@@ -72,9 +74,9 @@ Default full build:
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
--> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
--> remotion_preview
--> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
+-> generate_images -> storyboard_sheet -> animatic -> production_readiness
+-> generate_video -> take_select -> generate_tts -> film_timeline
+-> remotion_preview -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
 -> rework_execute -> supervisor requested rerun stages (when rework is needed)
@@ -101,14 +103,15 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 | `director_contract` | `screenplay_structure` |
 | `reference_plate` | `director_contract` |
 | `storyboard_sheet` | `reference_plate`, `generate_images` |
+| `generate_images` | `design` |
+| `animatic` | `reference_plate`, `generate_images` |
+| `production_readiness` | `reference_plate`, `storyboard_sheet`, `animatic` |
+| `generate_video` | `animatic`, `generate_images`, `production_readiness` |
+| `take_select` | `generate_video` |
+| `generate_tts` | none |
 | `film_timeline` | `design`, `generate_images`, `generate_tts` |
 | `remotion_preview` | `film_timeline` |
 | `film_assemble` | `remotion_preview` |
-| `generate_images` | `design` |
-| `animatic` | `reference_plate`, `generate_images` |
-| `generate_video` | `animatic`, `generate_images` |
-| `take_select` | `generate_video` |
-| `generate_tts` | none |
 | `generate_music` | `generate_tts` |
 | `remix_audio` | `generate_tts`, `generate_music` |
 | `kenburns` | `generate_images`, `generate_tts` |

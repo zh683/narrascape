@@ -1,37 +1,76 @@
 # Narrascape
 
-Narrascape is a staged AI film-production pipeline for narration-driven documentary, explainer, and story videos.
+Narrascape is an open-source AI film-production pipeline for narration-driven
+films, documentaries, explainers, and story videos.
 
-It turns a script into an inspectable production graph: visual pre-production, AI Director shot design, executable director contracts, image/video/source-media assembly, audio, subtitles, QA, and director rework planning.
+It is not a single prompt-to-video button. Narrascape turns a script into an
+inspectable production graph: visual pre-production, AI Director shot design,
+storyboard-bound director contracts, image/video/source-media generation,
+film-timeline assembly, audio, subtitles, QA, and automated rework.
+
+## Why It Exists
+
+Most AI video workflows fail when a project needs continuity: the same
+character, the same wardrobe, the same room, the same emotional arc, and clips
+that actually cut together. Narrascape treats those requirements as production
+artifacts instead of hidden prompt text.
+
+The central idea is:
+
+```text
+creative direction -> executable contracts -> generated/source media -> film timeline -> QA -> rework
+```
+
+Every major stage writes files that can be inspected, edited, tested, and rerun.
 
 ## Current Status
 
-Narrascape is an early AI film studio prototype with a working CLI pipeline and offline verification path. The local test suite covers the main stage graph, AI assistant bridge batching, provider selection, source-media workflow, film timeline assembly, render QA, director review, rework planning, automated rework execution, and the `director_contract` prompt/QA handoff.
+Narrascape is an early AI film studio prototype. The pipeline is real and
+covered by CI across Ubuntu and Windows with Python 3.10, 3.11, and 3.12, but
+final creative quality still depends on the configured LLM, media providers,
+source material, and human review.
 
-AI Director behavior depends on the configured LLM mode:
+Production-oriented features already implemented:
 
-- `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`: creative analysis, shot design, review, and contract compilation can use a large language model.
-- `llm.mode: none`: deterministic fallbacks keep the pipeline testable offline, but they are not a substitute for creative model output.
+- AI Director stages for screenplay structure, director contract, continuity,
+  editing review, creative review, visual semantic QA, and film supervision.
+- `director_contract.yaml` with per-shot story intent, film language,
+  continuity locks, storyboard bindings, prompt blueprint, provider prompts,
+  negative prompts, and QA assertions.
+- `film_timeline.yaml` as the default editorial spine.
+- Visual priority: generated video, then source footage, then generated-image
+  fallback.
+- Seedream image generation and Seedance video generation through provider
+  selection.
+- Multi-take video generation and `take_select`.
+- Production readiness gates before expensive video generation.
+- Render QA for validity, audio, subtitles, duration drift, black frames,
+  repeated shots, missing clips, placeholder residue, continuity risk, and
+  pacing risk.
+- `rework_execute` that consumes rework plans, quarantines failed generated
+  clips, writes regeneration/recut/replacement queues, and triggers reruns.
+- Offline deterministic providers for end-to-end tests.
 
-## What It Builds
+## Production Flow
 
 ```text
 script
   -> pre_production
   -> design
--> screenplay_structure
--> director_contract
--> reference_plate
--> storyboard_sheet
--> production_readiness
--> generate_images
--> animatic
--> generate_video
+  -> screenplay_structure
+  -> director_contract
+  -> reference_plate
+  -> generate_images
+  -> storyboard_sheet
+  -> animatic
+  -> production_readiness
+  -> generate_video
   -> take_select
+  -> generate_tts
   -> film_timeline
   -> remotion_preview
   -> film_assemble
-  -> generate_tts + generate_music + remix_audio
+  -> generate_music + remix_audio
   -> audio
   -> subtitles
   -> qa
@@ -42,82 +81,18 @@ script
   -> creative_review
   -> visual_semantic_qa
   -> film_supervisor
-  -> rework_execute + rerun when supervisor requests rework
+  -> rework_execute + rerun requested stages
 ```
 
-`film_timeline.yaml` is the default visual spine. Visual priority is:
+The film timeline is the default visual spine:
 
 ```text
 generated video -> source footage -> generated image fallback
 ```
 
-`remotion_preview` exports the same timeline into a minimal Remotion project at
-`pipeline/<project>/remotion_preview/`. This gives creators and future web tools
-an inspectable React composition before the current FFmpeg-based
-`film_assemble` render path.
-
-By default, `pipeline.video_generation: auto` tries the generated-video path when it can run. If the configured video provider credentials are missing, the video stage is skipped and the timeline continues through source footage or generated-image fallback. Use `pipeline.video_generation: required` to make missing generated video a blocking production issue, or `off` to omit video generation stages.
-
-For a stricter AI-film run, use the built-in production profile:
-
-```bash
-narrascape build -p examples/golden-sample --production --approve
-```
-
-`--production` applies the `seedream-seedance-oil-painting` runtime profile: Seedream images, Seedance video, oil-painting visual style, `video_generation: required`, `strict_director: true`, `production_quality_gates: true`, at least three takes per shot, and two automatic rework cycles.
-
-`pipeline.video_generation: required` is treated as an AI-film production mode, so it cannot run with `llm.mode: none`. Required-video projects must use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`; otherwise configuration loading or pipeline startup fails before deterministic templates can silently take over.
-
-For production builds that must not mix fallback director output into the film,
-set `pipeline.strict_director: true`. In this mode, key AI Director stages fail
-immediately when their artifacts report `llm_status: not_configured` or
-`fallback_after_error`; cached completed artifacts are checked too. This applies
-to `pre_production`, `design`, `director_contract`, `take_select`,
-`creative_review`, and `visual_semantic_qa`.
-
-The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework_cycles: 1`. After `film_supervisor`, a `needs_rework` decision automatically executes `rework_execute`, then reruns the supervisor's requested stages such as `generate_video -> take_select -> film_timeline -> qa -> film_supervisor`. Rework queues are consumed by downstream stages: `director_contract_rewrite_queue.yaml` limits director-contract rewrites to queued shots, and `video_regen_queue.yaml` limits generated-video reruns to queued segments.
-
-`production_readiness` is the last pre-video gate. It checks `reference_plates.yaml`, `storyboard_sheet.yaml`, and `animatic.yaml`, and only lets `generate_video` start when those prep artifacts are all in a ready state. In `video_generation: required` this is blocking; in the default `auto` mode it records the failed gate and lets the pipeline continue through source-footage or generated-image fallback instead of pretending generated video is ready. When `pipeline.production_quality_gates: true`, it also checks script density, pre-production character/scene/storyboard coverage, storyboard bindings, director-contract prompt blueprints, compiled prompts, continuity locks, and QA assertions.
-
-## AI Director
-
-The AI Director is not just a prompt template. It now produces durable production artifacts:
-
-- `screenplay_structure.yaml`: act, scene, sequence, and shot hierarchy.
-- `director_contract.yaml`: per-shot story intent, film language, continuity constraints, storyboard binding, portable video prompt, prompt blueprint, provider-compiled prompts, negative prompts, and QA assertions.
-- `reference_plates.yaml`: per-shot resolved style, character, scene, and storyboard reference handoff.
-- `storyboard_sheet.yaml` plus `storyboard_sheet.png` / `storyboard_sheet.pdf`: a 12-up review board for storyboard frames and director bindings.
-- `animatic.yaml` plus `animatic.mp4`: low-cost storyboard timing preview before expensive video generation.
-- `continuity_bible.yaml`: character, location, wardrobe, lighting, and screen-axis state.
-- `editing_review.yaml`: pacing, repetition, and emotional rhythm review.
-- `director_review.yaml`: QA-driven shot rework queue.
-- `rework_plan.yaml`: grouped regeneration, recut, and source-media replacement actions.
-- `creative_review.yaml`: LLM-assisted or fallback creative supervision.
-- `visual_semantic_report.yaml`: semantic visual QA against script, design intent, director contract, and storyboard binding.
-- `film_supervisor.yaml`: next-stage supervision decision.
-
-`director_contract` is the execution handoff. When storyboard frames exist, each shot is bound to:
-
-- `storyboard_frame_ids`
-- `character_positions`
-- `scene_ref`
-- `wardrobe_lock`
-- `composition_requirements`
-- `reference_image_ids`
-
-`generation.prompt_blueprint` records the director's executable intent: narrative purpose, subject action, camera plan, continuity locks, storyboard locks, reference strategy, quality bar, and QA assertions. `generate_video` consumes `generation.compiled_prompts.<provider>.prompt` when available, passes the matching negative prompt into the provider request, and falls back to `generation.video_prompt` for legacy contracts. It writes `video_prompt_quality.yaml`, scores each prompt for executable video ingredients such as subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding, then blocks generic or under-specified prompts before provider execution. `visual_semantic_qa` checks the same contract for scene, wardrobe, character-position, and composition mismatches.
-
 ## Quick Start
 
-From a source checkout:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m narrascape.cli init .narrascape/my-video
-python -m narrascape.cli build -p .narrascape/my-video --approve
-```
-
-For an editable install:
+Install from a source checkout:
 
 ```bash
 pip install -e ".[dev]"
@@ -125,14 +100,7 @@ narrascape init my-video
 narrascape build -p my-video --approve
 ```
 
-Install the optional dashboard UI when you want the Streamlit control panel:
-
-```bash
-pip install -e ".[dashboard]"
-narrascape dashboard
-```
-
-For a no-network smoke test, configure local providers:
+Run a no-network smoke test by using local providers:
 
 ```yaml
 llm:
@@ -146,38 +114,54 @@ audio:
     provider: local
 ```
 
-For Seedream image generation and Seedance video generation, set `ARK_API_KEY` in your environment or `.env`, then configure:
+Offline mode proves the pipeline is wired end to end. It does not produce
+film-grade creative output.
 
-```yaml
-llm:
-  mode: ai_assistant
-pipeline:
-  video_generation: required
-  strict_director: true
-images:
-  provider: seedream
-  model: doubao-seedream-5-0-260128
-video:
-  provider: seedance
-  model: jimeng-video-seedance-2.0
-  resolution: 720p
-  duration: 5
-  frame_rate: 24
-  takes: 1
+## Production Profile
+
+Narrascape includes a stricter AI-film runtime profile:
+
+```bash
+narrascape build -p examples/golden-sample --production --approve
 ```
 
-Seedream image generation supports text-to-image and image-to-image through the existing `reference_images` fields. Seedance video generation consumes generated images and reference plates, then writes generated-video clips for `take_select`, `film_timeline`, QA, and rework loops. Set `video.takes` above `1` to generate multiple candidates per shot for `take_select`.
+`--production` applies the `seedream-seedance-oil-painting` profile:
 
-## First Film Project
+- Seedream image generation.
+- Seedance video generation.
+- Oil-painting visual style.
+- `pipeline.video_generation: required`.
+- `pipeline.strict_director: true`.
+- `pipeline.production_quality_gates: true`.
+- At least three generated-video takes per shot.
+- Two automatic rework cycles.
 
-The current starter film is [罪与罚 / Crime and Punishment](examples/crime-and-punishment/README.md), a public-domain AI-film prototype based on Fyodor Dostoevsky's 1866 novel.
+Use this profile when you want missing AI Director output, weak pre-production,
+or missing generated video to fail early instead of quietly falling back.
 
-It includes a 12-segment Chinese narration script, director notes, character and wardrobe locks, scene continuity rules, Seedream/Seedance-ready image/video prompts, and local-preview config:
+## Golden Sample
 
-```powershell
-$env:PYTHONPATH = "src"
-.\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/crime-and-punishment --approve
-```
+[examples/golden-sample](examples/golden-sample/README.md) is the fixed quality
+benchmark: a short *Crime and Punishment* chamber scene with one room, a small
+cast, clear wardrobe locks, storyboard intent, and six shots.
+
+It exists to answer one question after every optimization:
+
+> Did the pipeline produce better controllable film material, or did it only run?
+
+## AI Director Boundary
+
+Narrascape separates three layers:
+
+- Prompt templates: instructions that ask an LLM for structured output.
+- LLM creative output: model-authored shot design, director judgment, creative
+  review, take selection, and semantic QA.
+- Offline fallback: deterministic local logic used for tests and no-network
+  verification.
+
+For production builds, use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`.
+`llm.mode: none` is intentionally not allowed with
+`pipeline.video_generation: required`.
 
 ## Common Commands
 
@@ -190,82 +174,34 @@ narrascape humanize -p my-video
 narrascape pre_production -p my-video
 narrascape design -p my-video
 narrascape build -p my-video --approve
-narrascape build -p my-video --stage generate_video
-narrascape build -p my-video --stage source_media
-narrascape build -p my-video --stage remotion_preview
-narrascape build -p my-video --stage film_assemble
-narrascape build -p my-video --stage qa
-narrascape build -p my-video --stage rework_execute
+narrascape build -p my-video --production --approve
+narrascape build -p my-video --stage generate_video --approve
+narrascape build -p my-video --stage qa --approve
 narrascape status -p my-video
 narrascape approve -p my-video -s design
 narrascape reject -p my-video -s design --notes "revise faces"
 narrascape clean -p my-video --all
 ```
 
-## Provider Families
+Dashboard dependencies are optional:
 
-- LLM: AI assistant bridge, file bridge, OpenAI-compatible APIs, Anthropic, DeepSeek, Volcengine, local HTTP chat.
-- Images: Seedream by default, local placeholder generation for previews.
-- Video: Seedance async image-to-video generation by default.
-- TTS: MiniMax, local tone generation.
-- Music: MiniMax, local tone generation.
-- Source media: local media discovery and footage timeline planning.
-- Rendering and QA: Remotion timeline preview handoff, FFmpeg timeline assembly, final render validation, and director rework actions.
-
-Provider selection is wired into image, TTS, music, and video generation stages. Each selected provider is recorded in the stage state file.
-
-## Project Layout
-
-```text
-my-video/
-  config.yaml
-  scripts/script.yaml
-  image_prompts.yaml
-  image_map.yaml
-  design_report.yaml
-  film_timeline.yaml
-  assets/
-    images/
-    references/
-    storyboard/
-    tts/
-    music/
-    videos/
-  pipeline/<project-name>/
-    state.json
-    approvals/
-    pre_production.yaml
-    screenplay_structure.yaml
-    director_contract.yaml
-    reference_plates.yaml
-    storyboard_sheet.yaml
-    storyboard_sheet.png
-    storyboard_sheet.pdf
-    animatic.yaml
-    animatic.mp4
-    remotion_preview.yaml
-    remotion_preview/
-      package.json
-      public/timeline.json
-      src/
-    render_report.yaml
-    continuity_bible.yaml
-    editing_review.yaml
-    director_review.yaml
-    rework_plan.yaml
-    visual_semantic_report.yaml
-    film_supervisor.yaml
-    film_assembled.mp4
-  output/
-    <project>-clean.mp4
-    <project>-sub.mp4
+```bash
+pip install -e ".[dashboard]"
+narrascape dashboard
 ```
 
-Generated project outputs are intentionally ignored by git.
+## Provider Matrix
 
-The dashboard includes a Timeline page that reads `film_timeline.yaml` and
-`remotion_preview.yaml`, then shows visual clips, source mix, missing media, and
-the Remotion Studio/render commands for the generated preview handoff.
+| Area | Implemented paths |
+| --- | --- |
+| LLM | AI assistant bridge, file bridge, OpenAI-compatible APIs, Anthropic, DeepSeek, Volcengine, local HTTP chat |
+| Images | Seedream, local placeholder |
+| Video | Seedance async image-to-video |
+| TTS | MiniMax, local tone provider |
+| Music | MiniMax, local tone provider |
+| Source media | local media library, footage timeline, rough-cut render |
+| Preview/render | Remotion timeline handoff, FFmpeg assembly |
+| QA | ffprobe-backed render and quality validation |
 
 ## Documentation
 
@@ -275,26 +211,23 @@ the Remotion Studio/render commands for the generated preview handoff.
 - [System Design](docs/design.md)
 - [Architecture](docs/architecture.md)
 - [AI Director](docs/ai-director.md)
-- [Bridge / AI Assistant Mode](docs/BRIDGE_MODE.md)
 - [Configuration Reference](docs/config-reference.md)
 - [Provider Governance](docs/provider-governance.md)
 - [Reference Image + Storyboard Workflow](docs/reference-image-storyboard-workflow.md)
 - [Film Capability Roadmap](docs/film-capability-roadmap.md)
+- [Agent Stage Docs](docs/index.md#agent-stage-docs)
 
 ## Development
 
-```powershell
-$env:PYTHONPATH = "src"
-.\.venv_test\Scripts\python.exe -m pytest -q --tb=short --no-cov
-```
-
-Or:
-
 ```bash
 pip install -e ".[dev]"
-pytest
+ruff check src tests
+black --check src tests
+mypy
+pytest -q --tb=short --no-cov
 ```
 
 ## License
 
-Narrascape is released under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE).
+Narrascape is released under the GNU Affero General Public License v3.0. See
+[LICENSE](LICENSE).

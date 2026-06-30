@@ -36,13 +36,16 @@ pre_production -> design -> image_prompts.yaml + image_map.yaml
         |        reference_plate -> reference_plates.yaml
         |             |
         |             v
-        |        storyboard_sheet -> storyboard_sheet.yaml + storyboard_sheet.png + storyboard_sheet.pdf
-        |             |
-        |             v
         |        generate_images -> assets/images/*.png
         |             |
         |             v
+        |        storyboard_sheet -> storyboard_sheet.yaml + storyboard_sheet.png + storyboard_sheet.pdf
+        |             |
+        |             v
         |        animatic -> animatic.yaml + animatic.mp4
+        |             |
+        |             v
+        |        production_readiness -> production_readiness.yaml
         |             |
         |             v
         |        generate_video -> assets/videos/*.mp4
@@ -178,9 +181,12 @@ director layers:
   sources are caught before video generation.
 - `production_readiness` reads `reference_plates.yaml`, `storyboard_sheet.yaml`,
   and `animatic.yaml`, then blocks generated video until the prep artifacts are
-  all in a ready state. It is a hard failure in `video_generation: required`;
-  in `auto` mode it records the failed gate and allows the editorial fallback
-  path to continue.
+  all in a ready state. With `production_quality_gates: true`, it also checks
+  script density, character/scene/storyboard coverage, storyboard binding,
+  director-contract prompt blueprints, compiled prompts, continuity locks, and
+  QA assertions. It is a hard failure in `video_generation: required`; in
+  `auto` mode it records the failed gate and allows the editorial fallback path
+  to continue.
 - `continuity_bible` reads `film_timeline.yaml` and the screenplay structure,
   then writes `continuity_bible.yaml` with character appearances, locations,
   wardrobe, lighting, screen axis, and continuity risks.

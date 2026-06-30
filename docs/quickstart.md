@@ -1,6 +1,7 @@
 # Quick Start
 
-This guide builds a complete local video pipeline and explains where to switch from offline verification to real AI providers.
+This guide builds a complete local video pipeline and shows where to switch from
+offline verification to real AI providers.
 
 ## 1. Run From Source
 
@@ -70,13 +71,13 @@ The default build graph is:
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract
--> reference_plate -> generate_images -> storyboard_sheet -> animatic -> generate_video
--> take_select -> generate_tts -> film_timeline
--> remotion_preview
--> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
+-> reference_plate -> generate_images -> storyboard_sheet -> animatic
+-> production_readiness -> generate_video -> take_select -> generate_tts
+-> film_timeline -> remotion_preview -> film_assemble
+-> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
--> rework_execute + rerun requested stages when rework is needed
+-> rework_execute + rerun requested stages when needed
 ```
 
 With the default `pipeline.video_generation: auto`, missing Seedance/Ark
@@ -91,8 +92,11 @@ For the stricter AI-film profile, run the included golden sample:
 ```
 
 `--production` applies Seedream images, Seedance video, oil-painting style,
-strict director mode, production readiness quality gates, three takes per shot,
-and the automatic rework loop.
+required generated video, strict director mode, production readiness quality
+gates, three takes per shot, and the automatic rework loop.
+
+Use `--production` when weak pre-production, missing AI Director output, or
+missing generated-video clips should fail early instead of falling back.
 
 Final outputs are written under:
 

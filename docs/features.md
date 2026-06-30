@@ -46,9 +46,12 @@ This page describes the implemented product surface as it exists in the codebase
   - `pipeline/<project>/screenplay_structure.yaml`
   - `pipeline/<project>/director_contract.yaml`
   - `pipeline/<project>/continuity_bible.yaml`
+  - `pipeline/<project>/reference_plates.yaml`
   - `pipeline/<project>/storyboard_sheet.yaml`
   - `pipeline/<project>/storyboard_sheet.png`
   - `pipeline/<project>/storyboard_sheet.pdf`
+  - `pipeline/<project>/animatic.yaml`
+  - `pipeline/<project>/production_readiness.yaml`
   - `pipeline/<project>/editing_review.yaml`
   - `pipeline/<project>/rework_plan.yaml`
   - `pipeline/<project>/take_selection.yaml`

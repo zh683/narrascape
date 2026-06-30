@@ -41,6 +41,7 @@ pipeline:
   design_overwrite: true
   video_generation: auto   # auto | required | off
   strict_director: false
+  production_quality_gates: false
   auto_rework: true
   max_rework_cycles: 1
 ```
@@ -51,6 +52,7 @@ pipeline:
 | `video_generation: required` | Treat missing generated video as a blocking production issue and queue regeneration. |
 | `video_generation: off` | Omit generated-video stages and rely on source footage or generated-image fallback. |
 | `strict_director` | When true, fail key AI Director stages if their artifacts expose `llm_status: not_configured` or `fallback_after_error`. |
+| `production_quality_gates` | When true, make `production_readiness` check script density, pre-production coverage, storyboard bindings, director-contract prompt blueprints, compiled prompts, continuity locks, and QA assertions before generated video starts. |
 | `design_overwrite` | When true, `design` rewrites root `image_prompts.yaml` and `image_map.yaml`. Set false for hand-curated projects that should preserve authored prompt files while still writing `pipeline/<name>/design_report.yaml`. |
 | `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
 | `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
@@ -63,6 +65,10 @@ chain used configured LLM paths instead of local templates. The pipeline checks
 `take_selection.yaml`, `creative_review.yaml`, and
 `visual_semantic_report.yaml`; a blocked status fails the stage before
 downstream assembly can consume the fallback artifact.
+
+Use `production_quality_gates: true` when you want the build to fail before
+video generation if preparation is incomplete. This is enabled automatically by
+`narrascape build --production`.
 
 ## LLM
 

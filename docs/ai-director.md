@@ -116,6 +116,9 @@ execution contract:
 - generation instructions: video prompt, negative prompt, duration, and motion
 - provider-specific compiled prompts under `generation.compiled_prompts`, so
   Seedance receives an execution prompt tailored to generated-video production
+- prompt blueprint under `generation.prompt_blueprint`, so narrative intent,
+  camera plan, continuity locks, storyboard locks, reference strategy, quality
+  bar, and QA assertions remain machine-readable downstream
 - QA assertions: `must_show` and `must_not_show`
 
 When an LLM client is configured, this stage asks the model to act as a
@@ -124,6 +127,10 @@ deterministic contract from existing design fields. The important boundary is
 that artistic ideas do not remain vague advice: every idea must compile into
 prompt text, provider-specific execution prompts, continuity constraints, or QA
 checks consumed by later stages.
+
+`reference_plate` copies the prompt blueprint into `reference_plates.yaml`.
+That lets later QA and provider stages read the same structured contract without
+having to parse a natural-language prompt.
 
 ### Continuity Director
 
@@ -232,6 +239,7 @@ Production builds can enforce that boundary with:
 ```yaml
 pipeline:
   strict_director: true
+  production_quality_gates: true
 ```
 
 Strict director mode reads the `llm_status` fields written by
@@ -241,6 +249,11 @@ Strict director mode reads the `llm_status` fields written by
 of letting deterministic fallback output enter the finished film. Cached
 completed artifacts are checked as well, so enabling strict mode also protects
 reruns from older fallback reports.
+
+`production_quality_gates` adds a second production guard at
+`production_readiness`: the build fails before video generation when script
+density, character/scene/storyboard coverage, storyboard binding, prompt
+blueprints, compiled prompts, continuity locks, or QA assertions are missing.
 
 ## Quality Boundaries
 
