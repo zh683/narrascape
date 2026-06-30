@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import tomllib
 import yaml
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 
 def test_status_stage_names_include_film_timeline_default_path():
