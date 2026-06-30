@@ -1,37 +1,25 @@
 segments:
-- id: 1
-  images:
-  - img_01
-- id: 2
-  images:
-  - img_02
-- id: 3
-  images:
-  - img_03
-- id: 4
-  images:
-  - img_04
-- id: 5
-  images:
-  - img_05
-- id: 6
-  images:
-  - img_06
-- id: 7
-  images:
-  - img_07
-- id: 8
-  images:
-  - img_08
-- id: 9
-  images:
-  - img_09
-- id: 10
-  images:
-  - img_10
-- id: 11
-  images:
-  - img_11
-- id: 12
-  images:
-  - img_12
+  - id: 1
+    images: [img_01]
+  - id: 2
+    images: [img_02]
+  - id: 3
+    images: [img_03]
+  - id: 4
+    images: [img_04]
+  - id: 5
+    images: [img_05]
+  - id: 6
+    images: [img_06]
+  - id: 7
+    images: [img_07]
+  - id: 8
+    images: [img_08]
+  - id: 9
+    images: [img_09]
+  - id: 10
+    images: [img_10]
+  - id: 11
+    images: [img_11]
+  - id: 12
+    images: [img_12]

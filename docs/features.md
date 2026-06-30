@@ -21,6 +21,7 @@ This page describes the implemented product surface as it exists in the codebase
   - `screenplay_structure` splits act, scene, sequence, and shot.
   - `director_contract` compiles story intent into executable video prompts, negative prompts, continuity constraints, and QA assertions.
   - `continuity_bible` maintains character, location, wardrobe, lighting, and screen-axis continuity.
+  - `storyboard_sheet` renders a product-style contact sheet for storyboard frames and director bindings.
   - `editing_review` evaluates `film_timeline.yaml` for pacing, repetition, and emotional curve.
   - `rework_plan` turns director findings into regeneration, recut, or source-media replacement actions.
   - `take_select` selects the best generated-video take when multi-take clips exist.
@@ -45,6 +46,9 @@ This page describes the implemented product surface as it exists in the codebase
   - `pipeline/<project>/screenplay_structure.yaml`
   - `pipeline/<project>/director_contract.yaml`
   - `pipeline/<project>/continuity_bible.yaml`
+  - `pipeline/<project>/storyboard_sheet.yaml`
+  - `pipeline/<project>/storyboard_sheet.png`
+  - `pipeline/<project>/storyboard_sheet.pdf`
   - `pipeline/<project>/editing_review.yaml`
   - `pipeline/<project>/rework_plan.yaml`
   - `pipeline/<project>/take_selection.yaml`
@@ -72,7 +76,6 @@ This page describes the implemented product surface as it exists in the codebase
 ## Image Generation
 
 - Seedream provider path with prompt metadata and reference-image fields.
-- Agnes Image 2.1 Flash provider path with official `extra_body.response_format` and image-to-image reference handling.
 - Local provider that creates deterministic PNG placeholders for offline end-to-end tests.
 - Provider selector is executed before generation and records the selected provider in `image_gen_state.json`.
 - Per-prompt fields:
@@ -89,13 +92,12 @@ This page describes the implemented product surface as it exists in the codebase
 
 ## Video Generation
 
-- Configurable Seedance and Agnes async task workflows through `pipeline.video_generation` and `video.provider`.
+- Configurable Seedance async task workflow through `pipeline.video_generation` and `video.provider`.
 - Uses generated images as first frames when available.
 - Uses `pipeline/<project>/director_contract.yaml` prompts when available, so director intent reaches the video provider instead of remaining review-only metadata.
 - Writes `video_prompt_quality.yaml` with per-shot ingredient scores for subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding.
 - Blocks provider calls when prompts are still generic or missing the executable ingredients needed for controllable video generation.
 - Supports model mapping from internal names to Volcengine Ark IDs.
-- Agnes Video V2.0 uses `/v1/videos` task creation, `video_id` result polling, and the same `assets/videos/vid_*.mp4` downstream contract.
 - Persists video generation state for resumability.
 - Provider selector is executed before generation and records the selected video provider and requirements.
 - `video.takes` can ask `generate_video` to create multiple `vid_<segment>_take_<take>.mp4` candidates per shot.
@@ -119,6 +121,7 @@ This page describes the implemented product surface as it exists in the codebase
 - Visual selection priority is generated video, source media, then generated-image fallback.
 - When `pipeline/<project>/take_selection.yaml` exists, selected multi-take clips override the base generated-video clip for that segment.
 - Coverage metadata records generated-video segments, source-media segments, generated-image segments, and missing visual segments.
+- `RemotionPreviewStage` exports `pipeline/<project>/remotion_preview/` from the same timeline for visual inspection and future web rendering.
 - `FilmAssembleStage` renders the timeline into `pipeline/<project>/film_assembled.mp4`.
 - Timeline assembly handles generated videos, source footage, generated-image fallback, ending cards, and explicit time gaps.
 - This artifact is the center for smart editing, director review, sound design, and color workflows.
@@ -136,7 +139,7 @@ This page describes the implemented product surface as it exists in the codebase
 
 ## Motion And Final Render
 
-- Default film timeline rendering through `film_assemble`.
+- Default film timeline rendering through `film_assemble`, with `remotion_preview` generated first as an inspectable timeline handoff.
 - Optional Ken Burns rendering from generated still images.
 - Shot type and movement mapping.
 - Three motion engines:
@@ -156,12 +159,18 @@ This page describes the implemented product surface as it exists in the codebase
 - In the default build, `pipeline.auto_rework: true` lets `film_supervisor` trigger `rework_execute` automatically when it reports `needs_rework`.
 - `rework_execute` safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, resets affected stage state, and lets the pipeline rerun the requested stages up to `pipeline.max_rework_cycles`.
 
+## Product Dashboard
+
+- Streamlit dashboard includes a Timeline page for `film_timeline.yaml`.
+- The page shows clip count, duration, generated-video coverage, source mix, missing media, and Remotion preview status.
+- It exposes the generated Remotion Studio, still-check, and render commands from `remotion_preview.yaml`.
+
 ## Provider Governance
 
 - Provider registry reports configured and local providers.
 - Provider selector scores candidates by task fit, quality, control, reliability, cost efficiency, latency, and continuity.
 - Provider selector is wired into `generate_images`, `generate_tts`, `generate_music`, and `generate_video`.
-- Canonical artifact validation exists for `asset_manifest`, `design_report`, `film_timeline`, `render_report`, `screenplay_structure`, `director_contract`, `continuity_bible`, `editing_review`, `rework_plan`, `take_selection`, `creative_review`, `visual_semantic_report`, `film_supervisor`, and `rework_execution`.
+- Canonical artifact validation exists for `asset_manifest`, `design_report`, `film_timeline`, `remotion_preview`, `render_report`, `screenplay_structure`, `director_contract`, `continuity_bible`, `editing_review`, `rework_plan`, `take_selection`, `creative_review`, `visual_semantic_report`, `film_supervisor`, `rework_execution`, and `storyboard_sheet`.
 - Composition runtime registry exposes `ffmpeg` now and reserves a Remotion integration surface.
 
 ## Cache And Rebuilds
@@ -180,8 +189,8 @@ This page describes the implemented product surface as it exists in the codebase
 | Area | Implemented paths |
 | --- | --- |
 | LLM | AI assistant bridge, file bridge, OpenAI-compatible APIs, Anthropic, DeepSeek, Volcengine, local HTTP chat |
-| Images | Seedream, Agnes Image 2.1 Flash, local placeholder |
-| Video | Seedance async task API, Agnes Video V2.0 async task API |
+| Images | Seedream, local placeholder |
+| Video | Seedance async task API |
 | TTS | MiniMax, local tone provider |
 | Music | MiniMax, local tone provider |
 | Rendering | ffmpeg, PIL |

@@ -183,10 +183,11 @@ class ReworkExecuteStage(Stage):
         if replacement_queue:
             stages.extend(["source_media", "film_timeline"])
         if recut_queue:
-            stages.extend(["film_timeline", "film_assemble"])
+            stages.extend(["film_timeline", "remotion_preview", "film_assemble"])
         if stages:
             stages.extend(
                 [
+                    "remotion_preview",
                     "film_assemble",
                     "audio",
                     "subtitles",

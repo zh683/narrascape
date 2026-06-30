@@ -114,9 +114,9 @@ def find_ffmpeg() -> Path:
         if not root.exists():
             continue
         try:
-            for candidate in root.glob("ffmpeg*/bin/ffmpeg.exe"):
-                if candidate.exists():
-                    _FFMPEG_EXE = candidate
+            for archive_candidate in root.glob("ffmpeg*/bin/ffmpeg.exe"):
+                if archive_candidate.exists():
+                    _FFMPEG_EXE = archive_candidate
                     logger.debug(f"ffmpeg found by versioned scan: {_FFMPEG_EXE}")
                     return _FFMPEG_EXE
         except OSError:
@@ -136,15 +136,17 @@ def find_ffprobe() -> Path:
 
     # Derive from ffmpeg location
     ffmpeg = find_ffmpeg()
-    probe = ffmpeg.parent / "ffprobe.exe" if ffmpeg.suffix == ".exe" else ffmpeg.parent / "ffprobe"
-    if probe.exists():
-        _FFPROBE_EXE = probe
+    derived_probe = (
+        ffmpeg.parent / "ffprobe.exe" if ffmpeg.suffix == ".exe" else ffmpeg.parent / "ffprobe"
+    )
+    if derived_probe.exists():
+        _FFPROBE_EXE = derived_probe
         return _FFPROBE_EXE
 
     # Fallback to PATH
-    env_path = shutil.which("ffprobe")
-    if env_path:
-        _FFPROBE_EXE = Path(env_path)
+    ffprobe_path = shutil.which("ffprobe")
+    if ffprobe_path:
+        _FFPROBE_EXE = Path(ffprobe_path)
         return _FFPROBE_EXE
 
     raise RuntimeError("ffprobe not found. Please install ffmpeg (ffprobe is bundled with it).")
@@ -209,7 +211,8 @@ def get_media_info(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"ffprobe failed for {path}: {r.stderr}")
     import json
 
-    return json.loads(r.stdout)
+    data = json.loads(r.stdout)
+    return data if isinstance(data, dict) else {}
 
 
 def validate_video(path: Path) -> bool:
@@ -316,7 +319,9 @@ def run_ffmpeg(
     return False
 
 
-def run_ffmpeg_silent(args: list[str], timeout: int | None = None) -> subprocess.CompletedProcess:
+def run_ffmpeg_silent(
+    args: list[str], timeout: int | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run ffmpeg silently, returning the full result. For internal use."""
     ffmpeg = find_ffmpeg()
     cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + _normalize_ffmpeg_args(args)
@@ -328,7 +333,7 @@ def run_ffmpeg_raw(
     *,
     timeout: int | None = None,
     loglevel: str = "error",
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Run ffmpeg with normalized media path arguments and return process output."""
     ffmpeg = find_ffmpeg()
     cmd = [str(ffmpeg), "-y", "-loglevel", loglevel] + _normalize_ffmpeg_args(args)

@@ -29,7 +29,7 @@ tts:
 images:
   provider: seedream
   model: "doubao-seedream-5-0-260128"
-  style: "NOT anime, NOT illustration. Documentary photography style, photorealistic, cinematic lighting."
+  style: "Oil painting style, painterly documentary frame, visible brush texture, layered pigments, canvas grain, cinematic lighting; not photorealistic photography, not anime, not cartoon, no readable text, no watermark."
   aspect_ratio: "16:9"
   width: 2560
   height: 1440

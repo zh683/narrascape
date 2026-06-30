@@ -1,58 +1,64 @@
 # 罪与罚 / Crime and Punishment
 
-`crime-and-punishment` is Narrascape's first public-domain AI-film starter project: a compact cinematic adaptation prototype based on Fyodor Dostoevsky's 1866 novel.
+`crime-and-punishment` is a rebuilt Narrascape AI-film starter project based on Fyodor Dostoevsky's 1866 public-domain novel. This version replaces the failed first run's loose prompt set with a stricter production package: locked character bible, locked scene bible, storyboard intent, curated shot prompts, reference-aware director contracts, and separate preview/production configs.
 
-The project uses original Chinese narration and newly written image/video prompts. It does not copy any modern translation. The goal is not to compress the whole novel into a summary, but to test whether Narrascape can carry a serious dramatic arc through AI direction, reference-aware generation, film timeline assembly, QA, and rework.
+The project uses original Chinese narration and original prompts. It does not copy modern translations.
 
-## What This Project Tests
+## What Changed In This Rebuild
 
-- Script-to-film continuity: `scripts/script.yaml` is the narrative spine.
-- AI director supervision: character locks, wardrobe locks, location references, moral tension, and storyboard intent are defined in `director_notes.md`.
-- Curated shot prompts: `pipeline.design_overwrite: false` preserves the authored `image_prompts.yaml` and `image_map.yaml` while still writing a fresh `design_report.yaml`.
-- Film timeline path: the default pipeline prefers generated video, then source footage, then generated-image fallback.
-- QA and rework loop: default config keeps `pipeline.auto_rework: true` and `max_rework_cycles: 1`.
-- Safe local preview: default `config.yaml` uses local image/TTS/music providers so the pipeline can be tested without using external service requests.
-- Agnes production mode: `config.agnes.yaml` switches image and video generation to Agnes with zero-dollar estimated cost and normal request-limit handling.
+- Re-authored the film brief as a psychological drama, not a crime-trailer summary.
+- Rewrote all 12 narration segments in clean UTF-8 Chinese.
+- Rebuilt `director_notes.md` with explicit character, wardrobe, scene, storyboard, and QA locks.
+- Rewrote all 12 image prompts with concrete action, camera language, lighting, continuity, and stronger negative prompts.
+- Added explicit bans for exposed axe imagery in segment 2 and platform artifacts such as `AI生成`, `即梦AI`, watermarks, logos, subtitles, and readable text.
+- Split local preview from production:
+  - `config.yaml` is a safe local preview config with generated-video disabled.
+  - `config.production.yaml` is the strict Seedream/Seedance production config with generated video required, three takes per shot, and strict director mode enabled.
 
 ## Project Shape
 
 ```text
 examples/crime-and-punishment/
-  config.yaml              # local preview config
-  config.agnes.yaml        # Agnes image/video production config
-  film_brief.md            # story, tone, public-domain boundary
-  director_notes.md        # continuity bible and storyboard intent
-  image_prompts.yaml       # curated seed prompts for the first visual pass
-  image_map.yaml           # segment-to-image seed map
-  scripts/script.yaml      # Chinese narration script
+  config.yaml              # local preview config; no paid/external generation required
+  config.production.yaml   # strict Seedream/Seedance production config
+  film_brief.md            # story, source boundary, production goals
+  director_notes.md        # character/scene bible, storyboard intent, QA locks
+  image_prompts.yaml       # curated executable shot prompts
+  image_map.yaml           # segment-to-image map
+  scripts/script.yaml      # original Chinese narration
 ```
+
+Generated media, pipeline artifacts, and old trial renders are intentionally ignored by Git. They should be regenerated from the source files above.
 
 ## Local Preview
 
-From the repository root:
+Use this only to verify pipeline wiring, subtitles, audio timing, film timeline, QA reports, and rework loop. Local preview uses placeholders; it is not an image-quality test.
 
 ```powershell
-$env:PYTHONPATH = "src"
-.\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/crime-and-punishment --approve
-```
-
-This produces a local verification render using placeholders and local audio. It proves the film timeline, assembly, subtitles, QA, director reports, and rework loop can run before real Agnes generation.
-
-## Agnes Production Run
-
-The CLI reads `config.yaml`, so use the Agnes config as the active config when you want real image/video generation.
-
-```powershell
-Copy-Item examples/crime-and-punishment/config.agnes.yaml examples/crime-and-punishment/config.yaml -Force
-$env:AGNES_API_KEY = "your_agnes_key"
 $env:PYTHONPATH = "src"
 .\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/crime-and-punishment --approve --force
 ```
 
-In Agnes mode, `generate_images` creates visual anchors and shot images, `generate_video` turns selected shots into clips, `film_timeline.yaml` assembles the story order, and QA/rework decides whether shots need regeneration or recutting.
+## Seedream/Seedance Production Run
 
-Agnes currently presents its core image/video capabilities as free, but real API runs can still hit request-per-minute limits, quota pools, temporary capacity limits, or availability issues. Narrascape treats Agnes production mode as zero-dollar estimated cost while still using retry, QA, and rework controls.
+Use the production config when you want real Seedream image generation and Seedance video generation.
+
+```powershell
+Copy-Item examples/crime-and-punishment/config.production.yaml examples/crime-and-punishment/config.yaml -Force
+$env:ARK_API_KEY = "your_ark_key"
+$env:PYTHONPATH = "src"
+.\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/crime-and-punishment --approve --force
+```
+
+Production mode is intentionally strict:
+
+- `pipeline.video_generation: required`
+- `pipeline.strict_director: true`
+- `video.takes: 3`
+- `pipeline.max_rework_cycles: 2`
+
+If a key AI director stage falls back to `not_configured` or `fallback_after_error`, the build should fail rather than hiding a weak director pass inside the finished film.
 
 ## Creative Rule
 
-The film should be a severe, psychological, 19th-century drama. Keep the moral pressure close to faces, rooms, stairwells, hands, doorways, icons, letters, and city weather. Avoid spectacle, modern props, generic crime-thriller style, and any text copied from copyrighted translations.
+The film should feel like a conscience closing in. Keep the visual pressure in rooms, faces, hands, thresholds, keys, candlelight, rain-dark stone, official paper, and cold dawn. Do not allow modern props, platform text, visible watermarks, glossy fantasy lighting, handsome fashion-model casting, or exposed weapon imagery to dominate the film.

@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.cache import BuildCache
-from narrascape.config import ImageProvider, NarrascapeConfig, Script, load_script
+from narrascape.config import (
+    DEFAULT_VISUAL_STYLE,
+    ImageProvider,
+    NarrascapeConfig,
+    Script,
+    load_script,
+)
 from narrascape.pipeline_approval import PipelineApproval
 from narrascape.stages.animatic import AnimaticStage
 from narrascape.stages.audio import AudioRemixStage, AudioStage
@@ -29,13 +35,16 @@ from narrascape.stages.generate_video import GenerateVideoStage
 from narrascape.stages.humanize import HumanizeStage
 from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.pre_production import PreProductionStage
+from narrascape.stages.production_readiness import ProductionReadinessStage
 from narrascape.stages.qa import QAStage
 from narrascape.stages.reference_plate import ReferencePlateStage
+from narrascape.stages.remotion_preview import RemotionPreviewStage
 from narrascape.stages.research import ResearchStage
 from narrascape.stages.rework_execute import ReworkExecuteStage
 from narrascape.stages.rework_plan import ReworkPlanStage
 from narrascape.stages.screenplay_structure import ScriptSceneDirectorStage
 from narrascape.stages.source_media import SourceMediaStage
+from narrascape.stages.storyboard_sheet import StoryboardSheetStage
 from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.take_select import TakeSelectStage
 from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
@@ -48,6 +57,17 @@ from narrascape.utils.safe_io import (
 )
 
 logger = logging.getLogger("narrascape.pipeline")
+
+STRICT_DIRECTOR_BLOCKED_STATUSES = {"fallback_after_error", "not_configured"}
+
+STRICT_DIRECTOR_ARTIFACTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "pre_production": ("pre_production.yaml", ("director_process",)),
+    "design": ("design_report.yaml", ("director_process",)),
+    "director_contract": ("director_contract.yaml", ("compile_process",)),
+    "take_select": ("take_selection.yaml", ("selection_process",)),
+    "creative_review": ("creative_review.yaml", ("review_process",)),
+    "visual_semantic_qa": ("visual_semantic_report.yaml", ("review_process",)),
+}
 
 
 # ═══════════════════════════════════════════
@@ -65,12 +85,15 @@ ALL_STAGES: list[type[Stage]] = [
     ScriptSceneDirectorStage,
     DirectorContractStage,
     ReferencePlateStage,
+    StoryboardSheetStage,
     AnimaticStage,
+    ProductionReadinessStage,
     GenerateImagesStage,
     GenerateVideoStage,
     TakeSelectStage,
     GenerateTTSStage,
     FilmTimelineStage,
+    RemotionPreviewStage,
     FilmAssembleStage,
     GenerateMusicStage,
     AudioRemixStage,
@@ -191,7 +214,7 @@ class PipelineState:
         atomic_write_json(self.state_path, self.data)
 
     def get_stage_status(self, name: str) -> str:
-        return self.data.get("stages", {}).get(name, "pending")
+        return str(self.data.get("stages", {}).get(name, "pending"))
 
     def set_stage_status(self, name: str, status: str) -> None:
         def update(data: dict[str, Any]) -> None:
@@ -310,7 +333,7 @@ class Pipeline:
         from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
         from narrascape.stages.write import WriteStage
 
-        style = self.config.images.style if self.config.images else "cinematic documentary"
+        style = self.config.images.style if self.config.images else DEFAULT_VISUAL_STYLE
         image_provider = self.config.images.provider if self.config.images else None
         lean_reference_pass = image_provider == ImageProvider.AGNES
 
@@ -368,6 +391,8 @@ class Pipeline:
             "screenplay_structure",
             "director_contract",
             "reference_plate",
+            "storyboard_sheet",
+            "production_readiness",
             "generate_images",
             "animatic",
             "generate_tts",
@@ -378,6 +403,7 @@ class Pipeline:
         stages.extend(
             [
                 "film_timeline",
+                "remotion_preview",
                 "film_assemble",
                 "generate_music",
                 "remix_audio",
@@ -521,6 +547,23 @@ class Pipeline:
                     logger.info(
                         f"[{stage_name}] Already completed and approved (skip with --force to rebuild)"
                     )
+                    strict_ok, strict_reason = self._strict_director_check(stage_name)
+                    if not strict_ok:
+                        result = StageResult(
+                            stage_name,
+                            False,
+                            message=strict_reason,
+                            metadata={
+                                "strict_director": True,
+                                "strict_director_reason": strict_reason,
+                                "cached_artifact": True,
+                            },
+                        )
+                        results[stage_name] = result
+                        self.state.set_stage_status(stage_name, "failed")
+                        logger.error(f"[{stage_name}] Failed: {result.message}")
+                        self._mark_remaining_pending(execution_order, stage_name)
+                        break
                     results[stage_name] = StageResult(
                         stage_name, True, message="skipped (cached + approved)"
                     )
@@ -561,6 +604,22 @@ class Pipeline:
                     message=f"Exception: {e}",
                     duration_seconds=time.monotonic() - start,
                 )
+
+            if result.success:
+                strict_ok, strict_reason = self._strict_director_check(stage_name)
+                if not strict_ok:
+                    result = StageResult(
+                        stage_name,
+                        False,
+                        outputs=result.outputs,
+                        message=strict_reason,
+                        duration_seconds=result.duration_seconds,
+                        metadata={
+                            **result.metadata,
+                            "strict_director": True,
+                            "strict_director_reason": strict_reason,
+                        },
+                    )
 
             results[stage_name] = result
 
@@ -647,6 +706,71 @@ class Pipeline:
             return True
         return stage_name in {"source_media", "footage_edit"}
 
+    def _strict_director_check(self, stage_name: str) -> tuple[bool, str]:
+        if not getattr(self.config.pipeline, "strict_director", False):
+            return True, ""
+        spec = STRICT_DIRECTOR_ARTIFACTS.get(stage_name)
+        if not spec:
+            return True, ""
+        artifact_name, process_paths = spec
+        path = self.config.pipeline_dir / artifact_name
+        if not path.exists():
+            return False, (
+                "Strict director mode rejected "
+                f"{stage_name}: missing director artifact {path.as_posix()}"
+            )
+        try:
+            artifact = load_yaml_mapping(path)
+        except Exception as exc:
+            return False, (
+                "Strict director mode rejected "
+                f"{stage_name}: could not read {artifact_name}: {exc}"
+            )
+
+        statuses = self._director_llm_statuses(artifact, process_paths)
+        blocked = [
+            status for status in statuses if status.lower() in STRICT_DIRECTOR_BLOCKED_STATUSES
+        ]
+        if blocked:
+            return False, (
+                "Strict director mode rejected "
+                f"{stage_name}: artifact {artifact_name} contains blocked LLM status "
+                f"{', '.join(blocked)}"
+            )
+        if not statuses:
+            return False, (
+                "Strict director mode rejected "
+                f"{stage_name}: artifact {artifact_name} does not expose llm_status"
+            )
+        return True, ""
+
+    def _director_llm_statuses(
+        self,
+        artifact: dict[str, Any],
+        process_paths: tuple[str, ...],
+    ) -> list[str]:
+        statuses: list[str] = []
+        for path in process_paths:
+            value: Any = artifact
+            for part in path.split("."):
+                if not isinstance(value, dict):
+                    value = None
+                    break
+                value = value.get(part)
+            self._collect_llm_statuses(value, statuses)
+        return statuses
+
+    def _collect_llm_statuses(self, value: Any, statuses: list[str]) -> None:
+        if isinstance(value, dict):
+            status = value.get("llm_status")
+            if status:
+                statuses.append(str(status))
+            for item in value.values():
+                self._collect_llm_statuses(item, statuses)
+        elif isinstance(value, list):
+            for item in value:
+                self._collect_llm_statuses(item, statuses)
+
     def _supervisor_next_stages(self) -> list[str]:
         path = self.config.pipeline_dir / "film_supervisor.yaml"
         if not path.exists():
@@ -684,10 +808,10 @@ class Pipeline:
                 flattened.extend(self._flatten_output_values(item))
             return flattened
         if isinstance(value, (list, tuple, set)):
-            flattened: list[str | Path] = []
+            sequence_values: list[str | Path] = []
             for item in value:
-                flattened.extend(self._flatten_output_values(item))
-            return flattened
+                sequence_values.extend(self._flatten_output_values(item))
+            return sequence_values
         return []
 
     def _completed_outputs_present(self, stage_name: str, stage: Stage) -> bool:
@@ -818,6 +942,13 @@ class Pipeline:
             )
         if stages is None or "film_timeline" in stages:
             dirs_to_clean.append(self.config.project_dir / "film_timeline.yaml")
+        if stages is None or "remotion_preview" in stages:
+            dirs_to_clean.extend(
+                [
+                    self.config.pipeline_dir / "remotion_preview.yaml",
+                    self.config.pipeline_dir / "remotion_preview",
+                ]
+            )
         if stages is None or "film_assemble" in stages:
             dirs_to_clean.extend(
                 [
@@ -848,6 +979,16 @@ class Pipeline:
             dirs_to_clean.append(self.config.pipeline_dir / "director_contract.yaml")
         if stages is None or "reference_plate" in stages:
             dirs_to_clean.append(self.config.pipeline_dir / "reference_plates.yaml")
+        if stages is None or "storyboard_sheet" in stages:
+            dirs_to_clean.extend(
+                [
+                    self.config.pipeline_dir / "storyboard_sheet.yaml",
+                    self.config.pipeline_dir / "storyboard_sheet.png",
+                    self.config.pipeline_dir / "storyboard_sheet.pdf",
+                ]
+            )
+        if stages is None or "production_readiness" in stages:
+            dirs_to_clean.append(self.config.pipeline_dir / "production_readiness.yaml")
         if stages is None or "animatic" in stages:
             dirs_to_clean.extend(
                 [

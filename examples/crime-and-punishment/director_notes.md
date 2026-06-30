@@ -2,9 +2,9 @@
 
 ## Core Direction
 
-The film should feel like a conscience closing in. Do not stage it as a modern murder thriller. The camera should stay intimate, patient, and morally uncomfortable: low ceilings, narrow corridors, sweaty faces, yellow wallpaper, candlelight, wet cobblestones, icons, paper, and hands.
+Treat the film as a pressure chamber for conscience. The camera is not hunting action; it is watching a theory collapse inside a body. Every shot should be executable as AI image/video prompt material: visible subject, locked wardrobe, concrete action, one camera idea, one lighting idea, and one continuity purpose.
 
-Supernatural imagery is not needed. If the film becomes surreal, it should come from fever, repetition, reflections, and soundless pauses, not fantasy effects.
+Do not make a stylish murder trailer. Do not make a museum postcard. Do not make Raskolnikov attractive in a clean theatrical way. The desired image is severe, period-real, morally uncomfortable, and physically specific.
 
 ## Character Bible
 
@@ -12,105 +12,112 @@ Supernatural imagery is not needed. If the film becomes surreal, it should come 
 
 - Role: former student, murderer, divided conscience.
 - Age: early 20s.
-- Face and body: gaunt face, hollow eyes, high cheekbones, unsteady posture, nervous hands.
-- Wardrobe lock: worn dark student coat, faded waistcoat, loose collar, scuffed boots, old cap.
-- Behavior: alternates between cold abstraction and sudden fear; avoids direct eye contact until confession.
-- Negative anchors: not glamorous, not heroic, not modern, no leather trench coat, no detective styling.
+- Face and body: gaunt Slavic face, hollow sleepless gray eyes, high cheekbones, pale uneven skin, damp dark-brown hair falling over the forehead, thin body, tense shoulders, nervous hands.
+- Wardrobe lock: worn dark wool student coat, faded brown waistcoat, loose off-white collar, scuffed black boots, old dark cap; clothing stays poor and rumpled.
+- Behavior: avoids direct eye contact, freezes suddenly, moves like he is listening to an inner argument, never heroic.
+- Negative anchors: not handsome fashion model, not clean, not muscular, not modern, no leather trench coat, no detective styling, no visible axe in frame unless explicitly described as concealed.
 
 ### sonya
 
 - Role: moral witness and fragile mercy.
 - Age: late teens to early 20s.
-- Face and body: pale face, tired eyes, small but steady presence.
-- Wardrobe lock: plain faded brown dress, modest shawl, small cross at neck, worn gloves.
-- Behavior: stillness under pressure; looks directly when others cannot.
-- Negative anchors: not saintly glow, not theatrical costume, no modern makeup, no luxury styling.
+- Face and body: pale tired face, slight body, steady eyes, restrained grief, small presence that holds the room.
+- Wardrobe lock: plain faded brown dress, modest gray-brown shawl, small cross at neck, worn gloves or folded hands.
+- Behavior: stillness under pressure, looks directly when others cannot, never decorative.
+- Negative anchors: no saintly glow, no glamor makeup, no luxury dress, no fantasy halo, no modern styling.
 
 ### porfiry
 
 - Role: investigating magistrate, psychological pressure.
 - Age: 40s.
-- Face and body: rounded face, alert eyes, relaxed posture that hides precision.
+- Face and body: rounded face, alert eyes, receding hairline, relaxed posture, hands folded or holding papers, calm mouth.
 - Wardrobe lock: dark civil-service coat, neat waistcoat, pocket watch, simple spectacles.
-- Behavior: courteous, patient, almost amused; questions feel casual until they trap.
-- Negative anchors: not uniformed police brute, not villain, not modern detective.
+- Behavior: courteous, patient, almost amused; traps by listening.
+- Negative anchors: not uniformed police brute, not villain, not modern detective, no gun, no badge, no computer.
 
 ### pawnbroker
 
-- Role: target of Raskolnikov's theory and victim of his crime.
+- Role: victim of Raskolnikov's theory and owner of the apartment trap.
 - Age: elderly.
-- Face and body: small, suspicious, sharp movements, guarded hands.
-- Wardrobe lock: dark old dress, headscarf, keys at waist, small metal spectacles.
-- Behavior: measures every object and every visitor.
-- Negative anchors: not caricature witch, no horror makeup, no fantasy miser styling.
+- Face and body: small suspicious woman, narrow eyes, sharp nose, guarded hands, quick measuring movements.
+- Wardrobe lock: dark old dress, plain headscarf, small metal spectacles, keys at waist.
+- Behavior: defensive, practical, suspicious.
+- Negative anchors: not witch, not monster, no horror makeup, no fantasy miser styling.
 
 ## Scene Bible
 
 ### petersburg_street
 
-- Core look: 1860s Petersburg alley, wet cobblestones, canal fog, yellow plaster walls, narrow shopfronts, horse carts only in distance.
-- Lighting: humid summer haze, green-gray sky, dirty reflected light.
-- Continuity: the city must feel crowded but spiritually isolating.
+- Core look: 1860s Saint Petersburg canal street, wet cobblestones, yellow plaster walls, narrow shopfronts without readable signs, distant horse cart, heavy humid air.
+- Lighting: dirty green-gray daylight, canal fog, weak sky reflection on black stone.
+- Continuity: crowded enough to judge him, lonely enough to isolate him.
 
 ### rented_room
 
-- Core look: Raskolnikov's attic-like rented room, yellow wallpaper, sloped ceiling, narrow bed, small table, cracked cup, worn books.
+- Core look: Raskolnikov's attic-like rented room, yellow wallpaper, sloped ceiling, narrow bed, old books, cracked cup, tiny table, threadbare coat hook.
 - Lighting: sickly window light by day, weak candle by night.
-- Continuity: never make it spacious or clean.
+- Continuity: never spacious, never clean, never theatrical.
 
 ### pawnbroker_flat
 
-- Core look: cramped apartment, heavy door chain, keys, trunk, icons, faded carpet, low candlelight.
-- Lighting: hot interior shadows, small hard highlights on metal keys.
-- Continuity: violence should be implied through framing, objects, and aftermath rather than graphic spectacle.
+- Core look: cramped apartment behind a heavy door chain, keys, trunk, icon corner, faded carpet, narrow hallway, low furniture.
+- Lighting: hot candle shadows, hard metal highlights on keys.
+- Continuity: violence is implied through doors, hands, fallen objects, and silence.
 
 ### police_office
 
-- Core look: papers, ink, dark wood, frosted windows, official chairs placed too close together.
+- Core look: magistrate office with dark wood desk, papers, ink, official chairs too close together, frosted windows.
 - Lighting: gray daylight and small lamp pools.
-- Continuity: Porfiry's calm must dominate the room.
+- Continuity: Porfiry's calm dominates the geometry; no modern police visual language.
 
 ### sonya_room
 
-- Core look: poor but carefully kept room, icon corner, thin blanket, candle, worn book, simple chair.
+- Core look: poor but carefully kept room, small icon corner, candle, worn book, thin blanket, simple chair, cold window.
 - Lighting: warm candle against cold window.
-- Continuity: this is the moral center, not a decorative poverty tableau.
+- Continuity: the moral center of the film; poverty is not decorative.
+
+### public_square
+
+- Core look: rain-dark public square, wet cobblestones, blurred period crowd, open space that feels more exposing than free.
+- Lighting: overcast gray daylight with black reflections underfoot.
+- Continuity: public confession should feel bodily and humiliating, not theatrical.
 
 ### siberian_yard
 
-- Core look: prison yard near a river, snow crust, rough timber, gray dawn, distant church shape.
+- Core look: prison yard near a cold river, rough timber fence, snow crust, gray dawn, distant church shape, other prisoners blurred.
 - Lighting: pale cold dawn.
-- Continuity: no grand redemption spectacle; only a quiet opening.
+- Continuity: no grand redemption spectacle; only endurance and a small opening.
 
 ## Visual Motifs
 
-- Yellow as illness, pride, and city heat.
+- Yellow as sickness, pride, and heat.
 - Doors and thresholds as moral choice.
-- Hands as evidence: gripping, hiding, trembling, releasing.
-- Water and cobblestones as public conscience.
-- Icons and candlelight as judgment without melodrama.
+- Hands as evidence: hiding, gripping, trembling, releasing.
+- Wet cobblestones as public conscience.
+- Candlelight and icons as quiet judgment.
+- Cross as responsibility, not instant absolution.
 
 ## Storyboard Intent
 
-- `sb_01_01`: Establish Petersburg pressing inward: narrow street, canal fog, Raskolnikov small in frame.
-- `sb_02_01`: Raskolnikov in his rented room hiding the axe inside his coat.
-- `sb_03_01`: Pawnbroker's door chain, keys, and suspicious face in candlelit close quarters.
-- `sb_04_01`: Aftermath implied: fallen keys, overturned chair, Raskolnikov's hand shaking at frame edge.
-- `sb_05_01`: Stolen objects buried beneath a stone while daylight feels accusatory.
-- `sb_06_01`: Fever walk through streets where faces seem to know him.
-- `sb_07_01`: Porfiry leaning back in the office, polite smile, Raskolnikov trapped by empty space.
-- `sb_08_01`: Sonya listening in her room, candle between her and Raskolnikov.
-- `sb_09_01`: Raskolnikov kneeling or collapsing inward before confession, no theatrical pose.
-- `sb_10_01`: Public square and wet cobblestones, city around him as he accepts guilt.
-- `sb_11_01`: Siberian yard, Raskolnikov isolated but no longer performing superiority.
-- `sb_12_01`: Dawn by the river, Sonya distant, Raskolnikov holding the cross or touching his chest.
+- `sb_01_01`: Petersburg presses inward; Raskolnikov is small in the lower third, city walls taller than him.
+- `sb_02_01`: Rented room, waist-up Raskolnikov tightening his coat; the concealed object creates only a subtle shape under cloth, no visible axe.
+- `sb_03_01`: Door-chain close quarters; pawnbroker and keys dominate foreground, Raskolnikov half-seen beyond the chain.
+- `sb_04_01`: Aftermath without gore; fallen keys, overturned chair, Raskolnikov's trembling hand at frame edge.
+- `sb_05_01`: Courtyard stone; his hands hide small objects while his face stays haunted in shallow focus.
+- `sb_06_01`: Fever street; Raskolnikov moves through blurred period faces that seem to glance toward him.
+- `sb_07_01`: Porfiry office two-shot; Porfiry relaxed in foreground, Raskolnikov trapped by desk and empty space.
+- `sb_08_01`: Sonya room; candle between Sonya and Raskolnikov, her cross small but readable.
+- `sb_09_01`: Confession begins in posture; Raskolnikov's hands open, Sonya stays still, no theatrical kneeling.
+- `sb_10_01`: Public square; Raskolnikov bends into the wet stones while the crowd remains blurred.
+- `sb_11_01`: Siberian yard; Raskolnikov isolated in cold dawn, stripped of intellectual performance.
+- `sb_12_01`: River dawn; close hand on small cross, Sonya distant, pale light, responsibility rather than relief.
 
 ## QA Must Check
 
-- Raskolnikov's worn student coat and gaunt look remain consistent.
-- Sonya's plain dress, shawl, and small cross remain visible in her key shots.
-- Porfiry appears as a civil magistrate, not a modern detective.
-- Petersburg stays 19th-century: no cars, neon, modern signs, or contemporary police props.
-- The pawnshop, rented room, police office, Sonya room, and Siberian yard stay visually distinct.
-- Generated clips should cover the confession arc; image fallback is acceptable only for preview.
-- No placeholder image text remains in production output.
+- Raskolnikov keeps the same gaunt face, damp dark-brown hair, worn student coat, faded waistcoat, loose collar, scuffed boots, and old cap.
+- Segment 2 must not show an exposed axe, blade, handle, or heroic weapon pose.
+- Sonya's plain dress, modest shawl, and small cross remain visible in segments 8, 9, and 12.
+- Porfiry is a civil magistrate, not a modern detective or uniformed officer.
+- All locations remain 19th-century: no cars, neon, modern signs, app labels, computers, guns, modern police props, electric lights, logos, or readable platform text.
+- Generated clips must cover the confession arc; image fallback is acceptable only in preview configuration.
+- No placeholder text, `AI生成`, `即梦AI`, watermarks, subtitles, poster typography, or platform labels can remain in production output.

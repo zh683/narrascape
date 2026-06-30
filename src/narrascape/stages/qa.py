@@ -358,9 +358,8 @@ class QAStage(Stage):
         for clip in clips:
             if clip.get("source") not in ("generated_video", "source_media"):
                 continue
-            try:
-                segment_id = int(clip.get("segment_id"))
-            except (TypeError, ValueError):
+            segment_id = self._to_int(clip.get("segment_id"))
+            if segment_id is None:
                 continue
             rel_path = clip.get("path")
             if not rel_path or not (context.config.project_dir / rel_path).exists():
@@ -383,7 +382,9 @@ class QAStage(Stage):
                     and previous.get("location_id") != clip.get("location_id")
                 )
                 if same_characters and location_changed:
-                    risks.append(int(clip.get("segment_id")))
+                    segment_id = self._to_int(clip.get("segment_id"))
+                    if segment_id is not None:
+                        risks.append(segment_id)
             previous = clip
         return sorted(set(risks))
 
@@ -392,12 +393,22 @@ class QAStage(Stage):
         for clip in clips:
             try:
                 duration = float(clip.get("duration") or 0.0)
-                segment_id = int(clip.get("segment_id"))
             except (TypeError, ValueError):
+                continue
+            segment_id = self._to_int(clip.get("segment_id"))
+            if segment_id is None:
                 continue
             if duration < 2.5 or duration > 10.0:
                 risks.append(segment_id)
         return sorted(set(risks))
+
+    def _to_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _parse_volume(self, output: str, key: str) -> float | None:
         marker = f"{key}:"

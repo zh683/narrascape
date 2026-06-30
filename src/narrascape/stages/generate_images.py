@@ -168,7 +168,7 @@ class GenerateImagesStage(Stage):
         done = set(state.get("done", []))
 
         # Load ref image
-        ref_image_b64 = None
+        ref_image_b64: str | list[str] | None = None
         if self.ref_image:
             ref_image_b64 = self._load_ref_image(self.ref_image)
             logger.info(f"Reference image: {self.ref_image}")
@@ -290,7 +290,7 @@ class GenerateImagesStage(Stage):
 
     # ── Internal methods ───────────────────────────
 
-    def _load_state(self, path: Path) -> dict:
+    def _load_state(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={"done": [], "errors": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:
@@ -311,6 +311,9 @@ class GenerateImagesStage(Stage):
         if provider == "agnes":
             return max(self.sleep_between, 65.0)
         return self.sleep_between
+
+    def _json_object(self, value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
 
     def _generate_local_placeholder(
         self, prompt: Any, out: Path, index: int, config: NarrascapeConfig
@@ -362,7 +365,7 @@ class GenerateImagesStage(Stage):
 
         try:
             st = ShotType(shot_type)
-            return SHOT_SIZE_MAP.get(st, "2560x1440")
+            return str(SHOT_SIZE_MAP.get(st, "2560x1440") or "2560x1440")
         except ValueError:
             return "2560x1440"
 
@@ -443,6 +446,8 @@ class GenerateImagesStage(Stage):
             if b64_json:
                 self._write_b64_image(b64_json, tmp)
             else:
+                if img_url is None:
+                    raise RuntimeError("image response did not include a downloadable URL")
                 download_to_path(
                     img_url,
                     tmp,
@@ -472,19 +477,23 @@ class GenerateImagesStage(Stage):
 
     def _post_image_request(self, req: urllib.request.Request, *, provider: str) -> dict[str, Any]:
         if provider == "agnes":
-            return retry_with_backoff(
-                lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
-                max_retries=4,
-                base_delay=65.0,
-                max_delay=75.0,
-                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                on_retry=self._log_agnes_retry,
+            return self._json_object(
+                retry_with_backoff(
+                    lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
+                    max_retries=4,
+                    base_delay=65.0,
+                    max_delay=75.0,
+                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                    on_retry=self._log_agnes_retry,
+                )
             )
-        return retry_with_backoff(
-            lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
-            max_retries=3,
-            base_delay=2.0,
-            retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+        return self._json_object(
+            retry_with_backoff(
+                lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
+                max_retries=3,
+                base_delay=2.0,
+                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+            )
         )
 
     def _log_agnes_retry(self, exc: Exception, attempt: int, delay: float) -> None:
@@ -588,7 +597,7 @@ class GenerateImagesStage(Stage):
             item = data_field
         img_url = item.get("url") or response.get("url") or response.get("image_url")
         b64_json = item.get("b64_json") or response.get("b64_json")
-        return img_url, b64_json
+        return str(img_url) if img_url else None, str(b64_json) if b64_json else None
 
     def _write_b64_image(self, value: str, path: Path) -> None:
         raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
@@ -635,11 +644,13 @@ class GenerateImagesStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = retry_with_backoff(
-                lambda: json.loads(urllib.request.urlopen(req, timeout=300).read().decode()),
-                max_retries=3,
-                base_delay=2.0,
-                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+            r = self._json_object(
+                retry_with_backoff(
+                    lambda: json.loads(urllib.request.urlopen(req, timeout=300).read().decode()),
+                    max_retries=3,
+                    base_delay=2.0,
+                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                )
             )
         except Exception as e:
             logger.error(f"HTTP/API error: {e}")

@@ -14,14 +14,18 @@ Narrascape is a staged video-production pipeline for narration-driven documentar
 - [Configuration Reference](config-reference.md): `config.yaml` and script schema.
 - [Provider Governance](provider-governance.md): provider registry, selector scoring, source media, and QA.
 - [Film Capability Roadmap](film-capability-roadmap.md): path from video pipeline to AI film studio.
+- [Type Checking](type-checking.md): enforced mypy gate and expansion plan.
 - [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md): pre-production assets.
+- [Storyboard Sheet Stage](agent-stages/storyboard_sheet.md): review board for storyboard frames.
+- [Remotion Preview Stage](agent-stages/remotion_preview.md): visual timeline handoff from `film_timeline.yaml`.
 - [Style Consistency](style-consistency.md): reference images and consistency rules.
 
 ## Default Build Graph
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
--> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
+-> storyboard_sheet -> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
+-> remotion_preview
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -59,6 +63,7 @@ build.
 | `take_select` | Multi-take selection when takes exist | `pipeline/<name>/take_selection.yaml` |
 | `generate_tts` | Generate narration audio and timing | `assets/tts/*.mp3`, `pipeline/<name>/timing.json` |
 | `film_timeline` | Build unified film timeline | `film_timeline.yaml` |
+| `remotion_preview` | Export a Remotion visual timeline handoff | `pipeline/<name>/remotion_preview.yaml`, `pipeline/<name>/remotion_preview/` |
 | `film_assemble` | Render the film timeline visual track | `pipeline/<name>/film_assembled.mp4`, `pipeline/<name>/timeline_segments/*.mp4` |
 | `generate_music` | Generate BGM zones | `assets/music/*.mp3` |
 | `remix_audio` | Mix narration and BGM | `pipeline/<name>/mixed_audio.mp3` |

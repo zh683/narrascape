@@ -104,8 +104,8 @@ class TakeSelectStage(Stage):
         qa_report: dict[str, Any],
         context: StageContext,
     ) -> tuple[dict[str, Any], bool, str | None]:
-        scored = []
-        risky_segments = set()
+        scored: list[dict[str, Any]] = []
+        risky_segments: set[int] = set()
         checks = qa_report.get("checks", {}) if isinstance(qa_report, dict) else {}
         for key in (
             "missing_video_clips",
@@ -113,7 +113,11 @@ class TakeSelectStage(Stage):
             "pacing_risk_segments",
             "missing_generated_video_segments",
         ):
-            risky_segments.update(int(item) for item in checks.get(key, []) or [])
+            for item in checks.get(key, []) or []:
+                try:
+                    risky_segments.add(int(item))
+                except (TypeError, ValueError):
+                    continue
         for take in takes:
             score = float(take["bytes"])
             if segment_id in risky_segments:
@@ -213,4 +217,5 @@ class TakeSelectStage(Stage):
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}

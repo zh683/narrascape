@@ -19,7 +19,7 @@
 2. If an LLM client is configured, ask it to act as a top-tier film director and prompt compiler.
 3. For every shot, compile story purpose, emotional target, film language, continuity constraints, storyboard binding, generation instructions, and QA assertions.
 4. Write `generation.video_prompt`, `generation.negative_prompt`, `generation.duration`, and `generation.motion` as the portable execution contract.
-5. Compile provider-specific prompt variants under `generation.compiled_prompts`, currently including `seedance`, `agnes`, and `generic`, with each provider's prompt style, negative prompt, and reference strategy.
+5. Compile provider-specific prompt variants under `generation.compiled_prompts`, especially `seedance` plus a `generic` fallback, with the provider prompt style, negative prompt, and reference strategy.
 6. Write `storyboard_binding.storyboard_frame_ids`, `character_positions`, `scene_ref`, `wardrobe_lock`, `composition_requirements`, and `reference_image_ids` when storyboard frames are available.
 7. Write `qa.must_show` and `qa.must_not_show` so `visual_semantic_qa` can review the same contract that guided generation.
 

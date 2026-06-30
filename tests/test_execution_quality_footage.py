@@ -628,7 +628,7 @@ def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(tmp_p
                                 "Mira stands in a green-lit research lab, wearing a field "
                                 "coat with a brass name pin, restrained medium shot with "
                                 "slow camera drift across the lab bench. Cinematic "
-                                "photorealistic motion with coherent physical detail."
+                                "oil-painted motion with visible brush texture and coherent physical detail."
                             ),
                             "compiled_prompts": {
                                 "agnes": {
@@ -636,7 +636,7 @@ def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(tmp_p
                                         "Mira stands in a green-lit research lab, wearing a "
                                         "field coat with a brass name pin, restrained medium "
                                         "shot with slow camera drift across the lab bench. "
-                                        "Cinematic photorealistic motion with coherent "
+                                        "Cinematic oil-painted motion with visible brush texture and coherent "
                                         "physical detail."
                                     ),
                                     "negative_prompt": "watermark, extra limbs",

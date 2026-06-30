@@ -39,6 +39,7 @@ budget_state.json
 *_state.json
 render_report.yaml
 film_timeline.yaml
+remotion_preview.yaml
 asset_manifest.yaml
 footage_timeline.yaml
 design_report.yaml
@@ -62,6 +63,9 @@ examples/**/assets/references/
 examples/**/assets/storyboard/
 video_segments/
 timeline_segments/
+remotion_preview/
+**/remotion_preview/node_modules/
+**/remotion_preview/out/
 *.mp4
 *.mov
 *.mkv

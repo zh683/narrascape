@@ -26,6 +26,7 @@
 6. Add narration clip references for every script segment.
 7. Add music zone references and subtitle references when present.
 8. Record coverage for generated-video, source-media, generated-image, and missing-visual segments.
+9. Leave visual preview and final rendering to downstream `remotion_preview` and `film_assemble`.
 
 ## Do Not
 

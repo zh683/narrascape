@@ -80,7 +80,7 @@ class GenerateTTSStage(Stage):
         ns = len(segments)
 
         if selection.tool.name == "local_tts":
-            durations = {}
+            durations: dict[str, float] = {}
             for seg in segments:
                 sid = seg.id
                 out = tts_dir / f"seg_{sid:02d}.mp3"
@@ -263,7 +263,7 @@ class GenerateTTSStage(Stage):
 
     # ── Helpers ───────────────────────────
 
-    def _load_state(self, path: Path) -> dict:
+    def _load_state(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={"done": [], "errors": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:

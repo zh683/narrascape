@@ -51,15 +51,15 @@ Configured media providers include:
 
 | Capability | Provider options | Credential |
 | --- | --- | --- |
-| image_generation | `seedream`, `agnes`, `local` | `ARK_API_KEY` or `AGNES_API_KEY` |
-| video_generation | `seedance`, `agnes` | `ARK_API_KEY` or `AGNES_API_KEY` |
+| image_generation | `seedream`, `local` | `ARK_API_KEY` |
+| video_generation | `seedance` | `ARK_API_KEY` |
 | tts | `minimax`, `local` | `MINIMAX_API_KEY` |
 | music | `minimax`, `local` | `MINIMAX_API_KEY` |
 
-Agnes image generation follows the official `/v1/images/generations` payload
-shape, including `extra_body.response_format`. Agnes video generation creates
-`/v1/videos` tasks and polls the returned `video_id`, then writes the same
-`assets/videos/vid_*.mp4` files consumed by timeline assembly and QA.
+Seedream and Seedance are the canonical production media providers for new
+projects. The registry still contains Agnes compatibility entries for older
+configs, but the supported production route is `seedream -> seedance` with
+`ARK_API_KEY`.
 
 ## Canonical Artifacts
 
@@ -150,6 +150,7 @@ docs/agent-stages/design.md
 docs/agent-stages/source_media.md
 docs/agent-stages/footage_edit.md
 docs/agent-stages/film_timeline.md
+docs/agent-stages/remotion_preview.md
 docs/agent-stages/film_assemble.md
 docs/agent-stages/generate_images.md
 docs/agent-stages/generate_video.md

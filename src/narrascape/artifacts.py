@@ -61,6 +61,11 @@ SCHEMAS = {
         ("schema_version", "status", "decision", "next_stages"),
         "film_supervisor.v1",
     ),
+    "production_readiness": ArtifactSchema(
+        "production_readiness",
+        ("schema_version", "project", "status", "gates", "findings"),
+        "production_readiness.v1",
+    ),
     "film_timeline": ArtifactSchema(
         "film_timeline",
         ("schema_version", "project", "tracks", "coverage"),
@@ -71,6 +76,11 @@ SCHEMAS = {
         "reference_plates",
         ("schema_version", "status", "plates", "findings"),
         "reference_plates.v1",
+    ),
+    "remotion_preview": ArtifactSchema(
+        "remotion_preview",
+        ("schema_version", "status", "project", "composition", "assets", "commands"),
+        "remotion_preview.v1",
     ),
     "rework_execution": ArtifactSchema(
         "rework_execution",
@@ -86,6 +96,11 @@ SCHEMAS = {
         "screenplay_structure",
         ("schema_version", "grain_order", "acts", "shot_index"),
         "screenplay_structure.v1",
+    ),
+    "storyboard_sheet": ArtifactSchema(
+        "storyboard_sheet",
+        ("schema_version", "status", "project", "shot_count", "page_count", "pages", "findings"),
+        "storyboard_sheet.v1",
     ),
     "take_selection": ArtifactSchema(
         "take_selection",

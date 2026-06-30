@@ -1,7 +1,7 @@
 project:
   name: "crime-and-punishment"
   title: "罪与罚"
-  subtitle: "Narrascape public-domain AI-film prototype"
+  subtitle: "A Narrascape literary AI-film rebuild"
   author: "Narrascape"
   year: 2026
   series: "Narrascape First Film"
@@ -11,24 +11,25 @@ project:
   style: "psychological literary feature film"
 
 pipeline:
-  name: "ai-film-prototype"
+  name: "ai-film-production"
   category: "public_domain_literary_drama"
-  version: "2.0"
+  version: "3.0"
   design_overwrite: false
   video_generation: required
+  strict_director: true
   auto_rework: true
-  max_rework_cycles: 1
+  max_rework_cycles: 2
 
 llm:
   mode: ai_assistant
-  temperature: 0.7
-  max_tokens: 4000
+  temperature: 0.58
+  max_tokens: 6000
 
 tts:
   provider: local
   model: "speech-2.8-hd"
   voice_id: "male-qn-jingying"
-  speed: 0.86
+  speed: 0.84
   pitch: -2
   vol: 1.0
   sample_rate: 32000
@@ -38,33 +39,34 @@ tts:
   add_pauses: true
 
 images:
-  provider: agnes
-  model: "agnes-image-2.1-flash"
-  style: "Photorealistic 19th-century Russian psychological literary drama, 1860s Saint Petersburg, cramped yellow rooms, wet cobblestones, canal fog, candlelight, worn clothing, moral tension, 35mm cinema still, NOT anime, NOT illustration, no text, no watermark."
+  provider: seedream
+  model: "doubao-seedream-5-0-260128"
+  style: "Oil painting style, 1860s Saint Petersburg psychological literary feature film as painterly cinematic frames; visible brush texture, layered pigments, canvas grain, cramped yellow rooms, wet cobblestones, canal fog, candle and window light, worn period clothing, gaunt faces, moral pressure, rich chiaroscuro; not photorealistic photography, not anime, not cartoon, no readable text, no platform label, no watermark."
   aspect_ratio: "16:9"
   width: 1920
   height: 1080
   count: 12
 
 video:
-  provider: agnes
-  model: "agnes-video-v2.0"
+  provider: seedance
+  model: "jimeng-video-seedance-2.0"
   resolution: "720p"
   ratio: "16:9"
   duration: 5
   frame_rate: 24
+  takes: 3
 
 visual:
-  type: "ken_burns"
-  zoom_rate: 0.0006
-  zoom_cap: 1.1
-  fade_in_duration: 1.0
+  type: "film_timeline"
+  zoom_rate: 0.00045
+  zoom_cap: 1.08
+  fade_in_duration: 0.8
   supersample: auto
-  segment_gap: 0.7
+  segment_gap: 0.55
   gap_map:
-    4: 1.1
-    8: 1.3
-    10: 1.2
+    4: 0.9
+    7: 0.8
+    10: 1.0
 
 subtitles:
   engine: srt
@@ -105,22 +107,22 @@ bgm_map:
     - id: bgm_pressure
       covers: [1, 4]
       label: "Petersburg Pressure"
-      prompt: "Low cello, muted piano, distant city rumble, humid psychological tension, 52 BPM, D minor"
+      prompt: "Low cello, muted piano, distant city rumble, humid psychological pressure, 50 BPM, D minor, no melody hook"
       min_duration: 70
     - id: bgm_fever
       covers: [5, 7]
       label: "Fever Logic"
-      prompt: "Prepared piano pulses, thin strings, unstable breathing texture, restrained dread, 60 BPM, F minor"
+      prompt: "Prepared piano pulses, thin strings, unstable breath texture, restrained dread, 58 BPM, F minor"
       min_duration: 70
     - id: bgm_mercy
       covers: [8, 10]
-      label: "Sonya and Confession"
-      prompt: "Soft harmonium, solo cello, fragile candlelit mercy, slow moral surrender, 48 BPM, A minor"
+      label: "Mercy and Confession"
+      prompt: "Soft harmonium, solo cello, candlelit restraint, slow moral surrender, 46 BPM, A minor"
       min_duration: 70
     - id: bgm_dawn
       covers: [11, 12]
       label: "Siberian Dawn"
-      prompt: "Sparse strings, low piano, cold air, distant choir pad without lyrics, austere hope, 44 BPM, E minor"
+      prompt: "Sparse strings, low piano, cold dawn air, distant non-lyrical choir pad, austere hope, 42 BPM, E minor"
       min_duration: 55
 
 encode:

@@ -84,9 +84,14 @@ LIGHTING_CUES: tuple[str, ...] = (
 
 STYLE_CUES: tuple[str, ...] = (
     "cinematic",
-    "photorealistic",
     "realistic",
     "documentary",
+    "oil painting",
+    "painterly",
+    "brush texture",
+    "canvas grain",
+    "pigment",
+    "chiaroscuro",
     "film",
     "35mm",
     "high quality",
@@ -356,7 +361,7 @@ def _video_prompt_ingredients(
             "style_quality",
             _has_any_cue(prompt_text, STYLE_CUES),
             "style/quality anchor appears in prompt",
-            "add cinematic, documentary, photorealistic, or other style anchor",
+            "add oil painting, painterly brush texture, canvas grain, or another style anchor",
         ),
         _ingredient(
             "reference_binding",
@@ -445,8 +450,11 @@ def _is_concrete(value: str, generic_values: set[str]) -> bool:
 
 
 def _segment_id(shot: dict[str, Any]) -> int | None:
+    value = shot.get("segment_id")
+    if value is None:
+        return None
     try:
-        return int(shot.get("segment_id"))
+        return int(value)
     except (TypeError, ValueError):
         return None
 

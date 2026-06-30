@@ -40,6 +40,7 @@ script
   -> director_contract
   -> generate_images / generate_video / source_media
   -> film_timeline
+  -> remotion_preview
   -> film_assemble
   -> generate_tts + generate_music + remix_audio
   -> audio
@@ -144,6 +145,7 @@ script
   -> director_contract
   -> generate_images / generate_video / source_media
   -> film_timeline
+  -> remotion_preview
   -> film_assemble
   -> generate_tts + generate_music + remix_audio
   -> audio

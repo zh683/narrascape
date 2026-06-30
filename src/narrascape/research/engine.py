@@ -116,7 +116,7 @@ def load_research_report(path: str) -> ResearchResult:
 
     text = p.read_text(encoding="utf-8")
     # Simple parsing: extract sections
-    findings = {}
+    findings: dict[str, Any] = {}
     current_section = "Overview"
     lines = text.split("\n")
     for line in lines:

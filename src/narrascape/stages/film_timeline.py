@@ -237,7 +237,8 @@ class FilmTimelineStage(Stage):
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
 
     def _items_by_int_key(self, items: Any, key: str) -> dict[int, dict[str, Any]]:
         result: dict[int, dict[str, Any]] = {}

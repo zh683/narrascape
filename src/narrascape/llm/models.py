@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 logger = logging.getLogger("narrascape.llm.models")
 
@@ -21,7 +21,7 @@ class Message:
     content: str
     name: str | None = None  # For tool messages
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, str]:
         d = {"role": self.role, "content": self.content}
         if self.name:
             d["name"] = self.name
@@ -47,10 +47,21 @@ class LLMConfig:
     system_prompt: str | None = None
     json_mode: bool = False  # Force JSON output if provider supports it
 
-    def copy(self, **overrides) -> LLMConfig:
+    def copy(self, **overrides: Any) -> LLMConfig:
         """Create a copy with overrides."""
         return LLMConfig(
-            provider=overrides.get("provider", self.provider),
+            provider=cast(
+                Literal[
+                    "openai",
+                    "anthropic",
+                    "deepseek",
+                    "volcengine",
+                    "local",
+                    "bridge",
+                    "ai_assistant",
+                ],
+                overrides.get("provider", self.provider),
+            ),
             model=overrides.get("model", self.model),
             api_key=overrides.get("api_key", self.api_key),
             base_url=overrides.get("base_url", self.base_url),
@@ -73,7 +84,7 @@ class LLMResponse:
     model: str
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: str | None = None
-    raw: dict | None = None  # Provider-specific raw response
+    raw: dict[str, Any] | None = None  # Provider-specific raw response
 
     @property
     def text(self) -> str:
@@ -185,7 +196,7 @@ class PromptTemplate:
     chain_of_thought: bool = False
     reasoning_steps: list[str] | None = None
 
-    def build(self, **variables) -> list[Message]:
+    def build(self, **variables: Any) -> list[Message]:
         """Build a list of messages from template and variables."""
         messages = []
 
@@ -294,16 +305,16 @@ class LLMCallLog:
 
     timestamp: str
     template_name: str
-    messages: list[dict]
+    messages: list[dict[str, str]]
     response: str
     parsed_output: Any
     success: bool
     error: str | None = None
     latency_ms: float = 0.0
     model: str = ""
-    usage: dict = field(default_factory=dict)
+    usage: dict[str, int] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "timestamp": self.timestamp,
             "template_name": self.template_name,

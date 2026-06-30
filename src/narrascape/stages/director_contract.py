@@ -198,7 +198,8 @@ class DirectorContractStage(Stage):
                 f"Storyboard frames {', '.join(storyboard_binding['storyboard_frame_ids']) or 'none'}; "
                 f"character positions: {', '.join(storyboard_binding['character_positions']) or 'unspecified'}; "
                 f"composition requirements: {', '.join(storyboard_binding['composition_requirements']) or 'serve the story beat'}. "
-                f"Visual details: {image_prompt}. Cinematic motion, coherent continuity, high quality."
+                f"Visual details: {image_prompt}. Oil painting style, visible brush texture, "
+                f"cohesive painterly color palette, cinematic motion, coherent continuity, high quality."
             )
             shots.append(
                 self._with_compiled_prompts(
@@ -228,7 +229,7 @@ class DirectorContractStage(Stage):
                             "motion": movement,
                         },
                         "qa": {
-                            "must_show": self._must_show(characters, location, wardrobe),
+                            "must_show": self._must_show(characters, location_text, wardrobe_text),
                             "must_not_show": self._must_not_show(negative),
                         },
                     }
@@ -243,7 +244,9 @@ class DirectorContractStage(Stage):
         storyboard_by_segment: dict[int, list[dict[str, Any]]],
         context: StageContext,
     ) -> dict[str, Any]:
-        segment_id = int(shot.get("segment_id"))
+        segment_id = _to_int(shot.get("segment_id"))
+        if segment_id is None:
+            segment_id = 0
         design_item = design_by_segment.get(segment_id, {})
         generation = shot.get("generation", {}) if isinstance(shot.get("generation"), dict) else {}
         qa = shot.get("qa", {}) if isinstance(shot.get("qa"), dict) else {}
@@ -346,11 +349,15 @@ class DirectorContractStage(Stage):
         return value.lower().startswith("visualize the narration as a clear ")
 
     def _design_by_segment(self, design: dict[str, Any]) -> dict[int, dict[str, Any]]:
-        return {
-            int(item.get("segment_id")): item
-            for item in design.get("segments", []) or []
-            if item.get("segment_id") is not None
-        }
+        result: dict[int, dict[str, Any]] = {}
+        for item in design.get("segments", []) or []:
+            if not isinstance(item, dict):
+                continue
+            segment_id = _to_int(item.get("segment_id"))
+            if segment_id is None:
+                continue
+            result[segment_id] = item
+        return result
 
     def _characters_from_design(self, design_item: dict[str, Any]) -> list[str]:
         return list(design_item.get("character_ids") or design_item.get("character_refs") or [])
@@ -544,3 +551,12 @@ class DirectorContractStage(Stage):
             if path.exists():
                 return path
         return paths[0]
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

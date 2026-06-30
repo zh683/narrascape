@@ -36,6 +36,9 @@ pre_production -> design -> image_prompts.yaml + image_map.yaml
         |        reference_plate -> reference_plates.yaml
         |             |
         |             v
+        |        storyboard_sheet -> storyboard_sheet.yaml + storyboard_sheet.png + storyboard_sheet.pdf
+        |             |
+        |             v
         |        generate_images -> assets/images/*.png
         |             |
         |             v
@@ -50,6 +53,8 @@ pre_production -> design -> image_prompts.yaml + image_map.yaml
 generate_tts -> assets/tts/*.mp3 + pipeline/<project>/timing.json
         |
 film_timeline -> film_timeline.yaml
+        |
+remotion_preview -> pipeline/<project>/remotion_preview/
         |
 film_assemble -> pipeline/<project>/film_assembled.mp4
         |
@@ -110,7 +115,7 @@ Requested stages are expanded with transitive dependencies and sorted topologica
 ```text
 subtitles
 -> pre_production, design, generate_images, generate_tts, film_timeline,
-   film_assemble, generate_music, remix_audio, audio, subtitles
+   remotion_preview, film_assemble, generate_music, remix_audio, audio, subtitles
 ```
 
 This prevents users from needing to memorize the whole graph.
@@ -165,9 +170,17 @@ director layers:
 - `reference_plate` reads `director_contract.yaml`, `pre_production.yaml`, and
   the design report, then writes `reference_plates.yaml` with the resolved
   per-shot style, character, scene, storyboard, provider-prompt, and QA handoff.
+- `storyboard_sheet` reads the storyboard data, reference plates, and image map,
+  then renders a 12-up review board as `storyboard_sheet.png` and
+  `storyboard_sheet.pdf` while keeping a YAML summary for downstream inspection.
 - `animatic` reads storyboard frames, reference plates, generated images, and
   timing data, then writes a low-cost preview so rhythm and missing panel
   sources are caught before video generation.
+- `production_readiness` reads `reference_plates.yaml`, `storyboard_sheet.yaml`,
+  and `animatic.yaml`, then blocks generated video until the prep artifacts are
+  all in a ready state. It is a hard failure in `video_generation: required`;
+  in `auto` mode it records the failed gate and allows the editorial fallback
+  path to continue.
 - `continuity_bible` reads `film_timeline.yaml` and the screenplay structure,
   then writes `continuity_bible.yaml` with character appearances, locations,
   wardrobe, lighting, screen axis, and continuity risks.
@@ -222,6 +235,12 @@ generated-video asset for their segment.
 footage, generated-image fallback clips, ending cards, and timeline gaps into
 normalized segments, then concatenates `pipeline/<project>/film_assembled.mp4`.
 This is now the default visual input to the audio stage.
+
+`remotion_preview` sits between `film_timeline` and `film_assemble`. It exports
+a minimal Remotion project from the same timeline so creators and future web
+tools can inspect the edit as a React composition before or alongside the
+FFmpeg render. It is a handoff and preview layer, not the current final render
+authority.
 
 `generate_video` consumes `director_contract.yaml` when it is present. That
 makes the contract the handoff between director thinking and AI video

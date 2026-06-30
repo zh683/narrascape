@@ -3,10 +3,10 @@ prompts:
     shot_type: close_up
     description: >
       Extreme close-up of a single thistle flower, stem bent and crushed flat
-      on a muddy dirt road. 2560x1440. NOT anime, NOT illustration.
+      on a muddy dirt road. 2560x1440. oil painting style, visible brush texture, not anime, not cartoon.
 
   - id: img_02
     shot_type: wide_env
     description: >
       An elderly man with a long grey beard crouching in a muddy field.
-      4704x2016. NOT anime, NOT illustration.
+      4704x2016. oil painting style, visible brush texture, not anime, not cartoon.

@@ -179,7 +179,7 @@ class ReworkPlanStage(Stage):
         )
 
     def _actions_by_type(self, actions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-        grouped = {
+        grouped: dict[str, list[dict[str, Any]]] = {
             "rewrite_director_contract": [],
             "regenerate_video": [],
             "recut": [],

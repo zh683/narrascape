@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from narrascape.config import BudgetConfig
 from narrascape.utils.safe_io import atomic_write_json, update_json_mapping
@@ -117,7 +118,7 @@ class BudgetTracker:
         if self.budget.mode == "cap":
             blocked = ""
 
-            def update(data: dict) -> None:
+            def update(data: dict[str, Any]) -> None:
                 nonlocal blocked
                 spent_before = float(data.get("spent", 0.0))
                 if spent_before + actual_cost > self.budget.total_usd:
@@ -138,7 +139,7 @@ class BudgetTracker:
         return True, ""
 
     def _atomic_add(self, actual_cost: float) -> None:
-        def update(data: dict) -> None:
+        def update(data: dict[str, Any]) -> None:
             data["spent"] = round(float(data.get("spent", 0.0)) + actual_cost, 4)
 
         data = update_json_mapping(self.state_path, update, default={"spent": 0.0})

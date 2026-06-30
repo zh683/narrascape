@@ -850,7 +850,7 @@ def test_video_prompt_quality_flags_overloaded_camera_motion():
     prompt = (
         "Mira turns in a green-lit lab wearing a field coat, medium shot, "
         "push in then pan right, tilt up, zoom out, orbit around the lab bench, "
-        "cinematic photorealistic motion."
+        "cinematic oil-painted motion with visible brush texture."
     )
 
     assessment = video_prompt_quality_assessment(shot, provider="seedance", prompt=prompt)
@@ -1303,6 +1303,9 @@ def test_director_contract_stage_is_registered_before_generate_video():
     assert "reference_plate" in stage_map
     assert order.index("director_contract") < order.index("reference_plate")
     assert order.index("reference_plate") < order.index("generate_video")
+    assert "production_readiness" in stage_map
+    assert order.index("storyboard_sheet") < order.index("production_readiness")
+    assert order.index("production_readiness") < order.index("generate_video")
     assert "animatic" in stage_map
     assert order.index("reference_plate") < order.index("animatic")
     assert order.index("animatic") < order.index("generate_video")

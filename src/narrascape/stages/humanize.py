@@ -54,7 +54,7 @@ class HumanizeStage(Stage):
         humanizer = HumanizerEngine(llm_client=self.llm_client, aggressive=self.aggressive)
 
         # Score and optionally humanize
-        total_ai_score = 0
+        total_ai_score = 0.0
         changed_segments = 0
 
         for seg in data["segments"]:

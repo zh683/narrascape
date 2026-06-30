@@ -11,7 +11,6 @@
 - Optional `assets/references/*`
 - video provider configuration
 - `ARK_API_KEY` for Seedance/Volcengine generation
-- `AGNES_API_KEY` for Agnes Video V2.0 generation
 
 ## Outputs
 
@@ -27,7 +26,7 @@
 3. Read `director_contract.yaml` and, when a provider is selected, prefer `generation.compiled_prompts.<provider>.prompt`; fall back to `generation.video_prompt` for legacy contracts.
 4. Write `video_prompt_quality.yaml` with per-shot ingredient scores for subject identity, action beat, scene lock, wardrobe lock, camera language, composition, lighting/palette, style/quality, and reference binding.
 5. Block generation if the prompt is still generic or lacks the executable ingredients needed for controllable video generation.
-6. Read the matching provider negative prompt and pass it to providers that support explicit negative prompts, such as Agnes.
+6. Read the matching provider negative prompt and pass it to Seedance when supported.
 7. Require the animatic preview to exist so storyboard timing has been checked before provider execution.
 8. Resolve `storyboard_binding.reference_image_ids` to actual style, character, and scene reference images.
 9. Use generated images as first-frame references when available.
@@ -36,10 +35,9 @@
     shot continuity.
 11. Send resolved style, character, and scene images to the selected provider.
    - Seedance receives multimodal `reference_image` inputs.
-   - Agnes receives text-to-video, single-image, multi-image, or keyframe payloads according to available references.
 12. If `video.takes > 1`, submit one asynchronous task per take using stable
    `vid_<segment>_take_<take>` names.
-13. Poll each task until it succeeds or fails. Agnes polling uses the returned `video_id`.
+13. Poll each task until it succeeds or fails.
 14. Download completed clips to `assets/videos/`.
 15. Record completed clip ids, `provider_selection`, `take_policy`, generated
     take ids, expected reference ids, resolved assets, missing ids, and uploaded
@@ -61,4 +59,3 @@
 - Do not skip provider selection metadata.
 - Do not generate multiple takes unless `video.takes` requests them.
 - Do not overwrite completed clips unless the user requested a rebuild.
-- Do not pass private local paths to Agnes video in production; use image URLs reachable by the provider.

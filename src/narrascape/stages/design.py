@@ -17,8 +17,9 @@ import yaml
 
 from narrascape.agent import PromptDirector
 from narrascape.agent.analyzer import ScriptAnalyzer
-from narrascape.agent.models import DesignReport, ShotDesign
+from narrascape.agent.models import BGMZoneSuggestion, DesignReport, SegmentAnalysis, ShotDesign
 from narrascape.config import (
+    DEFAULT_VISUAL_STYLE,
     NarrascapeConfig,
     Script,
     ShotType,
@@ -100,20 +101,51 @@ class DesignStage(Stage):
         # First, analyze the script with LLM
         analyzer = ScriptAnalyzer(llm_client=self.llm_client)
         analysis_list = analyzer.analyze(script)
+        director_steps: dict[str, dict[str, Any]] = {
+            "script_analysis": {
+                "mode": "llm_script_analysis" if self.llm_client else "rule_based_analysis",
+                "llm_status": getattr(
+                    analyzer,
+                    "last_llm_status",
+                    "used" if self.llm_client else "not_configured",
+                ),
+            }
+        }
+        analyzer_errors = getattr(analyzer, "last_errors", [])
+        if analyzer_errors:
+            director_steps["script_analysis"]["errors"] = analyzer_errors
 
         if self.llm_client:
             logger.info("[design] Using PromptDirector")
             director = PromptDirector(llm_client=self.llm_client)
-            shot_designs = director.design_sequence(
-                segments=script.segments,
-                analysis_list=analysis_list,
-                config=config,
-                storyboard=storyboard_obj,
-            )
+            try:
+                shot_designs = director.design_sequence(
+                    segments=script.segments,
+                    analysis_list=analysis_list,
+                    config=config,
+                    storyboard=storyboard_obj,
+                )
+                director_steps["shot_design"] = {
+                    "mode": "prompt_director",
+                    "llm_status": "used",
+                    "shot_count": len(shot_designs),
+                }
+            except Exception as exc:
+                director_steps["shot_design"] = {
+                    "mode": "prompt_director",
+                    "llm_status": "fallback_after_error",
+                    "errors": [str(exc)],
+                }
+                raise
         else:
             logger.info("[design] No LLM client configured; using local deterministic design")
             director = None
             shot_designs = self._design_locally(script, analysis_list, config)
+            director_steps["shot_design"] = {
+                "mode": "local_deterministic_design",
+                "llm_status": "not_configured",
+                "shot_count": len(shot_designs),
+            }
 
         # CRITICAL: Inject style anchor reference into all shot prompts
         style_anchor_path = ""
@@ -255,6 +287,11 @@ class DesignStage(Stage):
             if hasattr(report, "to_design_report")
             else report.model_dump()
         )
+        director_process = self._director_process(
+            director_steps,
+            "prompt_director" if self.llm_client else "local_deterministic_design",
+        )
+        report_dict["director_process"] = director_process
         with open(report_path, "w", encoding="utf-8") as f:
             yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
         logger.info(f"[design] Wrote {report_path}")
@@ -287,14 +324,15 @@ class DesignStage(Stage):
                 "design_overwrite": config.pipeline.design_overwrite,
                 "wrote_image_prompts": wrote_prompts,
                 "wrote_image_map": wrote_map,
+                "director_process": director_process,
             },
         )
 
     def _design_locally(
-        self, script: Script, analysis_list: list, config: NarrascapeConfig
+        self, script: Script, analysis_list: list[SegmentAnalysis], config: NarrascapeConfig
     ) -> list[ShotDesign]:
         """Create deterministic shot designs for offline/local pipeline runs."""
-        designs = []
+        designs: list[ShotDesign] = []
         for index, seg in enumerate(script.segments):
             analysis = analysis_list[index] if index < len(analysis_list) else None
             shot_type = seg.shot_type or self._shot_type_from_analysis(
@@ -307,10 +345,10 @@ class DesignStage(Stage):
                 movement = derive_movement(shot_type, 3.0, None)
             size = SHOT_SIZE_MAP.get(shot_type)
             text = seg.text.replace("\n", " ").strip()
-            style = self.style_template or config.images.style or "cinematic documentary"
+            style = self.style_template or config.images.style or DEFAULT_VISUAL_STYLE
             prompt = (
                 f"{style}, {shot_type.value} shot, cinematic composition, "
-                f"visualizing: {text[:220]}, detailed lighting, coherent documentary frame, no text"
+                f"visualizing: {text[:220]}, detailed lighting, coherent painterly oil-painted frame, no text"
             )
             designs.append(
                 ShotDesign(
@@ -318,7 +356,7 @@ class DesignStage(Stage):
                     shot_type=shot_type,
                     movement=movement,
                     size=size,
-                    director_vision=f"Visualize the narration as a clear {shot_type.value} documentary frame.",
+                    director_vision=f"Visualize the narration as a clear {shot_type.value} oil-painted cinematic frame.",
                     cinematic_format=f"SHOT {seg.id}: {shot_type.value.upper()} / eye-level / natural light",
                     image_prompt=prompt,
                     reasoning="Local deterministic design for offline pipeline verification.",
@@ -330,12 +368,44 @@ class DesignStage(Stage):
                         "focal_length": "35mm",
                         "camera_angle": "eye-level",
                         "lighting_scheme": "soft natural key light",
-                        "composition": "balanced documentary composition",
+                        "composition": "balanced painterly cinematic composition",
                         "color_palette": "natural contrast",
                     },
                 )
             )
         return designs
+
+    def _director_process(
+        self,
+        steps: dict[str, dict[str, Any]],
+        mode: str,
+    ) -> dict[str, Any]:
+        statuses = [
+            str(step.get("llm_status", "")) for step in steps.values() if step.get("llm_status")
+        ]
+        if any(status == "fallback_after_error" for status in statuses):
+            llm_status = "fallback_after_error"
+        elif any(status == "not_configured" for status in statuses) or not statuses:
+            llm_status = "not_configured"
+        else:
+            llm_status = "used"
+
+        errors: list[str] = []
+        for step in steps.values():
+            step_errors = step.get("errors") or []
+            if isinstance(step_errors, list):
+                errors.extend(str(item) for item in step_errors)
+            elif step_errors:
+                errors.append(str(step_errors))
+
+        process: dict[str, Any] = {
+            "mode": mode,
+            "llm_status": llm_status,
+            "steps": steps,
+        }
+        if errors:
+            process["errors"] = errors
+        return process
 
     def _shot_type_from_analysis(self, analysis: Any, index: int, total: int) -> ShotType:
         if index == 0:
@@ -349,14 +419,12 @@ class DesignStage(Stage):
             return ShotType.CLOSE_UP
         return ShotType.MEDIUM
 
-    def _derive_bgm_zones(self, analysis_list: list) -> list:
+    def _derive_bgm_zones(self, analysis_list: list[SegmentAnalysis]) -> list[BGMZoneSuggestion]:
         """Derive BGM zones from analysis (simplified when using PromptDirector)."""
-        from narrascape.agent.models import BGMZoneSuggestion
-
         if not analysis_list:
             return []
 
-        zones = []
+        zones: list[BGMZoneSuggestion] = []
         current_zone = [analysis_list[0]]
 
         for i in range(1, len(analysis_list)):
@@ -418,9 +486,9 @@ class DesignStage(Stage):
 
         return zones
 
-    def _validate_design(self, report, config: NarrascapeConfig) -> list[str]:
+    def _validate_design(self, report: DesignReport, config: NarrascapeConfig) -> list[str]:
         """Run quality checks on the design report. Returns list of issue strings."""
-        issues = []
+        issues: list[str] = []
         segments = report.segments
 
         # 1. Check prompt word count (80-150 recommended)
@@ -435,15 +503,14 @@ class DesignStage(Stage):
                     f"Seg {shot.segment_id}: prompt very long ({word_count} words, may cause quality issues)"
                 )
 
-        # 2. Check style lock (exclusion terms for non-photorealistic styles)
+        # 2. Check oil-painting style lock.
         style_lower = (report.style_template or "").lower()
         if "realism" in style_lower or "painting" in style_lower or "oil" in style_lower:
             for shot in segments:
                 prompt_lower = shot.image_prompt.lower()
-                if "not anime" not in prompt_lower and "not illustration" not in prompt_lower:
-                    issues.append(
-                        f"Seg {shot.segment_id}: missing style exclusion terms (NOT anime, NOT illustration)"
-                    )
+                oil_terms = ("oil painting", "painterly", "brush", "canvas", "pigment")
+                if not any(term in prompt_lower for term in oil_terms):
+                    issues.append(f"Seg {shot.segment_id}: missing oil-painting style anchor")
 
         # 3. Check resolution matches shot_type
         for shot in segments:
@@ -504,7 +571,9 @@ class DesignStage(Stage):
 
         return issues
 
-    def _print_summary(self, report, llm_mode: bool = False, issues: list[str] = None):
+    def _print_summary(
+        self, report: DesignReport, llm_mode: bool = False, issues: list[str] | None = None
+    ) -> None:
         """Print a human-readable summary of the design."""
         import sys
 
@@ -550,12 +619,12 @@ class DesignStage(Stage):
         # Show quality issues
         if issues:
             console.print()
-            console.print(f"[bold yellow]⚠️ {len(issues)} Quality Issues:[/]")
+            console.print(f"[bold yellow]WARNING: {len(issues)} Quality Issues:[/]")
             for issue in issues:
                 console.print(f"  [yellow]-[/] {issue}")
         else:
             console.print()
-            console.print("[bold green]✅ All quality checks passed[/]")
+            console.print("[bold green]All quality checks passed[/]")
 
         # Show metadata-rich fields if in LLM mode
         if llm_mode and report.segments:
@@ -570,11 +639,11 @@ class DesignStage(Stage):
             console.print()
             console.print("[bold]Suggested BGM Zones:[/]")
             for zone in report.bgm_zones:
-                console.print(f"  • Segments {zone.covers}: {zone.label} — {zone.prompt}")
+                console.print(f"  - Segments {zone.covers}: {zone.label} - {zone.prompt}")
 
         console.print()
 
-    def _load_pre_production(self, config: NarrascapeConfig) -> dict | None:
+    def _load_pre_production(self, config: NarrascapeConfig) -> dict[str, Any] | None:
         """Load pre_production.yaml if available.
 
         Returns the pre-production report dict, or None if not found.
@@ -584,7 +653,8 @@ class DesignStage(Stage):
             return None
         try:
             with open(pre_prod_path, encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                data = yaml.safe_load(f)
+                return data if isinstance(data, dict) else None
         except Exception as e:
             logger.warning(f"[design] Failed to load pre_production.yaml: {e}")
             return None

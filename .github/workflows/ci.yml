@@ -34,9 +34,8 @@ jobs:
         run: ruff check src/ tests/
       - name: Format check with black
         run: black --check src/ tests/
-      - name: Type check with mypy
-        continue-on-error: true
-        run: mypy src/
+      - name: Type check source with mypy
+        run: mypy
       - name: Run tests
         run: pytest
       - name: Upload coverage

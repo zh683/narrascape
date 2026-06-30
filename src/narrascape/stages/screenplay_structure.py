@@ -214,8 +214,11 @@ class ScriptSceneDirectorStage(Stage):
         }[act_index]
 
     def _duration_for(self, timing: dict[str, Any], segment_id: int, text: str) -> float:
+        value = timing.get(str(segment_id))
+        if value is None:
+            return round(max(1.0, len(text) / 18.0), 3)
         try:
-            return round(float(timing.get(str(segment_id))), 3)
+            return round(float(value), 3)
         except (TypeError, ValueError):
             return round(max(1.0, len(text) / 18.0), 3)
 
@@ -238,7 +241,8 @@ class ScriptSceneDirectorStage(Stage):
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:

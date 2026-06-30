@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict
 
 from narrascape.llm import LLMClient
 from narrascape.llm.prompts import get_prompt
@@ -25,7 +25,16 @@ logger = logging.getLogger("narrascape.humanizer")
 # AI Pattern Detection Rules (fallback only)
 # ═══════════════════════════════════════════════════════════
 
-AI_PATTERNS: list[tuple[str, str | Callable]] = [
+
+class HumanizerScore(TypedDict):
+    ai_likeness: float
+    ai_markers: int
+    three_part_lists: int
+    sentence_variance: float
+    verdict: str
+
+
+AI_PATTERNS: list[tuple[str, str | Callable[[re.Match[str]], str]]] = [
     # 1. Filler phrases
     (r"为了实.*?这一目标", "为了这一点"),
     (r"由于.*?的事实", "因为"),
@@ -191,7 +200,7 @@ class HumanizerEngine:
         template = get_prompt("humanizer")
 
         resp = self.llm_client.run_template(template, text=text)
-        result = resp.text.strip().strip('"').strip("'")
+        result = str(resp.text).strip().strip('"').strip("'")
 
         if not result:
             raise ValueError("LLM returned empty humanization")
@@ -288,7 +297,7 @@ class HumanizerEngine:
             text += "。"
         return text
 
-    def score(self, text: str) -> dict[str, float]:
+    def score(self, text: str) -> HumanizerScore:
         """Score text on AI-likeness (0-10, lower is better)."""
         ai_markers = 0
         for pattern, _ in self.patterns:
@@ -298,7 +307,7 @@ class HumanizerEngine:
         # Count repeated sentence structures
         sentences = re.split(r"[。！？]", text)
         sentence_lengths = [len(s) for s in sentences if s.strip()]
-        length_variance = 0
+        length_variance = 0.0
         if len(sentence_lengths) > 1:
             avg = sum(sentence_lengths) / len(sentence_lengths)
             variance = sum((l - avg) ** 2 for l in sentence_lengths) / len(sentence_lengths)

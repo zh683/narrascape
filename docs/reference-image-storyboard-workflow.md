@@ -39,7 +39,13 @@ director_contract.yaml
 reference_plates.yaml
         |
         v
+storyboard_sheet.yaml + storyboard_sheet.png + storyboard_sheet.pdf
+        |
+        v
 animatic.yaml + animatic.mp4
+        |
+        v
+production_readiness.yaml
         |
         v
 generate_video -> video_gen_state.json
@@ -139,15 +145,20 @@ shot. A plate contains:
   constraints as generation.
 
 `GenerateVideoStage` reads `reference_plates.yaml`, sends resolved images to
-Seedance as `reference_image` inputs or to Agnes as image/keyframe payload
-inputs, passes provider-specific negative prompts when supported, and records
-the execution handoff in `video_gen_state.json`.
+Seedance as `reference_image` inputs, passes the compiled negative prompt when
+supported, and records the execution handoff in `video_gen_state.json`.
 
 `AnimaticStage` runs between `generate_images` and `generate_video`. It turns
 storyboard frames plus generated stills into `animatic.mp4`, preserving frame
 ids, panel durations, scene refs, composition requirements, and reference plate
 ids in `animatic.yaml`. Missing panel images block the stage before paid video
 generation begins.
+
+`StoryboardSheetStage` runs as a review surface after `reference_plate`. It
+renders a 12-up sheet that shows each storyboard frame, the director contract
+binding, and the resolved preview image path when available. Unlike
+`animatic`, it does not enforce a hard preview gate; it is meant to be a human
+inspection board.
 
 `VisualSemanticQAStage` then checks the same binding against timeline metadata,
 reference-image execution records, and extracted clip frames. In LLM mode, the
@@ -192,12 +203,12 @@ storyboard_binding:
 
 The stage always tries to include the style anchor when it is available, then
 adds storyboard, character, and scene references. Missing references make
-`reference_plates.yaml` `status: blocked`. In
-`pipeline.video_generation: required` mode this blocks the stage, preventing
-production video generation
-from quietly running without the intended character or scene locks. In `auto` or
-`off` mode, the finding is preserved while offline/local fallback verification
-continues.
+`reference_plates.yaml` `status: blocked`, which keeps
+`production_readiness.yaml` from becoming ready. In
+`pipeline.video_generation: required` mode this blocks production video
+generation, preventing provider calls from quietly running without the intended
+character or scene locks. In `auto` or `off` mode, the finding is preserved
+while source-footage or generated-image fallback verification continues.
 Resolved references are then sent as video generation reference images and
 persisted in `video_gen_state.json`.
 

@@ -11,12 +11,17 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from narrascape.llm.models import LLMCallLog, LLMConfig, LLMResponse, Message, PromptTemplate
 from narrascape.utils.retry import retry_with_backoff
 
+if TYPE_CHECKING:
+    from narrascape.llm.bridge import BridgeLLMClient
+
 logger = logging.getLogger("narrascape.llm")
+
+ProviderCallable = Callable[[list[Message], LLMConfig], LLMResponse]
 
 
 ASSISTANT_BRIDGE_PROVIDERS = {"bridge", "ai_assistant"}
@@ -57,7 +62,7 @@ class LLMClient:
         self.config = config or LLMConfig()
         self._logs: list[LLMCallLog] = []
         self._provider = self._init_provider()
-        self._bridge = None  # type: BridgeLLMClient | None
+        self._bridge: BridgeLLMClient | None = None
 
     @classmethod
     def from_env(cls, allow_bridge: bool = True) -> LLMClient:
@@ -112,7 +117,7 @@ class LLMClient:
         # No external API keys needed - the AI assistant handles bridge tasks
         return cls(LLMConfig(provider="ai_assistant"))
 
-    def _init_provider(self) -> Callable:
+    def _init_provider(self) -> ProviderCallable:
         """Initialize the provider-specific API client."""
         provider = self.config.provider
 
@@ -153,9 +158,8 @@ class LLMClient:
         logger.info(f"[AI Assistant] Prompt length: {len(prompt)} chars")
 
         # Create task file and wait for AI assistant response
-        return self._bridge.complete(
-            prompt, json_mode=config.json_mode, max_retries=config.max_retries
-        )
+        bridge = self._require_bridge()
+        return bridge.complete(prompt, json_mode=config.json_mode, max_retries=config.max_retries)
 
     def _init_bridge(self) -> None:
         """Initialize bridge client for AI assistant integration."""
@@ -164,33 +168,37 @@ class LLMClient:
 
             self._bridge = BridgeLLMClient()
 
+    def _require_bridge(self) -> BridgeLLMClient:
+        self._init_bridge()
+        if self._bridge is None:
+            raise RuntimeError("Bridge client was not initialized")
+        return self._bridge
+
     def _bridge_provider(self, messages: list[Message], config: LLMConfig) -> LLMResponse:
         """Bridge provider that delegates to AI assistant via file-based tasks."""
         # ai_assistant and bridge are now unified — both use BridgeLLMClient
         return self._ai_assistant_provider(messages, config)
 
-    def _bridge_complete(self, prompt: str, **kwargs) -> LLMResponse:
+    def _bridge_complete(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """Direct bridge completion for internal use."""
-        self._init_bridge()
-        return self._bridge.complete(prompt, **kwargs)
+        return self._require_bridge().complete(prompt, **kwargs)
 
-    def _bridge_chat(self, messages: list[Message], **kwargs) -> LLMResponse:
+    def _bridge_chat(self, messages: list[Message], **kwargs: Any) -> LLMResponse:
         """Direct bridge chat for internal use."""
-        self._init_bridge()
-        return self._bridge.chat(messages, **kwargs)
+        return self._require_bridge().chat(messages, **kwargs)
 
     # ── Public API ───────────────────────────
 
-    def complete(self, prompt: str, **kwargs) -> LLMResponse:
+    def complete(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """Simple completion with a single user prompt."""
         messages = [Message(role="user", content=prompt)]
         return self.chat(messages, **kwargs)
 
-    def chat(self, messages: list[Message], **kwargs) -> LLMResponse:
+    def chat(self, messages: list[Message], **kwargs: Any) -> LLMResponse:
         """Send a chat completion request with retry."""
         config = self._merge_config(**kwargs)
 
-        def _call():
+        def _call() -> LLMResponse:
             return self._provider(messages, config)
 
         # Bridge-backed assistant modes create task files; retrying creates duplicates.
@@ -207,7 +215,7 @@ class LLMClient:
             ),
         )
 
-    def run_template(self, template: PromptTemplate, **variables) -> LLMResponse:
+    def run_template(self, template: PromptTemplate, **variables: Any) -> LLMResponse:
         """Run a structured prompt template and return response."""
         messages = template.build(**variables)
         return self.chat(messages)
@@ -217,7 +225,7 @@ class LLMClient:
         template: PromptTemplate,
         validator: Callable[[Any], tuple[bool, str]],
         max_format_retries: int = 2,
-        **variables,
+        **variables: Any,
     ) -> Any:
         """Run template with output validation. Auto-retry on format errors.
 
@@ -510,7 +518,7 @@ class LLMClient:
 
     # ── Helpers ───────────────────────────
 
-    def _merge_config(self, **kwargs) -> LLMConfig:
+    def _merge_config(self, **kwargs: Any) -> LLMConfig:
         """Create a config copy with runtime overrides."""
         return self.config.copy(**kwargs)
 
@@ -524,7 +532,7 @@ class LLMClient:
         error: str | None,
         latency_ms: float,
         model: str = "",
-        usage: dict | None = None,
+        usage: dict[str, int] | None = None,
     ) -> None:
         """Log an LLM call for debugging."""
         from datetime import datetime

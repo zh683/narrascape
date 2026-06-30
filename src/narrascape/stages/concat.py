@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from narrascape.config import EndingConfig, NarrascapeConfig
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font, run_ffmpeg, validate_video
 
@@ -128,7 +129,9 @@ class ConcatStage(Stage):
 
         return StageResult(self.name, False, message="final_nosub.mp4 validation failed")
 
-    def _build_ending_card(self, ending, config, output_path: Path) -> bool:
+    def _build_ending_card(
+        self, ending: EndingConfig, config: NarrascapeConfig, output_path: Path
+    ) -> bool:
         """Build a simple ending card with text overlays."""
         EDUR = ending.duration
         yp = 320

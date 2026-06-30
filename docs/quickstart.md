@@ -64,8 +64,9 @@ The default build graph is:
 
 ```text
 pre_production -> design -> screenplay_structure -> director_contract
--> reference_plate -> generate_images -> animatic -> generate_video
+-> reference_plate -> generate_images -> storyboard_sheet -> animatic -> generate_video
 -> take_select -> generate_tts -> film_timeline
+-> remotion_preview
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -83,6 +84,8 @@ Final outputs are written under:
 output/<project>-clean.mp4
 output/<project>-sub.mp4
 pipeline/<project>/film_assembled.mp4
+pipeline/<project>/remotion_preview.yaml
+pipeline/<project>/remotion_preview/
 pipeline/<project>/render_report.yaml
 pipeline/<project>/director_review.yaml
 film_timeline.yaml
@@ -125,11 +128,15 @@ stage with Seedance:
 ```
 
 This requires `ARK_API_KEY` and generated images.
-It also pulls in `reference_plate` and `animatic`, so missing storyboard
+It also pulls in `reference_plate`, `storyboard_sheet`, and `animatic`, so missing storyboard
 references or panel images are caught before provider execution.
 
 `film_timeline` prefers `assets/videos/vid_*.mp4`, then source footage, then
 generated-image fallback.
+
+The build also writes `pipeline/<project>/remotion_preview/`. To inspect the
+timeline as a Remotion composition, install dependencies in that directory and
+run `npx remotion studio`.
 
 ## 8. Approval Modes
 

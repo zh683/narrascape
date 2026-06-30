@@ -65,9 +65,8 @@ def verify_seedream_style_consistency():
     style_anchor_prompt = (
         "A simple ceramic vase with a single white flower on a wooden table, "
         "near a window with soft natural light streaming in, "
-        "cinematic documentary style, warm golden tones, "
-        "consistent artistic style, uniform rendering quality, "
-        "highly detailed, photorealistic, 8K"
+        "oil painting style, visible brush texture, canvas grain, warm golden tones, "
+        "consistent painterly style, layered pigments, uniform rendering quality"
     )
 
     style_anchor_path = output_dir / "style_anchor.png"
@@ -98,7 +97,7 @@ def verify_seedream_style_consistency():
         "参考图1的风格和色调，"
         "A full body portrait of a young warrior in traditional Chinese clothing, "
         "standing in a neutral pose, clean simple background, "
-        "photorealistic, highly detailed, 8K"
+        "oil painting style, visible brush texture, canvas grain"
     )
 
     character_path = output_dir / "character_ref.png"
@@ -129,7 +128,7 @@ def verify_seedream_style_consistency():
         "参考图1的风格和色调，"
         "A misty mountain landscape at dawn, ancient pine trees, "
         "soft golden morning light, atmospheric haze, "
-        "photorealistic, highly detailed, 8K"
+        "oil painting style, visible brush texture, canvas grain"
     )
 
     scene_path = output_dir / "scene_ref.png"
@@ -170,7 +169,7 @@ def verify_seedream_style_consistency():
     print("Next Steps:")
     print("  1. Visually inspect all three images")
     print("  2. Confirm they share the same warm golden tones")
-    print("  3. Confirm consistent rendering quality (photorealistic)")
+    print("  3. Confirm consistent rendering quality (oil painting / painterly)")
     print()
     print("If style inconsistency is detected:")
     print("  - Check that '参考图1的风格和色调' is in the prompt")

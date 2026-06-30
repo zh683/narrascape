@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,7 @@ class StageResult:
 
     stage_name: str
     success: bool
-    outputs: list[str | Path] | dict[str, Any] = field(default_factory=list)
+    outputs: Sequence[str | Path] | dict[str, Any] = field(default_factory=list)
     message: str = ""
     duration_seconds: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -61,7 +62,7 @@ class Stage(ABC):
         ...
 
     @property
-    def outputs(self) -> list[str | Path]:
+    def outputs(self) -> Sequence[str | Path]:
         """Expected output files for this stage."""
         return []
 

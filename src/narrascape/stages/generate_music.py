@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.api_keys import APIKeys
-from narrascape.config import NarrascapeConfig, load_script
+from narrascape.config import (
+    BGMZone,
+    MusicAudioConfig,
+    NarrascapeConfig,
+    ScriptSegment,
+    load_script,
+)
 from narrascape.providers import (
     record_provider_failure,
     record_provider_success,
@@ -221,7 +227,7 @@ class GenerateMusicStage(Stage):
 
     # ── Helpers ───────────────────────────
 
-    def _load_state(self, path: Path) -> dict:
+    def _load_state(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={"done": []})
 
     def _intent_for_config(self, config: NarrascapeConfig) -> str:
@@ -253,13 +259,13 @@ class GenerateMusicStage(Stage):
 
     def _calc_zone_duration(
         self,
-        zone: Any,
-        durations: dict,
-        segments: list[Any],
-        gap_map: dict,
+        zone: BGMZone,
+        durations: dict[str, Any],
+        segments: list[ScriptSegment],
+        gap_map: dict[int, float],
         gap_default: float,
-        config: Any,
-        music_cfg: Any,
+        config: NarrascapeConfig,
+        music_cfg: MusicAudioConfig,
         is_last: bool,
     ) -> float:
         start_id, end_id = zone.covers
@@ -268,20 +274,20 @@ class GenerateMusicStage(Stage):
             sid = seg.id
             if sid < start_id or sid > end_id:
                 continue
-            total += durations.get(str(sid), 0)
+            total += _to_float(durations.get(str(sid)), default=0.0)
             if sid < end_id:
                 total += gap_map.get(sid, gap_default)
         total *= 1.2
         if is_last:
             total += config.ending.duration + music_cfg.fade_out_seconds + 5
-        return max(zone.min_duration, total)
+        return float(max(zone.min_duration, total))
 
     def _generate_one(
         self,
         zone: Any,
         duration_seconds: float,
         music_cfg: Any,
-        state: dict,
+        state: dict[str, Any],
         music_dir: Path,
     ) -> Path | None:
         zid = zone.id
@@ -353,3 +359,12 @@ class GenerateMusicStage(Stage):
                 f"    OK {out.stat().st_size / 1024:.0f}KB, {actual:.0f}s (need ~{need:.0f}s)"
             )
         return out
+
+
+def _to_float(value: Any, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default

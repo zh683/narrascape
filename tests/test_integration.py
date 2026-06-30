@@ -551,6 +551,12 @@ class TestEndToEndDataFlow:
 
         data = yaml.safe_load((project_dir / "config.yaml").read_text(encoding="utf-8"))
         assert data["project"]["name"] == "leaf-project"
+        assert data["images"]["provider"] == "seedream"
+        assert data["images"]["model"] == "doubao-seedream-5-0-260128"
+        assert "Oil painting style" in data["images"]["style"]
+        assert "photorealistic photography" in data["images"]["style"]
+        assert data["video"]["provider"] == "seedance"
+        assert data["video"]["model"] == "jimeng-video-seedance-2.0"
 
     def test_style_anchor_flow(self, temp_project):
         """Style anchor flows from pre_production → design → image_prompts."""

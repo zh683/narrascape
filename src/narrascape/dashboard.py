@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -200,8 +201,8 @@ st.markdown(_CSS, unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════
 #  Session state
 # ═══════════════════════════════════════════════════════════════
-def _init_state():
-    defaults = {
+def _init_state() -> None:
+    defaults: dict[str, Any] = {
         "project_dir": None,
         "config": None,
         "logs": [],
@@ -280,6 +281,27 @@ STAGE_META = {
         "description": "MiniMax TTS narration audio. Respects pronunciation, speed, and pause markers.",
         "inputs": ["scripts/script.yaml"],
         "outputs": ["assets/tts/"],
+    },
+    "film_timeline": {
+        "label": "Timeline",
+        "title": "Film Timeline",
+        "description": "Builds the canonical film_timeline.yaml from generated video, source footage, image fallback, narration, music, subtitles, and director metadata.",
+        "inputs": ["design_report.yaml", "image_map.yaml", "assets/videos/", "assets/tts/"],
+        "outputs": ["film_timeline.yaml"],
+    },
+    "remotion_preview": {
+        "label": "Preview",
+        "title": "Remotion Preview",
+        "description": "Exports a Remotion handoff project from film_timeline.yaml for visual timeline inspection and future web rendering.",
+        "inputs": ["film_timeline.yaml"],
+        "outputs": ["pipeline/remotion_preview.yaml", "pipeline/remotion_preview/"],
+    },
+    "film_assemble": {
+        "label": "Assemble",
+        "title": "Film Assemble",
+        "description": "Renders the film timeline visual track with FFmpeg, respecting generated video, source footage, image fallback, gaps, and ending cards.",
+        "inputs": ["film_timeline.yaml"],
+        "outputs": ["pipeline/film_assembled.mp4"],
     },
     "generate_music": {
         "label": "BGM",
@@ -361,6 +383,7 @@ with st.sidebar:
     NAV = [
         ("Overview", "home"),
         ("Pipeline", "pipeline"),
+        ("Timeline", "timeline"),
         ("Resources", "resources"),
         ("AI Director", "ai_director"),
         ("System", "system"),
@@ -407,7 +430,7 @@ def _fmt_bytes(size: int) -> str:
         return f"{size / (1024 * 1024):.1f} MB"
 
 
-def _run_command(cmd: list[str], q: queue.Queue) -> None:
+def _run_command(cmd: list[str], q: queue.Queue[str]) -> None:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     proc = subprocess.Popen(
@@ -421,9 +444,10 @@ def _run_command(cmd: list[str], q: queue.Queue) -> None:
         cwd=str(Path.cwd()),
     )
     st.session_state.build_process = proc
-    for line in proc.stdout:
-        q.put(line.rstrip())
-    proc.stdout.close()
+    if proc.stdout is not None:
+        for line in proc.stdout:
+            q.put(line.rstrip())
+        proc.stdout.close()
     proc.wait()
     st.session_state.build_process = None
 
@@ -431,27 +455,29 @@ def _run_command(cmd: list[str], q: queue.Queue) -> None:
 def _get_pipeline_dir() -> Path | None:
     if not st.session_state.project_dir:
         return None
+    project_dir = Path(st.session_state.project_dir)
     cfg = st.session_state.config
-    name = cfg.project.name if cfg else st.session_state.project_dir.name
-    return st.session_state.project_dir / "pipeline" / name
+    name = cfg.project.name if cfg else project_dir.name
+    return project_dir / "pipeline" / name
 
 
-def _resolve_stage_name(obj) -> str:
+def _resolve_stage_name(obj: Any) -> str:
     raw = getattr(obj, "name", None)
     if isinstance(raw, property):
-        return raw.fget(obj) if hasattr(raw, "fget") else obj.__name__.replace("Stage", "").lower()
+        getter = raw.fget
+        return str(getter(obj)) if getter else obj.__name__.replace("Stage", "").lower()
     if raw:
-        return raw
-    return obj.__name__.replace("Stage", "").lower()
+        return str(raw)
+    return str(getattr(obj, "__name__", "stage")).replace("Stage", "").lower()
 
 
-def _get_stage_status(stage_name: str) -> dict:
+def _get_stage_status(stage_name: str) -> dict[str, Any]:
     pdir = _get_pipeline_dir()
     if not pdir:
         return {"done": False, "files": [], "size": 0, "dir": None}
     stage_dir = pdir / stage_name
     done = stage_dir.exists()
-    files = []
+    files: list[Path] = []
     total_size = 0
     if done:
         for f in stage_dir.rglob("*"):
@@ -478,6 +504,62 @@ def _path_exists(pdir: Path, rel_path: str) -> tuple[bool, str]:
         count = sum(1 for _ in alt.rglob("*") if _.is_file())
         return True, f"{count} files"
     return False, "missing"
+
+
+def _fmt_seconds(value: float) -> str:
+    minutes = int(value // 60)
+    seconds = value - minutes * 60
+    if minutes:
+        return f"{minutes}m {seconds:04.1f}s"
+    return f"{seconds:.1f}s"
+
+
+def _clip_rows(clips: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for clip in clips:
+        rows.append(
+            {
+                "id": clip.get("id"),
+                "seg": clip.get("segment_id"),
+                "source": clip.get("source"),
+                "start": _fmt_seconds(float(clip.get("start") or 0.0)),
+                "dur": _fmt_seconds(float(clip.get("duration") or 0.0)),
+                "shot": clip.get("shot_type") or "",
+                "motion": clip.get("movement") or "",
+                "asset": "ok" if clip.get("asset_exists") else "missing",
+            }
+        )
+    return rows
+
+
+def _render_source_mix(source_counts: dict[str, int]) -> None:
+    if not source_counts:
+        st.markdown(
+            "<div style='color:#404040;font-style:italic'>No visual clips.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+    total = max(sum(source_counts.values()), 1)
+    colors = {
+        "generated_video": "#3b82f6",
+        "source_media": "#22c55e",
+        "generated_image": "#f59e0b",
+        "ending_card": "#71717a",
+    }
+    for source, count in sorted(source_counts.items()):
+        pct = int(count / total * 100)
+        color = colors.get(source, "#64748b")
+        st.markdown(
+            f"""
+<div style="margin:8px 0">
+  <div style="display:flex;justify-content:space-between;color:#737373;font-size:0.78em">
+    <span>{source}</span><span>{count} clips &middot; {pct}%</span>
+  </div>
+  <div class="progress-track"><div class="progress-fill" style="width:{pct}%;background:{color}"></div></div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_stage_page(stage_name: str) -> None:
@@ -607,8 +689,8 @@ def _render_stage_page(stage_name: str) -> None:
         ):
             st.session_state.running_stage = stage_name
             st.session_state.logs = []
-            q = queue.Queue()
-            st.session_state.log_queue = q
+            stage_queue: queue.Queue[str] = queue.Queue()
+            st.session_state.log_queue = stage_queue
             cmd = [
                 sys.executable,
                 "-m",
@@ -623,7 +705,7 @@ def _render_stage_page(stage_name: str) -> None:
                 cmd.append("--force")
             if dry:
                 cmd.append("--dry-run")
-            t = threading.Thread(target=_run_command, args=(cmd, q), daemon=True)
+            t = threading.Thread(target=_run_command, args=(cmd, stage_queue), daemon=True)
             t.start()
             st.rerun()
     with c4:
@@ -639,12 +721,12 @@ def _render_stage_page(stage_name: str) -> None:
     # Log
     if st.session_state.running_stage == stage_name:
         st.markdown("<div class='section-label'>Log</div>", unsafe_allow_html=True)
-        q = st.session_state.log_queue
-        if q is not None:
-            new_lines = []
-            while not q.empty():
+        stage_log_queue: queue.Queue[str] | None = st.session_state.log_queue
+        if stage_log_queue is not None:
+            new_lines: list[str] = []
+            while not stage_log_queue.empty():
                 try:
-                    new_lines.append(q.get_nowait())
+                    new_lines.append(stage_log_queue.get_nowait())
                 except queue.Empty:
                     break
             if new_lines:
@@ -810,25 +892,25 @@ if page == "home":
     ):
         st.session_state.running_stage = "full_pipeline"
         st.session_state.logs = []
-        q = queue.Queue()
-        st.session_state.log_queue = q
+        full_queue: queue.Queue[str] = queue.Queue()
+        st.session_state.log_queue = full_queue
         cmd = [sys.executable, "-m", "narrascape.cli", "build", "-p", str(pdir)]
         if force:
             cmd.append("--force")
         if dry:
             cmd.append("--dry-run")
-        t = threading.Thread(target=_run_command, args=(cmd, q), daemon=True)
+        t = threading.Thread(target=_run_command, args=(cmd, full_queue), daemon=True)
         t.start()
         st.rerun()
 
     if st.session_state.running_stage == "full_pipeline":
         st.markdown("<div class='section-label'>Build Log</div>", unsafe_allow_html=True)
-        q = st.session_state.log_queue
-        if q is not None:
-            new_lines = []
-            while not q.empty():
+        full_log_queue: queue.Queue[str] | None = st.session_state.log_queue
+        if full_log_queue is not None:
+            new_lines: list[str] = []
+            while not full_log_queue.empty():
                 try:
-                    new_lines.append(q.get_nowait())
+                    new_lines.append(full_log_queue.get_nowait())
                 except queue.Empty:
                     break
             if new_lines:
@@ -879,6 +961,176 @@ elif page == "pipeline":
 # ═══════════════════════════════════════════════════════════════
 #  PAGE: Resources
 # ═══════════════════════════════════════════════════════════════
+elif page == "timeline":
+    st.header("Timeline")
+
+    if st.session_state.project_dir is None:
+        st.info("Select a project from the sidebar.")
+        st.stop()
+
+    from narrascape.dashboard_data import load_timeline_dashboard
+
+    pdir = Path(st.session_state.project_dir)
+    cfg = st.session_state.config
+    maybe_pipeline_dir = Path(cfg.pipeline_dir) if cfg else _get_pipeline_dir()
+    if maybe_pipeline_dir is None:
+        st.info("Pipeline directory is not available.")
+        st.stop()
+        pipeline_dir = pdir / "pipeline"
+    else:
+        pipeline_dir = maybe_pipeline_dir
+
+    data = load_timeline_dashboard(pdir, pipeline_dir)
+
+    if data["status"] == "missing_timeline":
+        st.markdown(
+            "<div style='color:#737373;font-size:0.9em'>film_timeline.yaml has not been generated yet.</div>",
+            unsafe_allow_html=True,
+        )
+        st.code(f"narrascape build -p {pdir} --stage film_timeline --approve")
+        st.stop()
+
+    coverage = data.get("coverage", {})
+    visual = data.get("visual", [])
+    remotion = data.get("remotion", {})
+    rework_loop = data.get("rework_loop", {})
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(
+            f"""
+<div class="card-sm" style="text-align:center">
+  <div class="stat-num">{len(visual)}</div>
+  <div class="stat-label">Visual Clips</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f"""
+<div class="card-sm" style="text-align:center">
+  <div class="stat-num">{_fmt_seconds(float(data.get("duration") or 0.0))}</div>
+  <div class="stat-label">Duration</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with c3:
+        generated = len(coverage.get("generated_video_segments") or [])
+        st.markdown(
+            f"""
+<div class="card-sm" style="text-align:center">
+  <div class="stat-num">{generated}</div>
+  <div class="stat-label">Generated Video</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with c4:
+        missing = len(data.get("missing_assets") or []) + len(remotion.get("missing") or [])
+        color = "#ef4444" if missing else "#22c55e"
+        st.markdown(
+            f"""
+<div class="card-sm" style="text-align:center">
+  <div class="stat-num" style="color:{color}">{missing}</div>
+  <div class="stat-label">Missing Assets</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    left, right = st.columns([2, 1])
+    with left:
+        st.markdown("<div class='section-label'>Visual Track</div>", unsafe_allow_html=True)
+        rows = _clip_rows(visual)
+        if rows:
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.markdown(
+                "<div style='color:#404040;font-style:italic'>No visual track.</div>",
+                unsafe_allow_html=True,
+            )
+
+        if data.get("missing_assets"):
+            st.markdown(
+                "<div class='section-label'>Missing Timeline Assets</div>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(data["missing_assets"], use_container_width=True, hide_index=True)
+
+    with right:
+        st.markdown("<div class='section-label'>Source Mix</div>", unsafe_allow_html=True)
+        _render_source_mix(data.get("source_counts") or {})
+
+        st.markdown(
+            "<div class='section-label' style='margin-top:2em'>Remotion</div>",
+            unsafe_allow_html=True,
+        )
+        status = remotion.get("status", "missing")
+        tag_cls = "done" if status == "ready" else "warn"
+        st.markdown(f"<span class='tag tag-{tag_cls}'>{status}</span>", unsafe_allow_html=True)
+        root = remotion.get("root")
+        if root:
+            st.markdown(
+                f"<div class='file-row' style='margin-top:0.8em'>{root}</div>",
+                unsafe_allow_html=True,
+            )
+        commands = remotion.get("commands") or {}
+        if commands:
+            for label in ("install", "studio", "still_check", "render"):
+                command = commands.get(label)
+                if command:
+                    st.markdown(
+                        f"<div style='color:#525252;font-size:0.72em;text-transform:uppercase;letter-spacing:0.08em;margin-top:0.8em'>{label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.code(command, language="bash")
+        else:
+            st.code(f"narrascape build -p {pdir} --stage remotion_preview --approve")
+
+        if remotion.get("missing"):
+            st.markdown(
+                "<div class='section-label'>Missing Preview Assets</div>",
+                unsafe_allow_html=True,
+            )
+            st.dataframe(remotion["missing"], use_container_width=True, hide_index=True)
+
+        st.markdown(
+            "<div class='section-label' style='margin-top:2em'>Rework Loop</div>",
+            unsafe_allow_html=True,
+        )
+        loop_status = rework_loop.get("status", "not_started")
+        loop_tag = "warn" if rework_loop.get("blocking") else "done"
+        if loop_status == "not_started":
+            loop_tag = "pending"
+        st.markdown(
+            f"<span class='tag tag-{loop_tag}'>{loop_status}</span>",
+            unsafe_allow_html=True,
+        )
+        loop_rows = [
+            {"Metric": "QA errors", "Value": rework_loop.get("qa_error_count", 0)},
+            {"Metric": "QA warnings", "Value": rework_loop.get("qa_warning_count", 0)},
+            {"Metric": "Rework actions", "Value": rework_loop.get("action_count", 0)},
+            {"Metric": "Executed actions", "Value": rework_loop.get("executed_count", 0)},
+            {
+                "Metric": "Creative recommendations",
+                "Value": rework_loop.get("creative_recommendation_count", 0),
+            },
+            {
+                "Metric": "Visual findings",
+                "Value": rework_loop.get("visual_finding_count", 0),
+            },
+        ]
+        st.dataframe(loop_rows, use_container_width=True, hide_index=True)
+        next_stages = rework_loop.get("next_stages") or []
+        if next_stages:
+            st.markdown(
+                "<div style='color:#525252;font-size:0.72em;text-transform:uppercase;letter-spacing:0.08em;margin-top:0.8em'>next stages</div>",
+                unsafe_allow_html=True,
+            )
+            st.code(" -> ".join(next_stages), language="text")
+
+
 elif page == "resources":
     st.header("Resources")
 
@@ -1012,9 +1264,9 @@ elif page == "ai_director":
         shot_input = st.text_input("Type", "close-up", label_visibility="collapsed")
         if shot_input:
             try:
-                result = director._parse_shot_type(shot_input)
+                parsed_shot_type = director._parse_shot_type(shot_input)
                 st.markdown(
-                    f"<div style='color:#22c55e;font-family:monospace;font-size:0.85em'>{result}</div>",
+                    f"<div style='color:#22c55e;font-family:monospace;font-size:0.85em'>{parsed_shot_type}</div>",
                     unsafe_allow_html=True,
                 )
             except Exception as e:
@@ -1024,9 +1276,9 @@ elif page == "ai_director":
         mov_input = st.text_input("Movement", "zoom_in_slow", label_visibility="collapsed")
         if mov_input:
             try:
-                result = director._parse_movement_type(mov_input)
+                parsed_movement = director._parse_movement_type(mov_input)
                 st.markdown(
-                    f"<div style='color:#22c55e;font-family:monospace;font-size:0.85em'>{result}</div>",
+                    f"<div style='color:#22c55e;font-family:monospace;font-size:0.85em'>{parsed_movement}</div>",
                     unsafe_allow_html=True,
                 )
             except Exception as e:
@@ -1110,7 +1362,7 @@ elif page == "ai_director":
                 unsafe_allow_html=True,
             )
             with st.expander("Preview"):
-                st.code(tpl.system[:500] + "...")
+                st.code(str(tpl.system or "")[:500] + "...")
         except Exception as e:
             st.error(str(e))
 
@@ -1127,21 +1379,23 @@ elif page == "system":
         try:
             from narrascape.cache import BuildCache
 
-            cache = BuildCache(st.session_state.config.pipeline_dir / ".cache")
-            entries = list(cache.cache_dir.iterdir()) if cache.cache_dir.exists() else []
-            st.markdown(
-                f"<div style='color:#525252;font-size:0.8em'>{len(entries)} entries &middot; {cache.cache_dir}</div>",
-                unsafe_allow_html=True,
+            cache_dir = Path(st.session_state.config.pipeline_dir) / ".cache"
+            cache = BuildCache(cache_dir)
+            entries: list[Path] = list(cache_dir.iterdir()) if cache_dir.exists() else []
+            cache_summary = (
+                "<div style='color:#525252;font-size:0.8em'>"
+                f"{len(entries)} entries &middot; {cache_dir}</div>"
             )
+            st.markdown(cache_summary, unsafe_allow_html=True)
             if entries:
-                data = []
-                for e in entries[:30]:
+                cache_rows: list[dict[str, Any]] = []
+                for entry in entries[:30]:
                     try:
-                        stat = e.stat()
-                        data.append(
+                        stat = entry.stat()
+                        cache_rows.append(
                             {
-                                "file": e.name[:20],
-                                "size": _fmt_size(e),
+                                "file": entry.name[:20],
+                                "size": _fmt_size(entry),
                                 "modified": datetime.fromtimestamp(stat.st_mtime).strftime(
                                     "%Y-%m-%d %H:%M"
                                 ),
@@ -1149,7 +1403,7 @@ elif page == "system":
                         )
                     except Exception:
                         pass
-                st.dataframe(data, use_container_width=True, hide_index=True)
+                st.dataframe(cache_rows, use_container_width=True, hide_index=True)
         except Exception as e:
             st.error(f"Cache: {e}")
     else:
@@ -1184,12 +1438,14 @@ elif page == "system":
     st.markdown("<div class='section-label'>Health</div>", unsafe_allow_html=True)
     checks = []
     try:
-        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=5)
+        ffmpeg_result = subprocess.run(
+            ["ffmpeg", "-version"], capture_output=True, text=True, timeout=5
+        )
         checks.append(
             (
                 "FFmpeg",
-                result.returncode == 0,
-                result.stdout.splitlines()[0] if result.stdout else "unknown",
+                ffmpeg_result.returncode == 0,
+                ffmpeg_result.stdout.splitlines()[0] if ffmpeg_result.stdout else "unknown",
             )
         )
     except Exception as e:
@@ -1225,12 +1481,12 @@ elif page == "system":
     if st.button("Run pytest"):
         with st.spinner("Running..."):
             try:
-                result = subprocess.run(
+                pytest_result = subprocess.run(
                     [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=short"],
                     capture_output=True,
                     text=True,
                     timeout=120,
                 )
-                st.code(result.stdout + "\n" + result.stderr, language=None)
+                st.code(pytest_result.stdout + "\n" + pytest_result.stderr, language=None)
             except Exception as e:
                 st.error(f"Tests: {e}")

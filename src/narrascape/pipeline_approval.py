@@ -88,7 +88,7 @@ class PipelineApproval:
         self,
         stage_name: str,
         stage_result: StageResult,
-        assets: list[dict] | None = None,
+        assets: list[dict[str, Any]] | None = None,
     ) -> None:
         """Create a review request file after stage completion.
 
@@ -110,7 +110,7 @@ class PipelineApproval:
         self,
         stage_name: str,
         stage_result: StageResult,
-        assets: list[dict] | None = None,
+        assets: list[dict[str, Any]] | None = None,
     ) -> str:
         """Format a human-readable review request."""
         lines = [
@@ -257,8 +257,12 @@ class PipelineApproval:
             table = Table(title="Generated Assets")
             table.add_column("Key", style="cyan")
             table.add_column("Path", style="green")
-            for key, path in stage_result.outputs.items():
-                table.add_row(key, str(path))
+            if isinstance(stage_result.outputs, dict):
+                for key, path in stage_result.outputs.items():
+                    table.add_row(key, str(path))
+            else:
+                for index, path in enumerate(stage_result.outputs, 1):
+                    table.add_row(str(index), str(path))
             console.print(table)
 
         if stage_result.metadata:
@@ -308,7 +312,7 @@ class PipelineApproval:
 
     def list_all(self) -> dict[str, str]:
         """Return a dict of all stage statuses."""
-        statuses = {}
+        statuses: dict[str, str] = {}
         try:
             files = list(self.approvals_dir.iterdir())
         except OSError as exc:

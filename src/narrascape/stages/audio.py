@@ -4,11 +4,20 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from typing import Any, TypedDict
 
+from narrascape.config import BGMMap, NarrascapeConfig, Script
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration, run_ffmpeg, run_ffmpeg_raw
 
 logger = logging.getLogger("narrascape.stages.audio")
+
+
+class AudioTimelineEntry(TypedDict):
+    id: str
+    start: float
+    end: float
+    file: Path
 
 
 class AudioStage(Stage):
@@ -111,7 +120,7 @@ class AudioStage(Stage):
 
         return StageResult(self.name, False, message="mux failed")
 
-    def _visual_input(self, config) -> Path:
+    def _visual_input(self, config: NarrascapeConfig) -> Path:
         film_assembled = config.pipeline_dir / "film_assembled.mp4"
         if film_assembled.exists():
             return film_assembled
@@ -250,10 +259,17 @@ class AudioRemixStage(Stage):
         logger.info(f"Mixed audio: {mixed_dur:.1f}s")
         return StageResult(self.name, True, outputs=[mixed], message=f"{mixed_dur:.1f}s")
 
-    def _build_narration_gapped(self, script, tts_dir, pipeline_dir, gap_map, gap_default):
+    def _build_narration_gapped(
+        self,
+        script: Script,
+        tts_dir: Path,
+        pipeline_dir: Path,
+        gap_map: dict[int, float],
+        gap_default: float,
+    ) -> None:
         """Concatenate TTS segments with silence gaps."""
         silences: dict[float, Path] = {}
-        concat_lines = []
+        concat_lines: list[str] = []
 
         for i, seg in enumerate(script.segments):
             mp3 = tts_dir / f"seg_{seg.id:02d}.mp3"
@@ -321,9 +337,17 @@ class AudioRemixStage(Stage):
             validate_output=False,
         )
 
-    def _build_zone_timeline(self, script, bgm_map, durations, gap_map, gap_default, music_dir):
+    def _build_zone_timeline(
+        self,
+        script: Script,
+        bgm_map: BGMMap,
+        durations: dict[str, Any],
+        gap_map: dict[int, float],
+        gap_default: float,
+        music_dir: Path,
+    ) -> list[AudioTimelineEntry]:
         """Calculate time boundaries for each BGM zone."""
-        timeline = []
+        timeline: list[AudioTimelineEntry] = []
         for zone in bgm_map.zones:
             start_id, end_id = zone.covers[0], (
                 zone.covers[-1] if len(zone.covers) > 1 else zone.covers[0]
@@ -349,10 +373,17 @@ class AudioRemixStage(Stage):
             )
         return timeline
 
-    def _build_filter_chain(self, timeline, narration_dur, total_target, music_cfg, bgm_map):
+    def _build_filter_chain(
+        self,
+        timeline: list[AudioTimelineEntry],
+        narration_dur: float,
+        total_target: float,
+        music_cfg: Any,
+        bgm_map: BGMMap,
+    ) -> list[str]:
         """Build ffmpeg -filter_complex for multi-zone BGM + sidechain."""
         n_zones = len(timeline)
-        lines = []
+        lines: list[str] = []
         xfade = bgm_map.zone_crossfade
 
         # Handle no BGM zones: just process narration

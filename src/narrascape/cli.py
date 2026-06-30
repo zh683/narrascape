@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal, TextIO, cast
 
 import typer
 from rich.console import Console
@@ -17,20 +18,39 @@ from rich.table import Table
 
 from narrascape import __version__
 from narrascape.api_keys import APIKeys
-from narrascape.config import NarrascapeConfig, load_config
+from narrascape.config import (
+    DEFAULT_VISUAL_STYLE,
+    NarrascapeConfig,
+    Script,
+    ScriptSegment,
+    load_config,
+    load_script,
+)
 from narrascape.log_setup import setup_logging
 from narrascape.pipeline import Pipeline
+
+LLMProviderName = Literal[
+    "openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"
+]
 
 app = typer.Typer(
     name="narrascape",
     help="Production-grade video pipeline for book explainer and documentary content.",
     rich_markup_mode="rich",
 )
+
+
+def _reconfigure_text_stream(stream: TextIO | Any) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 # Handle Windows encoding for emoji output
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        _reconfigure_text_stream(sys.stdout)
+        _reconfigure_text_stream(sys.stderr)
     except (AttributeError, ValueError):
         pass
 
@@ -38,7 +58,7 @@ console = Console(force_terminal=True, emoji=False if sys.platform == "win32" el
 
 
 @contextmanager
-def _temporary_env(name: str, value: str):
+def _temporary_env(name: str, value: str) -> Iterator[None]:
     previous = os.environ.get(name)
     os.environ[name] = value
     try:
@@ -48,6 +68,20 @@ def _temporary_env(name: str, value: str):
             os.environ.pop(name, None)
         else:
             os.environ[name] = previous
+
+
+def _empty_script() -> Script:
+    return Script(segments=[ScriptSegment(id=1, text="")])
+
+
+def _load_script_or_empty(config: NarrascapeConfig) -> Script:
+    return load_script(config.script_path) if config.script_path.exists() else _empty_script()
+
+
+def _pre_production_report_output(outputs: Any) -> str:
+    if isinstance(outputs, dict):
+        return str(outputs.get("pre_production_report", ""))
+    return ""
 
 
 def _status_stage_names() -> list[str]:
@@ -64,7 +98,9 @@ from narrascape.llm import LLMClient
 from narrascape.llm import LLMConfig as LLMClientConfig
 
 
-def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None = None):
+def _get_llm_client(
+    api_key: str | NarrascapeConfig | None = None, config: NarrascapeConfig | None = None
+) -> LLMClient | None:
     """Create a production-grade LLM client with multi-provider support.
 
     Priority: config.llm.mode > env NARRASCAPE_LLM_MODE > explicit key > env vars > auto-detection
@@ -76,6 +112,7 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
     if isinstance(api_key, NarrascapeConfig) and config is None:
         config = api_key
         api_key = None
+    explicit_api_key = api_key if isinstance(api_key, str) else None
 
     if config:
         os.environ.setdefault(
@@ -118,7 +155,7 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
             if config.llm.api_key:
                 return LLMClient(
                     LLMClientConfig(
-                        provider=config.llm.provider or "openai",
+                        provider=cast(LLMProviderName, config.llm.provider or "openai"),
                         model=config.llm.model or "gpt-4o",
                         api_key=config.llm.api_key,
                         base_url=config.llm.base_url or None,
@@ -178,7 +215,7 @@ def _get_llm_client(api_key: str | None = None, config: NarrascapeConfig | None 
         )
 
     # Try explicit API key
-    key = api_key or APIKeys.openai()
+    key = explicit_api_key or APIKeys.openai()
     if key:
         return LLMClient(
             LLMClientConfig(
@@ -273,7 +310,25 @@ def init_cmd(
             "title": title or project_slug.replace("-", " ").replace("_", " ").title(),
             "script_file": script_file,
         },
-        "pipeline": {"name": "animated-explainer", "version": "2.0"},
+        "pipeline": {
+            "name": "animated-explainer",
+            "version": "2.0",
+            "video_generation": "auto",
+        },
+        "images": {
+            "provider": "seedream",
+            "model": "doubao-seedream-5-0-260128",
+            "style": DEFAULT_VISUAL_STYLE,
+        },
+        "video": {
+            "provider": "seedance",
+            "model": "jimeng-video-seedance-2.0",
+            "resolution": "720p",
+            "ratio": "16:9",
+            "duration": 5,
+            "frame_rate": 24,
+            "takes": 1,
+        },
     }
     (project_dir / "config.yaml").write_text(
         yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
@@ -390,7 +445,7 @@ def research_cmd(
     stage = ResearchStage(llm_client=_get_llm_client(config=config), topic=topic, depth=depth)
     context = StageContext(
         config=config,
-        script=None,
+        script=_empty_script(),
         cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
@@ -465,12 +520,12 @@ def write_cmd(
         topic=topic or config.project.title,
         segment_count=segments,
         style=style,
-        research_report=research_report,
+        research_report=research_report or "",
         auto_humanize=not skip_humanize,
     )
     context = StageContext(
         config=config,
-        script=None,
+        script=_empty_script(),
         cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
@@ -526,7 +581,7 @@ def humanize_cmd(
     )
     context = StageContext(
         config=config,
-        script=None,
+        script=_load_script_or_empty(config),
         cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
@@ -703,7 +758,7 @@ def pre_production_cmd(
 
     context = StageContext(
         config=config,
-        script=None,
+        script=load_script(config.script_path),
         cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
@@ -716,7 +771,7 @@ def pre_production_cmd(
         console.print(f"  Characters: {result.metadata.get('character_count', 0)}")
         console.print(f"  Scenes: {result.metadata.get('scene_count', 0)}")
         console.print(f"  Storyboard frames: {result.metadata.get('storyboard_frames', 0)}")
-        console.print(f"  Report: {result.outputs.get('pre_production_report', '')}")
+        console.print(f"  Report: {_pre_production_report_output(result.outputs)}")
     else:
         console.print(f"[bold red]❌ Pre-production failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -834,7 +889,7 @@ def design_cmd(
 
     context = StageContext(
         config=config,
-        script=None,
+        script=load_script(config.script_path),
         cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
@@ -1026,6 +1081,22 @@ def status_cmd(
         for stage_name in rejected:
             console.print(f"  {stage_name}")
         console.print("[dim]  Fix and retry: narrascape build -p . --stage <stage> --force[/]")
+    from narrascape.dashboard_data import load_rework_loop_summary
+
+    loop = load_rework_loop_summary(config.pipeline_dir)
+    console.print()
+    loop_table = Table(title="Rework Loop")
+    loop_table.add_column("Metric", style="cyan")
+    loop_table.add_column("Value", style="white")
+    loop_table.add_row("Status", str(loop.get("status", "not_started")))
+    loop_table.add_row("Supervisor", str(loop.get("supervisor_status", "missing")))
+    loop_table.add_row("Rework actions", str(loop.get("action_count", 0)))
+    loop_table.add_row("Executed actions", str(loop.get("executed_count", 0)))
+    loop_table.add_row("QA errors", str(loop.get("qa_error_count", 0)))
+    loop_table.add_row("Visual findings", str(loop.get("visual_finding_count", 0)))
+    next_stages = loop.get("next_stages") or []
+    loop_table.add_row("Next stages", " -> ".join(next_stages) if next_stages else "-")
+    console.print(loop_table)
 
 
 @app.command("clean")

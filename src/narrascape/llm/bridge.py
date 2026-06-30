@@ -23,9 +23,10 @@ import json
 import logging
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from narrascape.llm.models import LLMResponse, Message, PromptTemplate
 
@@ -99,12 +100,12 @@ class BridgeLLMClient:
         self.completed_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
 
-    def complete(self, prompt: str, **kwargs) -> LLMResponse:
+    def complete(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """Submit a task and wait for AI assistant response."""
         messages = [Message(role="user", content=prompt)]
         return self.chat(messages, **kwargs)
 
-    def chat(self, messages: list[Message], **kwargs) -> LLMResponse:
+    def chat(self, messages: list[Message], **kwargs: Any) -> LLMResponse:
         """Submit a chat task and wait for AI assistant response."""
         # Build the full conversation
         conversation = []
@@ -156,12 +157,18 @@ class BridgeLLMClient:
             f"to {self.completed_dir}/response_{task_id}.json"
         )
 
-    def run_template(self, template: PromptTemplate, **variables) -> LLMResponse:
+    def run_template(self, template: PromptTemplate, **variables: Any) -> LLMResponse:
         """Run a template and return response via bridge."""
         messages = template.build(**variables)
         return self.chat(messages)
 
-    def run_template_validated(self, template, validator, max_format_retries=2, **variables):
+    def run_template_validated(
+        self,
+        template: PromptTemplate,
+        validator: Callable[[Any], tuple[bool, str]],
+        max_format_retries: int = 2,
+        **variables: Any,
+    ) -> LLMResponse:
         """Run template with validation via bridge."""
         # For bridge, we do a single pass and let the AI handle it
         return self.run_template(template, **variables)

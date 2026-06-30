@@ -17,7 +17,7 @@ def compile_video_prompts(shot: dict[str, Any]) -> dict[str, dict[str, Any]]:
             f"Motion beat: {base['motion_instruction']}.",
             f"Continuity locks: {base['character_lock']} {base['wardrobe_lock']}",
             f"Storyboard: {base['storyboard_lock']}",
-            "Photorealistic cinematic motion, stable identity, clean frame.",
+            "Oil-painted cinematic motion, stable identity, visible brush texture, clean frame.",
         ]
     )
     agnes_prompt = _join_sections(

@@ -217,7 +217,7 @@ NEGATIVE_PROMPT_KNOWLEDGE = """
 - Duplicate, cloned, mirrored subjects
 - Jagged edges, aliasing, moiré patterns
 - Plastic skin, smooth skin, airbrushed, overly perfect skin
-- Anime, cartoon, illustration, painting (when aiming for photorealism)
+- Anime, cartoon, flat digital illustration, glossy photorealistic photography (when aiming for oil painting)
 
 ### Photorealism Killers (写实破坏者)
 - Uncanny valley: eyes too large, skin too smooth, proportions slightly off

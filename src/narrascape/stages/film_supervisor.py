@@ -101,10 +101,11 @@ class FilmSupervisorStage(Stage):
         if any(item.get("action") == "replace_source_media" for item in all_actions):
             stages.extend(["source_media", "film_timeline"])
         if any(item.get("action") == "recut" for item in all_actions):
-            stages.extend(["film_timeline", "film_assemble"])
+            stages.extend(["film_timeline", "remotion_preview", "film_assemble"])
         if stages:
             stages.extend(
                 [
+                    "remotion_preview",
                     "film_assemble",
                     "audio",
                     "subtitles",

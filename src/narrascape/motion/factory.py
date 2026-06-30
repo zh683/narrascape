@@ -60,7 +60,7 @@ def detect_hard_edges(
         high_grad = sum(count for value, count in enumerate(hist) if value > grad_threshold)
         total = max(sum(hist), 1)
         ratio = high_grad / total
-        is_hard = ratio > threshold
+        is_hard = bool(ratio > threshold)
         _HARDCACHE[cache_key] = is_hard
         logger.debug(
             f"[edge detect] {img_path.name}: {ratio * 100:.1f}% edges ({'hard' if is_hard else 'soft'})"

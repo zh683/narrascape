@@ -384,6 +384,8 @@ class VisualSemanticQAStage(Stage):
             prompt=prompt,
         )
         findings = assessment["findings"]
+        if not isinstance(findings, list):
+            return []
         for item in findings:
             if item["risk_type"] == "under_specified_video_prompt":
                 item["risk_type"] = "under_specified_director_contract"
@@ -718,12 +720,14 @@ class VisualSemanticQAStage(Stage):
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:

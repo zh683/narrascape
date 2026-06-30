@@ -32,7 +32,7 @@ tts:
 images:
   provider: seedream
   model: "doubao-seedream-5-0-260128"
-  style: "NOT anime, NOT illustration. Three visual modes: biographical scenes (19th century Russian realist oil painting), botanical close-ups (photorealistic macro), night scenes (Rembrandt chiaroscuro)."
+  style: "Oil painting style across all frames, visible brush texture, layered pigments, canvas grain. Three visual modes: biographical scenes as 19th century Russian realist oil painting, botanical close-ups as painterly oil-painted studies, night scenes with Rembrandt chiaroscuro; not photorealistic photography, not anime, not cartoon."
   aspect_ratio: "16:9"
   width: 2560
   height: 1440

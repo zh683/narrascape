@@ -33,6 +33,7 @@ from narrascape.stages.humanize import HumanizeStage
 from narrascape.stages.kenburns import KenBurnsStage
 from narrascape.stages.pre_production import PreProductionStage
 from narrascape.stages.reference_plate import ReferencePlateStage
+from narrascape.stages.remotion_preview import RemotionPreviewStage
 from narrascape.stages.research import ResearchStage
 from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.write import WriteStage
@@ -47,6 +48,7 @@ class TestDependencyResolution:
             "generate_images": GenerateImagesStage,
             "generate_tts": GenerateTTSStage,
             "film_timeline": FilmTimelineStage,
+            "remotion_preview": RemotionPreviewStage,
             "film_assemble": FilmAssembleStage,
             "generate_music": GenerateMusicStage,
             "remix_audio": AudioRemixStage,
@@ -62,6 +64,7 @@ class TestDependencyResolution:
             "generate_images",
             "generate_tts",
             "film_timeline",
+            "remotion_preview",
             "film_assemble",
             "generate_music",
             "remix_audio",
@@ -80,6 +83,7 @@ class TestDependencyResolution:
             "generate_images": GenerateImagesStage,
             "generate_tts": GenerateTTSStage,
             "film_timeline": FilmTimelineStage,
+            "remotion_preview": RemotionPreviewStage,
             "film_assemble": FilmAssembleStage,
             "generate_music": GenerateMusicStage,
             "remix_audio": AudioRemixStage,
@@ -95,6 +99,7 @@ class TestDependencyResolution:
             "generate_images",
             "generate_tts",
             "film_timeline",
+            "remotion_preview",
             "film_assemble",
             "generate_music",
             "remix_audio",
@@ -133,6 +138,7 @@ class TestDependencyResolution:
             "generate_images": GenerateImagesStage,
             "generate_tts": GenerateTTSStage,
             "film_timeline": FilmTimelineStage,
+            "remotion_preview": RemotionPreviewStage,
             "film_assemble": FilmAssembleStage,
             "generate_music": GenerateMusicStage,
             "remix_audio": AudioRemixStage,
@@ -148,7 +154,8 @@ class TestDependencyResolution:
         assert order.index("design") < order.index("generate_images")
         assert order.index("design") < order.index("film_timeline")
         assert order.index("generate_tts") < order.index("film_timeline")
-        assert order.index("film_timeline") < order.index("film_assemble")
+        assert order.index("film_timeline") < order.index("remotion_preview")
+        assert order.index("remotion_preview") < order.index("film_assemble")
         assert order.index("generate_tts") < order.index("generate_music")
         assert order.index("generate_music") < order.index("remix_audio")
         assert order.index("remix_audio") < order.index("audio")
@@ -168,6 +175,7 @@ class TestDependencyResolution:
             "take_select",
             "generate_tts",
             "film_timeline",
+            "remotion_preview",
             "film_assemble",
             "generate_music",
             "remix_audio",
@@ -198,6 +206,7 @@ class TestDependencyResolution:
             ).TakeSelectStage,
             "generate_tts": GenerateTTSStage,
             "film_timeline": FilmTimelineStage,
+            "remotion_preview": RemotionPreviewStage,
             "film_assemble": FilmAssembleStage,
             "generate_music": GenerateMusicStage,
             "remix_audio": AudioRemixStage,
@@ -215,8 +224,8 @@ class TestDependencyResolution:
         assert order.index("reference_plate") < order.index("animatic")
         assert order.index("animatic") < order.index("generate_video")
         assert order.index("generate_video") < order.index("take_select")
-        assert order.index("take_select") < order.index("film_timeline")
-        assert order.index("film_timeline") < order.index("film_assemble")
+        assert order.index("film_timeline") < order.index("remotion_preview")
+        assert order.index("remotion_preview") < order.index("film_assemble")
         assert order.index("film_assemble") < order.index("audio")
         assert order.index("remix_audio") < order.index("audio")
 
@@ -387,9 +396,15 @@ class TestPipelineStageFactory:
         stages = Pipeline(config)._default_stages()
 
         assert "generate_video" in stages
+        assert "storyboard_sheet" in stages
+        assert "production_readiness" in stages
         assert "animatic" in stages
         assert "take_select" in stages
         assert stages.index("reference_plate") < stages.index("animatic")
+        assert stages.index("reference_plate") < stages.index("storyboard_sheet")
+        assert stages.index("storyboard_sheet") < stages.index("generate_images")
+        assert stages.index("storyboard_sheet") < stages.index("production_readiness")
+        assert stages.index("production_readiness") < stages.index("generate_video")
         assert stages.index("animatic") < stages.index("generate_video")
         assert stages.index("generate_video") < stages.index("take_select")
         assert stages.index("take_select") < stages.index("film_timeline")
@@ -410,6 +425,8 @@ class TestPipelineStageFactory:
 
         assert "generate_video" not in stages
         assert "take_select" not in stages
+        assert "storyboard_sheet" in stages
+        assert "production_readiness" in stages
         assert "animatic" in stages
         assert "film_timeline" in stages
 
@@ -469,6 +486,130 @@ class TestPipelineStageFactory:
         assert results["generate_video"].metadata["optional_skipped"] is True
         assert results["film_timeline"].success is True
 
+    def test_strict_director_mode_fails_on_not_configured_director_stage(
+        self, tmp_path, monkeypatch
+    ):
+        class FakeDirectorContractStage:
+            name = "director_contract"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                output = context.config.pipeline_dir / "director_contract.yaml"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    yaml.safe_dump(
+                        {
+                            "schema_version": "director_contract.v1",
+                            "compile_process": {
+                                "mode": "deterministic_prompt_compiler",
+                                "llm_status": "not_configured",
+                            },
+                            "shots": [],
+                        },
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return StageResult("director_contract", True, outputs=[output])
+
+        class FakeLaterStage:
+            name = "film_timeline"
+            depends_on = ["director_contract"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                raise AssertionError("strict director failure should stop downstream stages")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="strict-director-test",
+                title="Strict Director Test",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(strict_director=True),
+            llm=LLMConfig(mode="ai_assistant"),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {
+                "director_contract": FakeDirectorContractStage,
+                "film_timeline": FakeLaterStage,
+            },
+        )
+
+        results = Pipeline(config, auto_approve=True, llm_client=object()).run(
+            stages=["film_timeline"]
+        )
+
+        assert results["director_contract"].success is False
+        assert "Strict director mode rejected" in results["director_contract"].message
+        assert "not_configured" in results["director_contract"].message
+        assert "film_timeline" not in results
+
+    def test_strict_director_mode_allows_used_director_stage(self, tmp_path, monkeypatch):
+        class FakeDirectorContractStage:
+            name = "director_contract"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                output = context.config.pipeline_dir / "director_contract.yaml"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(
+                    yaml.safe_dump(
+                        {
+                            "schema_version": "director_contract.v1",
+                            "compile_process": {
+                                "mode": "llm_prompt_compiler",
+                                "llm_status": "used",
+                            },
+                            "shots": [],
+                        },
+                        sort_keys=False,
+                    ),
+                    encoding="utf-8",
+                )
+                return StageResult("director_contract", True, outputs=[output])
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="strict-director-used-test",
+                title="Strict Director Used Test",
+                script_file="scripts/script.yaml",
+            ),
+            pipeline=PipelineConfig(strict_director=True),
+            llm=LLMConfig(mode="ai_assistant"),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {"director_contract": FakeDirectorContractStage},
+        )
+
+        results = Pipeline(config, auto_approve=True, llm_client=object()).run(
+            stages=["director_contract"]
+        )
+
+        assert results["director_contract"].success is True
+
     def test_pipeline_auto_rework_executes_and_reruns_supervisor_next_stages(
         self, tmp_path, monkeypatch
     ):
@@ -498,6 +639,7 @@ class TestPipelineStageFactory:
                                     "generate_video",
                                     "take_select",
                                     "film_timeline",
+                                    "remotion_preview",
                                     "film_supervisor",
                                 ]
                                 if status == "needs_rework"
@@ -554,6 +696,17 @@ class TestPipelineStageFactory:
                 calls.append("film_timeline")
                 return StageResult("film_timeline", True, message="rebuilt")
 
+        class FakeRemotionPreviewStage:
+            name = "remotion_preview"
+            depends_on = ["film_timeline"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("remotion_preview")
+                return StageResult("remotion_preview", True, message="preview rebuilt")
+
         config = NarrascapeConfig(
             project=ProjectConfig(
                 name="auto-loop-test",
@@ -575,6 +728,7 @@ class TestPipelineStageFactory:
                 "generate_video": FakeGenerateVideoStage,
                 "take_select": FakeTakeSelectStage,
                 "film_timeline": FakeFilmTimelineStage,
+                "remotion_preview": FakeRemotionPreviewStage,
                 "film_supervisor": FakeFilmSupervisorStage,
             },
         )
@@ -590,10 +744,12 @@ class TestPipelineStageFactory:
             "generate_video",
             "take_select",
             "film_timeline",
+            "remotion_preview",
             "film_supervisor",
         ]
         assert results["cycle_1.rework_execute"].success is True
         assert results["cycle_1.generate_video"].success is True
+        assert results["cycle_1.remotion_preview"].success is True
         assert results["cycle_1.film_supervisor"].success is True
         assert results["film_supervisor"].message == "needs_rework"
 

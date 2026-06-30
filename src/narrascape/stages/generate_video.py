@@ -68,7 +68,7 @@ class GenerateVideoStage(Stage):
     """
 
     name = "generate_video"
-    depends_on = ["animatic", "generate_images"]
+    depends_on = ["production_readiness", "animatic", "generate_images"]
     outputs = []
 
     # 火山方舟正确的视频生成 API 端点
@@ -139,6 +139,14 @@ class GenerateVideoStage(Stage):
         plate_path = config.pipeline_dir / "reference_plates.yaml"
         if not plate_path.exists():
             return False, f"reference_plates.yaml not found: {plate_path}"
+        readiness_path = config.pipeline_dir / "production_readiness.yaml"
+        if not readiness_path.exists():
+            return False, f"production_readiness.yaml not found: {readiness_path}"
+        readiness = self._load_yaml(readiness_path)
+        if readiness.get("status") != "ready":
+            return False, (
+                "production_readiness.yaml is not ready: " f"{readiness.get('status', 'missing')}"
+            )
         return True, ""
 
     def run(self, context: StageContext) -> StageResult:
@@ -337,11 +345,22 @@ class GenerateVideoStage(Stage):
 
     # ── Internal methods ───────────────────────────
 
-    def _load_state(self, path: Path) -> dict:
+    def _load_state(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={"done": [], "errors": [], "task_map": {}})
 
-    def _load_design_report(self, path: Path) -> dict:
+    def _load_design_report(self, path: Path) -> dict[str, Any]:
         return load_yaml_mapping(path)
+
+    def _json_object(self, value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def _to_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         return load_yaml_mapping(path)
@@ -367,9 +386,8 @@ class GenerateVideoStage(Stage):
         assessments: list[dict[str, Any]] = []
         checked_segments: list[int] = []
         for segment in segments:
-            try:
-                segment_id = int(segment.get("segment_id"))
-            except (TypeError, ValueError):
+            segment_id = self._to_int(segment.get("segment_id"))
+            if segment_id is None:
                 continue
             checked_segments.append(segment_id)
             contract = contract_by_segment.get(segment_id, {})
@@ -451,7 +469,7 @@ class GenerateVideoStage(Stage):
 
     def _build_video_prompt(
         self,
-        seg: dict,
+        seg: dict[str, Any],
         contract_by_segment: dict[int, dict[str, Any]] | None = None,
         provider: str | None = None,
     ) -> str:
@@ -460,10 +478,7 @@ class GenerateVideoStage(Stage):
         Uses cinematic_format for camera movement, motion, and scene description.
         Falls back to image_prompt if cinematic_format is empty.
         """
-        try:
-            segment_id = int(seg.get("segment_id"))
-        except (TypeError, ValueError):
-            segment_id = None
+        segment_id = self._to_int(seg.get("segment_id"))
         contract = (contract_by_segment or {}).get(segment_id) if segment_id is not None else None
         generation = (contract or {}).get("generation", {})
         if isinstance(generation, dict):
@@ -509,8 +524,10 @@ class GenerateVideoStage(Stage):
             parts.append(f"{motion_desc}, smooth and cinematic")
 
         prompt = ". ".join(parts)
-        # 视频质量后缀（Seedance 2.0 对英文提示词响应更好）
-        prompt += ". Cinematic motion, smooth camera movement, photorealistic, high quality."
+        prompt += (
+            ". Cinematic motion, smooth camera movement, oil painting style, "
+            "visible brush texture, cohesive painterly color palette, high quality."
+        )
         return prompt
 
     def _build_video_negative_prompt(self, contract: dict[str, Any], provider: str) -> str:
@@ -525,10 +542,12 @@ class GenerateVideoStage(Stage):
         data = load_yaml_mapping(path)
         result: dict[int, dict[str, Any]] = {}
         for shot in data.get("shots", []) or []:
-            try:
-                result[int(shot.get("segment_id"))] = shot
-            except (TypeError, ValueError):
+            if not isinstance(shot, dict):
                 continue
+            segment_id = self._to_int(shot.get("segment_id"))
+            if segment_id is None:
+                continue
+            result[segment_id] = shot
         return result
 
     def _load_reference_plates(self, path: Path) -> dict[int, dict[str, Any]]:
@@ -537,10 +556,12 @@ class GenerateVideoStage(Stage):
         data = load_yaml_mapping(path)
         result: dict[int, dict[str, Any]] = {}
         for plate in data.get("plates", []) or []:
-            try:
-                result[int(plate.get("segment_id"))] = plate
-            except (TypeError, ValueError):
+            if not isinstance(plate, dict):
                 continue
+            segment_id = self._to_int(plate.get("segment_id"))
+            if segment_id is None:
+                continue
+            result[segment_id] = plate
         return result
 
     def _reference_inputs_for_segment(
@@ -645,7 +666,9 @@ class GenerateVideoStage(Stage):
             item["url"] = url
         return item
 
-    def _resolve_first_frame(self, seg: dict, images_dir: Path, img_id: str) -> str | None:
+    def _resolve_first_frame(
+        self, seg: dict[str, Any], images_dir: Path, img_id: str
+    ) -> str | None:
         """Resolve the first frame image for Seedance.
 
         Priority:
@@ -656,7 +679,7 @@ class GenerateVideoStage(Stage):
         # Check for per-segment reference image URL
         ref_url = seg.get("reference_image_url", "")
         if ref_url:
-            return ref_url
+            return str(ref_url)
 
         # Use generated image as first frame
         img_path = images_dir / f"{img_id}.png"
@@ -847,11 +870,13 @@ class GenerateVideoStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = retry_with_backoff(
-                lambda: json.loads(urllib.request.urlopen(req, timeout=60).read().decode()),
-                max_retries=3,
-                base_delay=2.0,
-                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+            r = self._json_object(
+                retry_with_backoff(
+                    lambda: json.loads(urllib.request.urlopen(req, timeout=60).read().decode()),
+                    max_retries=3,
+                    base_delay=2.0,
+                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                )
             )
         except Exception as e:
             logger.error(f"Task creation failed: {e}")
@@ -863,7 +888,7 @@ class GenerateVideoStage(Stage):
             return None
 
         logger.info(f"  Task created: {task_id}")
-        return task_id
+        return str(task_id)
 
     def _poll_task(self, task_id: str) -> str | None:
         """Poll task until completion. Returns video URL or None."""
@@ -882,7 +907,9 @@ class GenerateVideoStage(Stage):
             req.add_header("Authorization", f"Bearer {api_key}")
 
             try:
-                r = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+                r = self._json_object(
+                    json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+                )
             except Exception as e:
                 consecutive_errors += 1
                 logger.warning(f"  Poll error (attempt {attempts}): {e}")
@@ -902,11 +929,11 @@ class GenerateVideoStage(Stage):
                 if isinstance(content, dict):
                     video_url = content.get("video_url")
                     if video_url:
-                        return video_url
+                        return str(video_url)
                 # 兼容其他可能的位置
                 video_url = r.get("video_url") or r.get("url")
                 if video_url:
-                    return video_url
+                    return str(video_url)
                 logger.error(
                     f"  No video_url in succeeded response: {json.dumps(r, ensure_ascii=False)[:200]}"
                 )

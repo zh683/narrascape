@@ -37,6 +37,7 @@ design
 screenplay_structure
 director_contract
 reference_plate
+storyboard_sheet
 generate_images
 animatic
 generate_video
@@ -72,6 +73,7 @@ Default full build:
 ```text
 pre_production -> design -> screenplay_structure -> director_contract -> reference_plate
 -> generate_images -> animatic -> generate_video -> take_select -> generate_tts -> film_timeline
+-> remotion_preview
 -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
@@ -98,8 +100,10 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 | `screenplay_structure` | `design` |
 | `director_contract` | `screenplay_structure` |
 | `reference_plate` | `director_contract` |
+| `storyboard_sheet` | `reference_plate`, `generate_images` |
 | `film_timeline` | `design`, `generate_images`, `generate_tts` |
-| `film_assemble` | `film_timeline` |
+| `remotion_preview` | `film_timeline` |
+| `film_assemble` | `remotion_preview` |
 | `generate_images` | `design` |
 | `animatic` | `reference_plate`, `generate_images` |
 | `generate_video` | `animatic`, `generate_images` |
@@ -188,6 +192,7 @@ The post-design director layers are implemented as regular stages:
 - `ScriptSceneDirectorStage` writes `screenplay_structure.yaml`.
 - `DirectorContractStage` writes `director_contract.yaml`.
 - `ReferencePlateStage` writes `reference_plates.yaml`.
+- `StoryboardSheetStage` writes `storyboard_sheet.yaml`, `storyboard_sheet.png`, and `storyboard_sheet.pdf`.
 - `AnimaticStage` writes `animatic.yaml` and `animatic.mp4`.
 - `ContinuityBibleStage` writes `continuity_bible.yaml`.
 - `EditingReviewStage` writes `editing_review.yaml`.
@@ -233,6 +238,18 @@ and storyboard duration hints. It blocks when a required panel source image is
 missing, so expensive generated-video calls do not start before the storyboard
 has a reviewable visual rhythm.
 
+`StoryboardSheetStage` renders a product-style storyboard contact sheet and
+keeps it inspectable as a review surface. It is not a hard gate by itself, but
+it captures the director bindings that feed the next production gate.
+
+`ProductionReadinessStage` is the final pre-video gate. It reads
+`reference_plates.yaml`, `storyboard_sheet.yaml`, and `animatic.yaml`, then
+blocks `generate_video` unless those prep artifacts are all `status: ready`.
+With `pipeline.video_generation: required`, a failed gate fails the stage. With
+the default `auto` policy, the report still records `status: blocked`, but the
+stage succeeds so the pipeline can skip generated video and continue through
+source footage or generated-image fallback.
+
 `GenerateVideoStage` selects the video provider and runs the selected provider
 task workflow when requested. When `director_contract.yaml` exists, it prefers
 `generation.compiled_prompts.<provider>.prompt` plus the matching negative
@@ -260,6 +277,12 @@ references, and subtitle references into one editorial timeline. Visual priority
 is `generated_video`, then `source_media`, then `generated_image`. If
 `take_selection.yaml` exists, the selected take is used as that segment's
 generated video.
+
+`RemotionPreviewStage` reads the same `film_timeline.yaml` and exports
+`pipeline/<project>/remotion_preview/`, a minimal Remotion project with copied
+timeline assets, `public/timeline.json`, and a React composition. This is the
+visual inspection and future web-rendering handoff; it does not replace the
+default FFmpeg assembly path yet.
 
 `FilmAssembleStage` reads `film_timeline.yaml`, renders the visual track into
 `pipeline/<project>/timeline_segments/`, inserts black timeline gaps when clip

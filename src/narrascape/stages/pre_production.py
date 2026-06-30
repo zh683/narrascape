@@ -39,7 +39,7 @@ from narrascape.agent.models import (
     StoryboardFrame,
 )
 from narrascape.api_keys import APIKeys
-from narrascape.config import NarrascapeConfig, Script, load_script
+from narrascape.config import DEFAULT_VISUAL_STYLE, NarrascapeConfig, Script, load_script
 from narrascape.prompt_safety import sanitize_prompt_for_provider
 from narrascape.providers import select_provider
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -74,7 +74,7 @@ class PreProductionStage(Stage):
         generate_expressions: bool = True,
         generate_storyboard: bool = True,
         max_characters: int = 5,
-        max_scenes: int = 5,
+        max_scenes: int = 8,
         image_model: str = "doubao-seedream-5-0-260128",
         image_api_key: str | None = None,
     ):
@@ -87,6 +87,7 @@ class PreProductionStage(Stage):
         self.max_scenes = max_scenes
         self.image_model = image_model
         self.image_api_key = image_api_key
+        self._director_steps: dict[str, dict[str, Any]] = {}
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -104,6 +105,7 @@ class PreProductionStage(Stage):
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         script = load_script(config.script_path)
+        self._director_steps = {}
 
         logger.info(f"[pre_production] Starting visual pre-production for: {config.project.name}")
         image_provider = self._image_provider(config)
@@ -127,18 +129,27 @@ class PreProductionStage(Stage):
             storyboard = self._generate_storyboard_locally(
                 script, character_sheets, environment_refs, config
             )
+            self._set_director_step(
+                "storyboard",
+                "not_configured",
+                mode="local_storyboard",
+                fallback="local image provider bypasses LLM storyboard generation",
+            )
             report = PreProductionReport(
                 project_title=config.project.title,
                 style_template=self.style_template
-                or (config.images.style if config.images else "cinematic documentary"),
+                or (config.images.style if config.images else DEFAULT_VISUAL_STYLE),
                 style_anchor_path="",
                 characters=character_sheets,
                 environments=environment_refs,
                 storyboard=storyboard,
             )
             report_path = pipe_dir / "pre_production.yaml"
+            report_dict = report.to_pre_production_report()
+            director_process = self._director_process("local_visual_pre_production")
+            report_dict["director_process"] = director_process
             with open(report_path, "w", encoding="utf-8") as f:
-                yaml.dump(report.to_pre_production_report(), f, allow_unicode=True, sort_keys=False)
+                yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
             return StageResult(
                 stage_name=self.name,
                 success=True,
@@ -153,12 +164,13 @@ class PreProductionStage(Stage):
                     "scene_count": len(environment_refs),
                     "storyboard_frames": storyboard.total_frames,
                     "mode": "local",
+                    "director_process": director_process,
                 },
             )
 
         # ── Step 0: Generate unified style anchor (BEFORE any character or scene) ──
         unified_style = self.style_template or (
-            config.images.style if config.images else "cinematic documentary"
+            config.images.style if config.images else DEFAULT_VISUAL_STYLE
         )
         style_anchor_path, _ = self._generate_style_anchor(refs_dir, config, image_provider)
         if style_anchor_path:
@@ -215,12 +227,19 @@ class PreProductionStage(Stage):
             logger.info(
                 f"[pre_production] Storyboard: {storyboard.total_frames} frames across {storyboard.total_segments} segments"
             )
+        else:
+            self._set_director_step(
+                "storyboard",
+                "not_configured",
+                mode="storyboard_disabled",
+                fallback="generate_storyboard is disabled",
+            )
 
         # ── Build report ──
         report = PreProductionReport(
             project_title=config.project.title,
             style_template=self.style_template
-            or (config.images.style if config.images else "cinematic documentary"),
+            or (config.images.style if config.images else DEFAULT_VISUAL_STYLE),
             style_anchor_path=style_anchor_path or "",
             characters=character_sheets,
             environments=environment_refs,
@@ -230,6 +249,8 @@ class PreProductionStage(Stage):
         # ── Export ──
         report_path = pipe_dir / "pre_production.yaml"
         report_dict = report.to_pre_production_report()
+        director_process = self._director_process("llm_visual_pre_production")
+        report_dict["director_process"] = director_process
         with open(report_path, "w", encoding="utf-8") as f:
             yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
         logger.info(f"[pre_production] Wrote {report_path}")
@@ -247,6 +268,7 @@ class PreProductionStage(Stage):
                 "character_count": len(character_sheets),
                 "scene_count": len(environment_refs),
                 "storyboard_frames": storyboard.total_frames,
+                "director_process": director_process,
             },
         )
 
@@ -254,11 +276,17 @@ class PreProductionStage(Stage):
 
     def _extract_characters_and_scenes(
         self, script: Script, config: NarrascapeConfig
-    ) -> tuple[list[dict], list[dict]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Extract characters and key scenes from the script using the configured LLM."""
         if not self.llm_client:
             logger.info(
                 "[pre_production] No LLM client configured; using director notes/script fallback"
+            )
+            self._set_director_step(
+                "character_scene_extraction",
+                "not_configured",
+                mode="local_extraction",
+                fallback="no LLM client configured",
             )
             return self._extract_characters_and_scenes_locally(script, config)
 
@@ -266,7 +294,7 @@ class PreProductionStage(Stage):
         script_text = "\n\n".join(f"Segment {seg.id}:\n{seg.text}" for seg in script.segments)
 
         style = self.style_template or (
-            config.images.style if config.images else "cinematic documentary"
+            config.images.style if config.images else DEFAULT_VISUAL_STYLE
         )
 
         prompt = f"""Analyze the following narration script and extract:
@@ -332,15 +360,28 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
             characters = data.get("characters", [])[: self.max_characters]
             scenes = data.get("scenes", [])[: self.max_scenes]
+            self._set_director_step(
+                "character_scene_extraction",
+                "used",
+                mode="llm_extraction",
+                character_count=len(characters),
+                scene_count=len(scenes),
+            )
             return characters, scenes
         except Exception as e:
             logger.error(f"Failed to extract characters/scenes via LLM: {e}")
             logger.warning("[pre_production] Falling back to director notes/script extraction")
+            self._set_director_step(
+                "character_scene_extraction",
+                "fallback_after_error",
+                mode="llm_extraction_with_local_fallback",
+                errors=[str(e)],
+            )
             return self._extract_characters_and_scenes_locally(script, config)
 
     def _extract_characters_and_scenes_locally(
         self, script: Script, config: NarrascapeConfig
-    ) -> tuple[list[dict], list[dict]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Build usable character and scene metadata without an LLM.
 
         Curated projects can provide `director_notes.md`; generic projects fall back
@@ -356,9 +397,9 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
         return [], self._scenes_from_script(script)[: self.max_scenes]
 
-    def _characters_from_director_notes(self, notes: str) -> list[dict]:
+    def _characters_from_director_notes(self, notes: str) -> list[dict[str, Any]]:
         sections = self._markdown_subsections(notes, "Character Bible")
-        characters = []
+        characters: list[dict[str, Any]] = []
         for raw_id, lines in sections:
             char_id = self._slug(raw_id)
             role = self._bullet_value(lines, "Role")
@@ -394,9 +435,9 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             )
         return characters
 
-    def _scenes_from_director_notes(self, notes: str) -> list[dict]:
+    def _scenes_from_director_notes(self, notes: str) -> list[dict[str, Any]]:
         sections = self._markdown_subsections(notes, "Scene Bible")
-        scenes = []
+        scenes: list[dict[str, Any]] = []
         for raw_id, lines in sections:
             scene_id = self._slug(raw_id)
             core = self._bullet_value(lines, "Core look")
@@ -419,8 +460,8 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             )
         return scenes
 
-    def _scenes_from_script(self, script: Script) -> list[dict]:
-        scenes = []
+    def _scenes_from_script(self, script: Script) -> list[dict[str, Any]]:
+        scenes: list[dict[str, Any]] = []
         for seg in script.segments[: self.max_scenes]:
             scenes.append(
                 {
@@ -651,6 +692,47 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
     # ── Step 0: Generate unified style anchor ───────────────────────────
 
+    def _set_director_step(
+        self,
+        name: str,
+        llm_status: str,
+        **metadata: Any,
+    ) -> None:
+        self._director_steps[name] = {
+            "llm_status": llm_status,
+            **{key: value for key, value in metadata.items() if value not in (None, "", [])},
+        }
+
+    def _director_process(self, mode: str) -> dict[str, Any]:
+        statuses = [
+            str(step.get("llm_status", ""))
+            for step in self._director_steps.values()
+            if step.get("llm_status")
+        ]
+        if any(status == "fallback_after_error" for status in statuses):
+            llm_status = "fallback_after_error"
+        elif any(status == "not_configured" for status in statuses) or not statuses:
+            llm_status = "not_configured"
+        else:
+            llm_status = "used"
+
+        errors: list[str] = []
+        for step in self._director_steps.values():
+            step_errors = step.get("errors") or []
+            if isinstance(step_errors, list):
+                errors.extend(str(item) for item in step_errors)
+            elif step_errors:
+                errors.append(str(step_errors))
+
+        process: dict[str, Any] = {
+            "mode": mode,
+            "llm_status": llm_status,
+            "steps": self._director_steps,
+        }
+        if errors:
+            process["errors"] = errors
+        return process
+
     def _image_provider(self, config: NarrascapeConfig) -> str:
         selection = select_provider(config, "image_generation", intent="reference")
         return selection.tool.provider
@@ -685,7 +767,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         - Rendering style
         """
         style = self.style_template or (
-            config.images.style if config.images else "cinematic documentary"
+            config.images.style if config.images else DEFAULT_VISUAL_STYLE
         )
 
         # CRITICAL: The prompt must be a complete, self-contained image description.
@@ -744,11 +826,11 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
     def _generate_character_reference(
         self,
-        char_data: dict,
+        char_data: dict[str, Any],
         refs_dir: Path,
         config: NarrascapeConfig,
         style_anchor_path: str | None = None,
-        unified_style: str = "cinematic documentary",
+        unified_style: str = DEFAULT_VISUAL_STYLE,
         image_provider: str = "seedream",
     ) -> CharacterReferenceSheet:
         """Generate a complete reference sheet for a single character.
@@ -948,11 +1030,11 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
     def _generate_environment_reference(
         self,
-        scene_data: dict,
+        scene_data: dict[str, Any],
         refs_dir: Path,
         config: NarrascapeConfig,
         style_anchor_path: str | None = None,
-        unified_style: str = "cinematic documentary",
+        unified_style: str = DEFAULT_VISUAL_STYLE,
         image_provider: str = "seedream",
     ) -> EnvironmentReference:
         """Generate reference images for a single environment/scene.
@@ -1099,12 +1181,18 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         the visual composition, camera movement, and character positions.
         """
         if not self.llm_client:
+            self._set_director_step(
+                "storyboard",
+                "not_configured",
+                mode="local_storyboard",
+                fallback="no LLM client configured",
+            )
             return self._generate_storyboard_locally(
                 script, character_sheets, environment_refs, config
             )
 
         style = self.style_template or (
-            config.images.style if config.images else "cinematic documentary"
+            config.images.style if config.images else DEFAULT_VISUAL_STYLE
         )
 
         # Build character reference summary for LLM
@@ -1137,6 +1225,7 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
         storyboard = Storyboard(project_title=config.project.title)
         total_frames = 0
+        storyboard_errors: list[str] = []
 
         for seg in script.segments:
             seg_text = seg.text
@@ -1221,6 +1310,7 @@ Guidelines:
 
             except Exception as e:
                 logger.error(f"Failed to generate storyboard for segment {seg_id}: {e}")
+                storyboard_errors.append(f"segment {seg_id}: {e}")
                 # Fallback: create a single frame with the segment text
                 storyboard.frames.append(
                     StoryboardFrame(
@@ -1237,6 +1327,21 @@ Guidelines:
 
         storyboard.total_frames = total_frames
         storyboard.total_segments = len(script.segments)
+        if storyboard_errors:
+            self._set_director_step(
+                "storyboard",
+                "fallback_after_error",
+                mode="llm_storyboard_with_local_fallback",
+                errors=storyboard_errors,
+                frame_count=total_frames,
+            )
+        else:
+            self._set_director_step(
+                "storyboard",
+                "used",
+                mode="llm_storyboard",
+                frame_count=total_frames,
+            )
         return storyboard
 
     def _generate_storyboard_locally(

@@ -96,6 +96,8 @@ class PILEngine(MotionEngine):
 
             write_error: Exception | None = None
             try:
+                if proc.stdin is None:
+                    raise RuntimeError("ffmpeg stdin pipe was not opened")
                 for i in range(total_frames):
                     t = i / total_frames if total_frames > 1 else 0
                     zoom = params.zoom_start + (params.zoom_end - params.zoom_start) * t

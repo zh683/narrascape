@@ -175,7 +175,7 @@ class ImageUploader:
             url = data.get("url") or data.get("data", {}).get("url")
             if not url:
                 raise ValueError(f"Upload response missing 'url': {data}")
-            return url
+            return str(url)
         except Exception as e:
             logger.error(f"HTTP upload failed: {e}. Fallback to base64.")
             return self._to_base64(path)

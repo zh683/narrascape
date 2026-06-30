@@ -143,7 +143,10 @@ class ReferencePlateStage(Stage):
         }
 
     def _segment_id(self, shot: dict[str, Any]) -> int | None:
+        value = shot.get("segment_id")
+        if value is None:
+            return None
         try:
-            return int(shot.get("segment_id"))
+            return int(value)
         except (TypeError, ValueError):
             return None

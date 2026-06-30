@@ -70,8 +70,14 @@ class TestNarrascapeConfig:
 
         assert cfg.video_generation == "auto"
         assert cfg.design_overwrite is True
+        assert cfg.strict_director is False
         assert cfg.auto_rework is True
         assert cfg.max_rework_cycles == 1
+
+    def test_pipeline_can_enable_strict_director_mode(self):
+        cfg = PipelineConfig(strict_director=True)
+
+        assert cfg.strict_director is True
 
     def test_pipeline_can_preserve_curated_design_files(self):
         cfg = PipelineConfig(design_overwrite=False)
@@ -94,18 +100,22 @@ class TestNarrascapeConfig:
                 llm=LLMConfig(mode="none"),
             )
 
-    def test_crime_and_punishment_agnes_example_uses_ai_director_llm(self):
+    def test_crime_and_punishment_production_example_uses_seedream_seedance(self):
         config_path = (
             Path(__file__).resolve().parents[1]
             / "examples"
             / "crime-and-punishment"
-            / "config.agnes.yaml"
+            / "config.production.yaml"
         )
 
         cfg = load_config(config_path)
 
         assert cfg.pipeline.video_generation == "required"
         assert cfg.llm.mode == "ai_assistant"
+        assert cfg.images.provider == ImageProvider.SEEDREAM
+        assert cfg.video.provider == VideoProvider.SEEDANCE
+        assert "Oil painting style" in cfg.images.style
+        assert "photorealistic photography" in cfg.images.style
 
     def test_project_dir_is_not_serialized(self):
         cfg = NarrascapeConfig(

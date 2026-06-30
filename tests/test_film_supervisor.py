@@ -290,6 +290,13 @@ def test_film_supervisor_reads_director_reports_and_decides_next_stages(tmp_path
     assert "rework_execute" in report["next_stages"]
     assert "generate_video" in report["next_stages"]
     assert "film_timeline" in report["next_stages"]
+    assert "remotion_preview" in report["next_stages"]
+    assert report["next_stages"].index("film_timeline") < report["next_stages"].index(
+        "remotion_preview"
+    )
+    assert report["next_stages"].index("remotion_preview") < report["next_stages"].index(
+        "film_assemble"
+    )
     assert report["decision"]["rework_action_count"] == 3
 
 
@@ -337,6 +344,7 @@ def test_film_supervisor_reruns_contract_chain_for_director_contract_rewrite(tmp
         "take_select",
     ]
     assert "film_timeline" in report["next_stages"]
+    assert "remotion_preview" in report["next_stages"]
 
 
 def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(tmp_path):
@@ -354,6 +362,7 @@ def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(t
                 "stages": {
                     "generate_video": "completed",
                     "film_timeline": "completed",
+                    "remotion_preview": "completed",
                     "film_assemble": "completed",
                     "qa": "completed",
                 },
@@ -381,6 +390,8 @@ def test_rework_execute_executes_plan_by_quarantining_media_and_writing_queues(t
     pipeline_state = json.loads((config.pipeline_dir / "state.json").read_text(encoding="utf-8"))
     assert pipeline_state["stages"]["generate_video"] == "pending"
     assert pipeline_state["stages"]["film_timeline"] == "pending"
+    assert pipeline_state["stages"]["remotion_preview"] == "pending"
+    assert "remotion_preview" not in pipeline_state.get("stage_outputs", {})
 
 
 def test_rework_execute_queues_director_contract_rewrite(tmp_path):

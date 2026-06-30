@@ -12,6 +12,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+DEFAULT_VISUAL_STYLE = (
+    "Oil painting style, painterly cinematic frames, visible brush texture, "
+    "layered pigments, canvas grain, rich chiaroscuro lighting, cohesive color palette, "
+    "period-drama mood; not photorealistic photography, not anime, not cartoon, "
+    "no readable text, no watermark."
+)
+
 # ───────────────────────────────────────────
 # Enums
 # ───────────────────────────────────────────
@@ -174,6 +181,13 @@ class PipelineConfig(BaseModel):
             "required fails instead of falling back, off omits generated-video stages."
         ),
     )
+    strict_director: bool = Field(
+        False,
+        description=(
+            "Fail key AI Director stages when their artifacts show not_configured "
+            "or fallback_after_error LLM status."
+        ),
+    )
     auto_rework: bool = Field(
         True,
         description="Automatically execute film_supervisor rework decisions during default builds.",
@@ -230,7 +244,7 @@ class ImageConfig(BaseModel):
     provider: ImageProvider = Field(ImageProvider.SEEDREAM)
     engine: str | None = Field(None)
     model: str = Field("doubao-seedream-5-0-260128")
-    style: str = Field("", description="Global style prompt prefix")
+    style: str = Field(DEFAULT_VISUAL_STYLE, description="Global style prompt prefix")
     aspect_ratio: str = Field("16:9")
     width: int = Field(2560, ge=640, le=8192)
     height: int = Field(1440, ge=480, le=8192)

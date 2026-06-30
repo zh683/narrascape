@@ -349,7 +349,7 @@ Atmosphere: volumetric fog, haze, dust particles, rain, snow, steam, smoke, ligh
 Negative prompts should exclude common AI artifacts and unwanted elements:
 - Anatomy: extra limbs, deformed hands, bad anatomy, fused fingers, mutated hands
 - Quality: blurry, low quality, pixelated, compression artifacts, noise, watermark, text, logo, signature
-- Style: cartoon, anime, illustration, painting, 3D render, CGI (unless specifically desired)
+- Style: cartoon, anime, flat digital illustration, 3D render, CGI
 - Artifacts: duplicate, cloned, cropped, out of frame, worst quality, low resolution
 - Lighting: overexposed, underexposed, flat lighting, washed out colors
 - Texture: plastic skin, smooth skin, airbrushed, porcelain texture (unless specifically desired)
@@ -482,7 +482,7 @@ Layer 3 - cinematic_format（从 Layer 1 + Layer 2 标准化重新呈现）：
 "EXT. SEA CLIFF — GOLDEN HOUR. WIDE SHOT, 24mm, LOW ANGLE. STATIC. LIGHTING: NATURAL BACKLIGHT. Key: setting sun at lower left, 15° above horizon, 3200K warm amber. Fill: reflected ocean light, golden shimmer. COMPOSITION: rule of thirds, subject silhouette at right third, sun at lower left third, horizon at lower third. COLOR: horizon burning amber #E85D04 → gold #FFB703 → deep teal #0A4F5C. DEPTH: DEEP (f/11). ATMOSPHERE: sea breeze, wind-blown coat, shimmering water. MOOD: solitary but dignified. DURATION: 6s."
 
 image_prompt（从 cinematic_format 提炼，不是独立创作）：
-"Wide shot of lone elderly man with white hair, weathered olive skin, wearing worn brown wool coat with leather buttons, standing on sea cliff edge at golden hour sunset, strong silhouette against burning amber sun at lower left 15 degrees above horizon, wind-blown coat with leather buttons, shimmering golden light reflections on ocean surface extending to horizon, sky gradient from intense amber to deep teal, rough textured cliff edge, deep depth of field f/11, subject at right third, low angle, photorealistic, 8k, cinematic"
+"Wide shot of lone elderly man with white hair, weathered olive skin, wearing worn brown wool coat with leather buttons, standing on sea cliff edge at golden hour sunset, strong silhouette against burning amber sun at lower left 15 degrees above horizon, wind-blown coat with leather buttons, shimmering golden light reflections on ocean surface extending to horizon, sky gradient from intense amber to deep teal, rough textured cliff edge, deep depth of field f/11, subject at right third, low angle, oil painting style, visible brush texture, canvas grain, cinematic"
 
 negative_prompt（基于这个特定画面，不是通用列表）：
 "extra limbs, deformed hands, blurry, cartoon, anime, plastic texture, safety fence, guardrail, smooth rocks, modern buildings, people in background, calm wind, overexposed sky, different coat color, different hair color, young face, smooth skin"
@@ -591,7 +591,7 @@ Scene Style: {{"color_palette":"warm amber + deep teal + muted earth tones","lig
 L1: "白发老人站在海边悬崖边缘，背对镜头，面向大海。夕阳在他左下方，勾勒剪影。旧棕色羊毛外套被海风吹鼓，皮革纽扣在逆光中偶尔闪烁，衣角翻飞。海面反射碎金光斑到地平线。天空从亮橙渐变到深紫。岩石粗糙有风化痕迹。老人放松但静止，像雕像。孤独但庄严。"
 L2: shot_type=wide, movement=still, focal=24mm, aperture=f/11, angle=low, lighting=natural backlight, sources=["sun lower-left 15° 3200K","ocean reflection"], composition=rule_of_thirds, color=amber#E85D04→gold#FFB703→teal#0A4F5C, atmosphere=sea_breeze, dof=deep
 L3: "EXT. SEA CLIFF — GOLDEN HOUR. WIDE, 24mm, LOW. STATIC. LIGHTING: NATURAL BACKLIGHT. Key: sun lower-left 15° 3200K. Fill: ocean reflection. COMPOSITION: rule_of_thirds, subject right third, sun left third. COLOR: amber#E85D04→gold#FFB703→teal#0A4F5C. DEPTH: DEEP(f/11). ATMOSPHERE: sea breeze, wind-blown coat. MOOD: solitary. DURATION: 6s."
-image_prompt: "An elderly man with white hair, weathered olive skin, wearing worn brown wool coat with leather buttons, standing on sea cliff edge at golden hour, strong silhouette against burning amber sun lower-left 15°, wind-blown coat, shimmering golden ocean reflections, sky gradient amber to deep teal, rough cliff edge, deep DOF f/11, low angle, photorealistic, 8k, cinematic"
+image_prompt: "An elderly man with white hair, weathered olive skin, wearing worn brown wool coat with leather buttons, standing on sea cliff edge at golden hour, strong silhouette against burning amber sun lower-left 15°, wind-blown coat, shimmering golden ocean reflections, sky gradient amber to deep teal, rough cliff edge, deep DOF f/11, low angle, oil painting style, visible brush texture, canvas grain, cinematic"
 negative_prompt: "extra limbs, deformed hands, cartoon, plastic texture, safety fence, guardrail, smooth rocks, modern buildings, overexposed sky, different hair color, different face, different outfit, different age, smooth skin"
 </few_shot>
 

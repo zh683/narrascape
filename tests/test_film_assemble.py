@@ -150,7 +150,8 @@ def test_film_assemble_stage_is_default_visual_path_before_audio():
     assert "film_assemble" in stage_map
     order = _resolve_dependencies(["audio"], stage_map)
 
-    assert order.index("film_timeline") < order.index("film_assemble")
+    assert order.index("film_timeline") < order.index("remotion_preview")
+    assert order.index("remotion_preview") < order.index("film_assemble")
     assert order.index("film_assemble") < order.index("audio")
 
 

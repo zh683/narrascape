@@ -115,8 +115,7 @@ execution contract:
   lock, composition requirements, and reference image ids
 - generation instructions: video prompt, negative prompt, duration, and motion
 - provider-specific compiled prompts under `generation.compiled_prompts`, so
-  Seedance and Agnes can receive different prompt grammar from the same shot
-  contract
+  Seedance receives an execution prompt tailored to generated-video production
 - QA assertions: `must_show` and `must_not_show`
 
 When an LLM client is configured, this stage asks the model to act as a
@@ -227,6 +226,21 @@ and consume LLM-authored design fields when the LLM path was used.
 `visual_semantic_qa` have real LLM judge or prompt-compiler paths. These are
 execution-layer directors: their job is to keep the film workflow coherent, not
 to fake model creativity when no LLM is configured.
+
+Production builds can enforce that boundary with:
+
+```yaml
+pipeline:
+  strict_director: true
+```
+
+Strict director mode reads the `llm_status` fields written by
+`pre_production`, `design`, `director_contract`, `take_select`,
+`creative_review`, and `visual_semantic_qa`. If any of those artifacts reports
+`not_configured` or `fallback_after_error`, the pipeline fails the stage instead
+of letting deterministic fallback output enter the finished film. Cached
+completed artifacts are checked as well, so enabling strict mode also protects
+reruns from older fallback reports.
 
 ## Quality Boundaries
 

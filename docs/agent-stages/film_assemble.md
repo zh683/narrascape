@@ -3,6 +3,7 @@
 ## Inputs
 
 - `film_timeline.yaml`
+- optional `pipeline/<project>/remotion_preview.yaml` for prior visual handoff status
 - `assets/videos/vid_*.mp4` when generated video clips exist
 - `source_media/` clips referenced by the timeline
 - `assets/images/img_*.png` for generated-image fallback
@@ -16,13 +17,14 @@
 ## Procedure
 
 1. Read `film_timeline.yaml`.
-2. Sort visual clips by timeline `start`.
-3. Render generated-video and source-media clips with source in/out and duration.
-4. Render generated-image fallback clips as still video segments.
-5. Insert black timeline gaps when clip start times leave holes.
-6. Render ending cards when the timeline includes them.
-7. Concatenate rendered segments into `film_assembled.mp4`.
-8. Report failed clip ids instead of silently dropping them.
+2. Run after `remotion_preview` so the same timeline has an inspectable handoff.
+3. Sort visual clips by timeline `start`.
+4. Render generated-video and source-media clips with source in/out and duration.
+5. Render generated-image fallback clips as still video segments.
+6. Insert black timeline gaps when clip start times leave holes.
+7. Render ending cards when the timeline includes them.
+8. Concatenate rendered segments into `film_assembled.mp4`.
+9. Report failed clip ids instead of silently dropping them.
 
 ## Do Not
 

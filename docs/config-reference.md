@@ -40,6 +40,7 @@ pipeline:
   version: "2.0"
   design_overwrite: true
   video_generation: auto   # auto | required | off
+  strict_director: false
   auto_rework: true
   max_rework_cycles: 1
 ```
@@ -49,11 +50,19 @@ pipeline:
 | `video_generation: auto` | Include `generate_video` and `take_select`, but skip video generation when required credentials or multi-take clips are unavailable. |
 | `video_generation: required` | Treat missing generated video as a blocking production issue and queue regeneration. |
 | `video_generation: off` | Omit generated-video stages and rely on source footage or generated-image fallback. |
+| `strict_director` | When true, fail key AI Director stages if their artifacts expose `llm_status: not_configured` or `fallback_after_error`. |
 | `design_overwrite` | When true, `design` rewrites root `image_prompts.yaml` and `image_map.yaml`. Set false for hand-curated projects that should preserve authored prompt files while still writing `pipeline/<name>/design_report.yaml`. |
 | `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
 | `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
 
 `video_generation: required` is an AI-film production policy. It rejects `llm.mode: none` during config validation because required generated-video workflows need an AI Director client for script breakdown, director contract, take selection, semantic QA, and rework decisions.
+
+Use `strict_director: true` when a production run must prove that the director
+chain used configured LLM paths instead of local templates. The pipeline checks
+`pre_production.yaml`, `design_report.yaml`, `director_contract.yaml`,
+`take_selection.yaml`, `creative_review.yaml`, and
+`visual_semantic_report.yaml`; a blocked status fails the stage before
+downstream assembly can consume the fallback artifact.
 
 ## LLM
 
@@ -106,10 +115,10 @@ tts:
 
 ```yaml
 images:
-  provider: seedream       # seedream | agnes | flux | openai | local
+  provider: seedream       # production default; use local only for offline preview
   engine: null
   model: doubao-seedream-5-0-260128
-  style: "cinematic documentary"
+  style: "Oil painting style, painterly cinematic frames, visible brush texture, layered pigments, canvas grain, rich chiaroscuro lighting, cohesive color palette; not photorealistic photography, not anime, not cartoon, no readable text, no watermark."
   aspect_ratio: "16:9"
   width: 2560
   height: 1440
@@ -117,13 +126,15 @@ images:
 ```
 
 `provider: local` creates deterministic placeholder PNG files.
-`provider: agnes` uses Agnes Image 2.1 Flash through `AGNES_API_KEY`.
+Seedream is the canonical production image provider for new projects. Legacy
+Agnes image support remains in code for older projects, but new production
+configs should use `provider: seedream` with `ARK_API_KEY`.
 
 ## Video
 
 ```yaml
 video:
-  provider: seedance       # seedance | agnes
+  provider: seedance       # production default
   model: jimeng-video-seedance-2.0
   resolution: 720p
   ratio: "16:9"
@@ -132,26 +143,17 @@ video:
   takes: 1
 ```
 
-For Agnes Video V2.0, use:
-
-```yaml
-video:
-  provider: agnes
-  model: agnes-video-v2.0
-```
-
 Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
 shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.
 Multi-take output writes `assets/videos/vid_01_take_01.mp4`,
 `assets/videos/vid_01_take_02.mp4`, and so on, then `take_select` chooses the
 clip that enters `film_timeline.yaml`.
 
-Agnes video tasks are asynchronous. Narrascape creates the task, polls by
-`video_id`, downloads the completed video, and writes generated clips for
-downstream `take_select`, `film_timeline`, QA, and rework stages. Agnes
-image-to-video and multi-image workflows require image URLs that the Agnes API
-can access; configure an HTTP/object-storage upload backend for production
-reference images.
+Seedance is the canonical production video provider for new projects.
+Narrascape sends generated stills, storyboard-bound reference plates, and
+director-contract prompts into Seedance, then writes completed clips for
+`take_select`, `film_timeline`, QA, and rework stages. Legacy Agnes video
+support remains only for older configs.
 
 ## Visual Rendering
 
@@ -328,6 +330,5 @@ For multi-image segments, `timing` must match image count and sum to `1.0`.
 | `ANTHROPIC_API_KEY` | Anthropic provider. |
 | `DEEPSEEK_API_KEY` | DeepSeek provider. |
 | `ARK_API_KEY` | Volcengine Seedream/Seedance. |
-| `AGNES_API_KEY` | Agnes Image 2.1 Flash and Agnes Video V2.0. |
 | `MINIMAX_API_KEY` | MiniMax TTS/music. |
 | `NARRASCAPE_UPLOAD_ENDPOINT` | HTTP uploader endpoint for reference images. |

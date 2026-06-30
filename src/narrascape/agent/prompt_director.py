@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from typing import Any
 
-from narrascape.config import MovementType, NarrascapeConfig, ShotType
+from narrascape.config import DEFAULT_VISUAL_STYLE, MovementType, NarrascapeConfig, ShotType
 from narrascape.llm import OutputValidator, is_assistant_bridge_provider
+from narrascape.llm.models import PromptTemplate
 from narrascape.llm.prompts import get_prompt
 
 logger = logging.getLogger("narrascape.agent.prompt_director")
@@ -54,7 +56,7 @@ class PromptDirector:
     def __init__(self, llm_client: Any = None):
         self.llm_client = llm_client
         # Feedback log for closed-loop optimization (Problem 8)
-        self._feedback_log: list[dict] = []
+        self._feedback_log: list[dict[str, Any]] = []
         # Character and scene consistency anchors
         self._characters: list[Any] = []
         self._scene_style: Any | None = None
@@ -63,7 +65,7 @@ class PromptDirector:
 
     # ── Public API ───────────────────────────
 
-    def get_consistency_anchor(self) -> dict:
+    def get_consistency_anchor(self) -> dict[str, Any]:
         """Return the full consistency anchor (characters + scene style + reference chains) for external use."""
         return {
             "characters": [
@@ -161,7 +163,7 @@ class PromptDirector:
         ), "PromptDirector requires LLM client — initialization bug"
 
         overall_tone = analysis_list[0].emotion if analysis_list else "neutral"
-        style_template = config.images.style if config.images else "cinematic documentary"
+        style_template = config.images.style if config.images else DEFAULT_VISUAL_STYLE
         total = len(segments)
 
         # Phase 0: Build character profiles and scene style for consistency anchoring
@@ -183,7 +185,7 @@ class PromptDirector:
             logger.info(
                 "[PromptDirector] AI assistant bridge mode: using batch design for all segments"
             )
-            raw_designs = self._design_sequence_batch(
+            batch_designs = self._design_sequence_batch(
                 segments,
                 analysis_list,
                 config,
@@ -195,8 +197,8 @@ class PromptDirector:
                 storyboard=storyboard,
             )
             # Bridge mode: skip consistency checks (batch design already considers consistency)
-            self._build_reference_image_chains(raw_designs)
-            return raw_designs
+            self._build_reference_image_chains(batch_designs)
+            return batch_designs
 
         # Phase 1: Design each shot individually with full context (including character anchors)
         raw_designs: list[Any] = []
@@ -343,7 +345,7 @@ Guidelines:
             raise ValueError(f"Expected JSON array, got {type(data)}")
 
         # Build ShotDesign objects from response
-        raw_designs = []
+        raw_designs: list[Any] = []
         for i, item in enumerate(data):
             seg_id = item.get("segment_id", segments[i].id if i < len(segments) else 0)
 
@@ -358,6 +360,8 @@ Guidelines:
             metadata = item.get("metadata", {})
             if not isinstance(metadata, dict):
                 metadata = {}
+            if item.get("negative_prompt"):
+                metadata["negative_prompt"] = item.get("negative_prompt", "")
 
             design = ShotDesign(
                 segment_id=seg_id,
@@ -370,7 +374,6 @@ Guidelines:
                 emotion=item.get("emotion", ""),
                 intensity=float(item.get("intensity", 0.5)),
                 metadata=metadata,
-                negative_prompt=item.get("negative_prompt", ""),
                 style_prefix=style_template,
             )
             raw_designs.append(design)
@@ -579,7 +582,7 @@ Guidelines:
                 ),
                 narrative_function=getattr(analysis, "narrative_function", "exposition"),
                 pacing=analysis.pacing,
-                style=style_template or "cinematic documentary",
+                style=style_template or DEFAULT_VISUAL_STYLE,
                 overall_tone=overall_tone,
                 prev_context=prev_context,
                 next_context=next_context,
@@ -1296,7 +1299,7 @@ Guidelines:
         character_profiles: str = "",
         scene_style: str = "",
         video_model: str = "generic",
-    ) -> str:
+    ) -> PromptTemplate:
         """Select the optimal template based on estimated context length.
 
         Decision tree:
@@ -1355,7 +1358,7 @@ Guidelines:
         next_context: str,
         position: str,
         video_model: str,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Generate 2-3 alternative shot designs for key moments.
 
         Uses a cheaper, faster approach: ask AI Assistant to suggest 2 variations
@@ -1406,7 +1409,7 @@ Guidelines:
 
     # ── Self-Critique (Problem 6) ───────────────────────────
 
-    def _critique_design(self, design: Any, text: str, analysis: Any) -> dict | None:
+    def _critique_design(self, design: Any, text: str, analysis: Any) -> dict[str, Any] | None:
         """Critique a shot design and return a score + improvement suggestions."""
         # AI Assistant mode: llm_client always available, proceed directly
         try:
@@ -1513,7 +1516,7 @@ Guidelines:
                 ),
                 narrative_function=getattr(analysis, "narrative_function", "exposition"),
                 pacing=analysis.pacing,
-                style=style_template or "cinematic documentary",
+                style=style_template or DEFAULT_VISUAL_STYLE,
                 overall_tone=overall_tone,
                 prev_context=prev_context,
                 next_context=next_context,
@@ -1531,9 +1534,9 @@ Guidelines:
 
     # ── Video Model Notes (Problem 7) ───────────────────────────
 
-    def _video_model_notes(self, video_model: str, design: Any) -> dict:
+    def _video_model_notes(self, video_model: str, design: Any) -> dict[str, Any]:
         """Generate model-specific notes for video generation."""
-        notes = {}
+        notes: dict[str, Any] = {}
         vm = video_model.lower()
 
         if vm == "runway" or vm == "gen3":
@@ -1695,7 +1698,7 @@ Guidelines:
             # Could trigger negative prompt optimization here
             # For now, just log it
 
-    def get_feedback_summary(self) -> dict:
+    def get_feedback_summary(self) -> dict[str, Any]:
         """Get a summary of recorded feedback for prompt optimization."""
         if not self._feedback_log:
             return {"total": 0, "acceptance_rate": 0.0, "common_issues": []}
@@ -1703,10 +1706,7 @@ Guidelines:
         total = len(self._feedback_log)
         accepted = sum(1 for e in self._feedback_log if e["accepted"])
 
-        # Count common issues
-        from collections import Counter
-
-        issue_counts = Counter()
+        issue_counts: Counter[str] = Counter()
         for e in self._feedback_log:
             for issue in e.get("issues", []):
                 issue_counts[issue] += 1
@@ -1733,7 +1733,7 @@ Guidelines:
         issue_map = {
             "extra limbs": "extra limbs, deformed hands, fused fingers",
             "blurry": "blurry, out of focus, low resolution",
-            "wrong style": "cartoon, anime, illustration, 3D render",
+            "wrong style": "cartoon, anime, flat digital illustration, 3D render, glossy photorealistic photography",
             "bad anatomy": "bad anatomy, disfigured, malformed",
             "plastic skin": "plastic skin, smooth skin, porcelain texture",
             "flat lighting": "flat lighting, even lighting, no shadows",
@@ -1754,7 +1754,9 @@ Guidelines:
 
     # ── Helpers ───────────────────────────
 
-    def _build_shot_design(self, design_data: dict, seg_id: int, text: str, analysis: Any) -> Any:
+    def _build_shot_design(
+        self, design_data: dict[str, Any], seg_id: int, text: str, analysis: Any
+    ) -> Any:
         """Build a ShotDesign from LLM output data with three-layer model + character consistency."""
         from narrascape.agent.models import ShotDesign
 
@@ -1931,7 +1933,7 @@ Guidelines:
         for char_id in character_refs:
             char = char_map.get(char_id)
             if char and char.seedream_model:
-                return char.seedream_model
+                return str(char.seedream_model)
 
         # If shot has characters, use jimeng-4.6 for better face consistency
         if len(character_refs) > 1:
@@ -1951,7 +1953,7 @@ Guidelines:
         # Default to full features for quality
         return "jimeng-video-seedance-2.0"
 
-    def _build_cinematic_format_fallback(self, design_data: dict, seg_id: int) -> str:
+    def _build_cinematic_format_fallback(self, design_data: dict[str, Any], seg_id: int) -> str:
         """Construct a basic cinematic_format when LLM doesn't provide one."""
         parts = []
 
@@ -2007,7 +2009,7 @@ Guidelines:
 
     def _verify_three_layer_consistency(
         self,
-        design_data: dict | Any,
+        design_data: dict[str, Any] | Any,
         director_vision: str | None = None,
         cinematic_format: str | None = None,
         seg_id: int = 0,

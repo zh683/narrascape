@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from narrascape.config import MovementType, ShotType
@@ -89,7 +91,7 @@ class ShotDesign(BaseModel):
     style_prefix: str = Field("", description="Style prefix applied to the prompt")
     emotion: str = Field("", description="Dominant emotion for this shot")
     intensity: float = Field(0.5, ge=0.0, le=1.0, description="Emotional intensity 0.0-1.0")
-    metadata: dict = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Extended fields: negative_prompt, focal_length, aperture, camera_angle, lighting_scheme, light_sources, composition, color_palette, atmosphere, depth_of_field, consistency_notes, video_readiness, key_entities, director_vision_backup, seedream_model, seedream_sample_strength, seedance_resolution",
     )
@@ -299,7 +301,7 @@ class DesignReport(BaseModel):
         description="Path to the unified style anchor image for style consistency across all shots",
     )
 
-    def to_image_prompts(self) -> dict:
+    def to_image_prompts(self) -> dict[str, Any]:
         """Export as image_prompts.yaml dict with full director metadata."""
         prompts = []
         for seg in self.segments:
@@ -385,7 +387,7 @@ class DesignReport(BaseModel):
             prompts.append(entry)
         return {"prompts": prompts}
 
-    def to_image_map(self) -> dict:
+    def to_image_map(self) -> dict[str, Any]:
         """Export as image_map.yaml dict."""
         return {
             "segments": [
@@ -397,7 +399,7 @@ class DesignReport(BaseModel):
             ]
         }
 
-    def to_design_report(self) -> dict:
+    def to_design_report(self) -> dict[str, Any]:
         """Export full design report with all director metadata for human review."""
         report = {
             "project_title": self.project_title,
@@ -684,13 +686,13 @@ class PreProductionReport(BaseModel):
     )
 
     # Convenience exports
-    def to_character_refs_dict(self) -> dict:
+    def to_character_refs_dict(self) -> dict[str, str]:
         """Export character reference paths for DesignStage consumption."""
         return {
             c.char_id: c.primary_reference_path for c in self.characters if c.primary_reference_path
         }
 
-    def to_scene_refs_dict(self) -> dict:
+    def to_scene_refs_dict(self) -> dict[str, str]:
         """Export scene reference paths for DesignStage consumption."""
         return {
             e.scene_id: e.primary_reference_path
@@ -698,11 +700,11 @@ class PreProductionReport(BaseModel):
             if e.primary_reference_path
         }
 
-    def to_storyboard_frames(self) -> list[dict]:
+    def to_storyboard_frames(self) -> list[dict[str, Any]]:
         """Export storyboard frames as plain dicts."""
         return [f.model_dump() for f in self.storyboard.frames]
 
-    def to_pre_production_report(self) -> dict:
+    def to_pre_production_report(self) -> dict[str, Any]:
         """Export full report for human review."""
         return {
             "project_title": self.project_title,

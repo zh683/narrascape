@@ -191,9 +191,13 @@ class ScriptAnalyzer:
 
     def __init__(self, llm_client: Any = None):
         self.llm_client = llm_client
+        self.last_llm_status = "not_configured"
+        self.last_errors: list[str] = []
 
     def analyze(self, script: Script) -> list[SegmentAnalysis]:
         """Analyze all segments. LLM-first, one API call per segment (or batch in bridge mode)."""
+        self.last_llm_status = "not_configured"
+        self.last_errors = []
         # Bridge mode: analyze all segments in one batch to reduce task files
         if (
             self.llm_client
@@ -201,9 +205,12 @@ class ScriptAnalyzer:
             and is_assistant_bridge_provider(self.llm_client.config.provider)
         ):
             try:
-                return self._llm_analyze_batch(script)
+                result = self._llm_analyze_batch(script)
+                self._mark_llm_used()
+                return result
             except Exception as e:
                 logger.error(f"Batch bridge analysis failed: {e}")
+                self._record_llm_error(e)
                 raise
 
         results = []
@@ -311,6 +318,7 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
                 seg_id=seg.id,
                 max_format_retries=2,
             )
+            self._mark_llm_used()
 
             return SegmentAnalysis(
                 segment_id=seg.id,
@@ -323,7 +331,16 @@ Return ONLY a valid JSON array. Be specific and use professional cinematography 
             )
         except Exception as e:
             logger.warning(f"LLM analysis failed for segment {seg.id}: {e}, falling back to rules")
+            self._record_llm_error(e)
             return self._rule_analyze(seg)
+
+    def _mark_llm_used(self) -> None:
+        if self.last_llm_status != "fallback_after_error":
+            self.last_llm_status = "used"
+
+    def _record_llm_error(self, exc: Exception) -> None:
+        self.last_llm_status = "fallback_after_error"
+        self.last_errors.append(str(exc))
 
     def _rule_analyze(self, seg: ScriptSegment) -> SegmentAnalysis:
         """Rule-based fallback when LLM is unavailable."""
@@ -359,7 +376,7 @@ def _count_keywords(text: str, keyword_set: set[str]) -> int:
 
 
 def _detect_emotion(text: str) -> tuple[str, float]:
-    scores = {}
+    scores: dict[str, int] = {}
     for emotion, keywords in EMOTION_WORDS.items():
         count = _count_keywords(text, keywords)
         if count > 0:
@@ -368,20 +385,20 @@ def _detect_emotion(text: str) -> tuple[str, float]:
     if not scores:
         return "calm", 0.3
 
-    dominant = max(scores, key=scores.get)
+    dominant = max(scores, key=lambda emotion: scores[emotion])
     max_score = max(scores.values())
     intensity = min(0.3 + (max_score - 1) * 0.3, 1.0)
     return dominant, intensity
 
 
 def _detect_scene_type(text: str) -> str:
-    scores = {}
+    scores: dict[str, int] = {}
     for scene_type, keywords in SCENE_WORDS.items():
         count = _count_keywords(text, keywords)
         if count > 0:
             scores[scene_type] = count
     if scores:
-        return max(scores, key=scores.get)
+        return max(scores, key=lambda scene_type: scores[scene_type])
     return "outdoor"
 
 

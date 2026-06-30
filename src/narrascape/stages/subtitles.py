@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import Any
 
+from narrascape.config import Script, SubtitleConfig
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font_name, run_ffmpeg
 
@@ -94,7 +97,7 @@ class SubtitleStage(Stage):
 
         return StageResult(self.name, False, message="subtitle burn failed")
 
-    def _escape_filter_path(self, path) -> str:
+    def _escape_filter_path(self, path: Path) -> str:
         value = str(path.resolve()).replace("\\", "/")
         return self._escape_filter_value(value).replace(":", "\\:")
 
@@ -104,10 +107,17 @@ class SubtitleStage(Stage):
             escaped = escaped.replace(char, f"\\{char}")
         return escaped
 
-    def _build_srt(self, script, durations, sub_cfg, gap_map, gap_default) -> str:
+    def _build_srt(
+        self,
+        script: Script,
+        durations: dict[str, Any],
+        sub_cfg: SubtitleConfig,
+        gap_map: dict[int, float],
+        gap_default: float,
+    ) -> str:
         """Build SRT content from script segments and durations."""
         max_chars = sub_cfg.max_chars_per_line
-        entries = []
+        entries: list[str] = []
         idx = 1
         cumulative = 0.0
 

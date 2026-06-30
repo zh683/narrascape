@@ -67,14 +67,17 @@ class EditingReviewStage(Stage):
         ]
 
     def _pacing(self, visual: list[dict[str, Any]], checks: dict[str, Any]) -> dict[str, Any]:
-        risk_segments = {int(item) for item in checks.get("pacing_risk_segments", []) or []}
+        risk_segments = {
+            parsed
+            for item in checks.get("pacing_risk_segments", []) or []
+            if (parsed := self._to_int(item)) is not None
+        }
         durations: list[dict[str, Any]] = []
         for clip in visual:
-            try:
-                segment_id = int(clip.get("segment_id"))
-                duration = float(clip.get("duration") or 0.0)
-            except (TypeError, ValueError):
+            segment_id = self._to_int(clip.get("segment_id"))
+            if segment_id is None:
                 continue
+            duration = self._to_float(clip.get("duration"), default=0.0)
             durations.append({"segment_id": segment_id, "duration": round(duration, 3)})
             if duration < 2.5 or duration > 10.0:
                 risk_segments.add(segment_id)
@@ -92,9 +95,8 @@ class EditingReviewStage(Stage):
         repeated_assets: list[dict[str, Any]] = []
         for clip in visual:
             asset_ref = str(clip.get("asset_ref") or clip.get("path") or "")
-            try:
-                segment_id = int(clip.get("segment_id"))
-            except (TypeError, ValueError):
+            segment_id = self._to_int(clip.get("segment_id"))
+            if segment_id is None:
                 continue
             if asset_ref and asset_ref in seen_assets:
                 repeated.add(segment_id)
@@ -110,7 +112,9 @@ class EditingReviewStage(Stage):
 
         if checks.get("repeated_shot_risk") and not repeated:
             for segment_id in checks.get("repeated_shot_segments", []) or []:
-                repeated.add(int(segment_id))
+                parsed = self._to_int(segment_id)
+                if parsed is not None:
+                    repeated.add(parsed)
 
         return {
             "risk": bool(repeated),
@@ -121,12 +125,11 @@ class EditingReviewStage(Stage):
     def _emotion_curve(self, visual: list[dict[str, Any]]) -> dict[str, Any]:
         beats = []
         for clip in visual:
-            try:
-                segment_id = int(clip.get("segment_id"))
-                start = float(clip.get("start") or 0.0)
-                intensity = float(clip.get("intensity") or 0.0)
-            except (TypeError, ValueError):
+            segment_id = self._to_int(clip.get("segment_id"))
+            if segment_id is None:
                 continue
+            start = self._to_float(clip.get("start"), default=0.0)
+            intensity = self._to_float(clip.get("intensity"), default=0.0)
             beats.append(
                 {
                     "segment_id": segment_id,
@@ -135,7 +138,7 @@ class EditingReviewStage(Stage):
                     "intensity": round(intensity, 3),
                 }
             )
-        intensity_values = [beat["intensity"] for beat in beats]
+        intensity_values = [float(beat["intensity"]) for beat in beats]
         flatline = len(set(intensity_values)) <= 1 and len(intensity_values) > 1
         return {
             "beats": beats,
@@ -198,6 +201,22 @@ class EditingReviewStage(Stage):
             seen.add(key)
             deduped.append(action)
         return deduped
+
+    def _to_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _to_float(self, value: Any, *, default: float) -> float:
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():

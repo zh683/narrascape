@@ -12,7 +12,7 @@ class FilmAssembleStage(Stage):
     """Render the visual track from film_timeline.yaml."""
 
     name = "film_assemble"
-    depends_on = ["film_timeline"]
+    depends_on = ["remotion_preview"]
     VALID_SOURCES = {"generated_video", "source_media", "generated_image", "ending_card"}
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
