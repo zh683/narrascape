@@ -157,13 +157,22 @@ This page describes the implemented product surface as it exists in the codebase
 - `creative_review` and `visual_semantic_qa` add LLM-assisted creative and semantic review when an LLM client is configured, with deterministic metadata fallback for offline verification.
 - `film_supervisor` is the default supervising report: it reads the director artifacts and returns the next stages to run.
 - In the default build, `pipeline.auto_rework: true` lets `film_supervisor` trigger `rework_execute` automatically when it reports `needs_rework`.
-- `rework_execute` safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, resets affected stage state, and lets the pipeline rerun the requested stages up to `pipeline.max_rework_cycles`.
+- `rework_execute` safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, resets affected stage state, and lets the pipeline rerun the requested stages up to `pipeline.max_rework_cycles`. `director_contract` and `generate_video` consume their queues so rewrites and provider calls are limited to queued segments.
+
+## Production AI-Film Profile
+
+- `narrascape build --production` applies the `seedream-seedance-oil-painting` runtime profile.
+- The profile selects Seedream for images, Seedance for video, oil-painting visual style, required video generation, strict director mode, production quality gates, at least three video takes, and two automatic rework cycles.
+- `pipeline.production_quality_gates: true` makes `production_readiness` check script density, pre-production character/scene/storyboard coverage, storyboard bindings, director-contract continuity locks, prompt blueprints, compiled prompts, and QA assertions before generated video starts.
+- `generation.prompt_blueprint` is written into each director-contract shot and copied into `reference_plates.yaml`, giving future visual QA a structured contract instead of only a natural-language prompt.
+- `examples/golden-sample` is the fixed quality benchmark for this profile.
 
 ## Product Dashboard
 
 - Streamlit dashboard includes a Timeline page for `film_timeline.yaml`.
 - The page shows clip count, duration, generated-video coverage, source mix, missing media, and Remotion preview status.
 - It exposes the generated Remotion Studio, still-check, and render commands from `remotion_preview.yaml`.
+- Install dashboard dependencies with `pip install -e ".[dashboard]"` or `pip install -e ".[dev]"`.
 
 ## Provider Governance
 

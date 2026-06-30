@@ -116,6 +116,7 @@ class ReferencePlateStage(Stage):
                 self._compact_reference_asset(asset) for asset in manifest["resolved_references"]
             ],
             "compiled_prompts": generation.get("compiled_prompts", {}),
+            "prompt_blueprint": generation.get("prompt_blueprint", {}),
             "provider_negative_prompts": self._provider_negative_prompts(generation),
             "qa_requirements": shot.get("qa", {}),
         }

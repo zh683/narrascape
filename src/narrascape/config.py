@@ -188,6 +188,13 @@ class PipelineConfig(BaseModel):
             "or fallback_after_error LLM status."
         ),
     )
+    production_quality_gates: bool = Field(
+        False,
+        description=(
+            "Enable stricter pre-video readiness checks for production AI-film builds: "
+            "script density, pre-production coverage, storyboard bindings, and prompt contracts."
+        ),
+    )
     auto_rework: bool = Field(
         True,
         description="Automatically execute film_supervisor rework decisions during default builds.",

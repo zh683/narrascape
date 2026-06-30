@@ -71,6 +71,7 @@ class TestNarrascapeConfig:
         assert cfg.video_generation == "auto"
         assert cfg.design_overwrite is True
         assert cfg.strict_director is False
+        assert cfg.production_quality_gates is False
         assert cfg.auto_rework is True
         assert cfg.max_rework_cycles == 1
 

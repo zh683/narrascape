@@ -172,6 +172,19 @@ class GenerateVideoStage(Stage):
         segments = design.get("segments", [])
         if not segments:
             return StageResult(self.name, False, message="No segments in design_report.yaml")
+        rework_segment_ids = self._segment_ids_from_queue(pipe_dir / "video_regen_queue.yaml")
+        if rework_segment_ids:
+            segments = [
+                segment
+                for segment in segments
+                if self._to_int(segment.get("segment_id")) in rework_segment_ids
+            ]
+            if not segments:
+                return StageResult(
+                    self.name,
+                    False,
+                    message="video_regen_queue.yaml has no matching design segments",
+                )
         contract_by_segment = self._load_director_contract(pipe_dir / "director_contract.yaml")
         reference_plates = self._load_reference_plates(pipe_dir / "reference_plates.yaml")
         pre_production = self._load_yaml(pipe_dir / "pre_production.yaml")
@@ -340,6 +353,7 @@ class GenerateVideoStage(Stage):
                 "fail_count": fail_count,
                 "takes_per_shot": take_count,
                 "take_count": total_jobs,
+                "rework_segment_ids": sorted(rework_segment_ids),
             },
         )
 
@@ -364,6 +378,22 @@ class GenerateVideoStage(Stage):
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         return load_yaml_mapping(path)
+
+    def _segment_ids_from_queue(self, path: Path) -> set[int]:
+        if not path.exists():
+            return set()
+        try:
+            data = load_yaml_mapping(path)
+        except Exception:
+            return set()
+        ids: set[int] = set()
+        for action in data.get("actions", []) or []:
+            if not isinstance(action, dict):
+                continue
+            segment_id = self._to_int(action.get("segment_id"))
+            if segment_id is not None:
+                ids.add(segment_id)
+        return ids
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:

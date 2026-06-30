@@ -45,6 +45,9 @@ class DirectorContractStage(Stage):
         storyboard_by_segment = self._storyboard_by_segment(pre_production)
         design_by_segment = self._design_by_segment(design)
         preproduction_index = self._preproduction_index(pre_production)
+        rewrite_segment_ids = self._segment_ids_from_queue(
+            config.pipeline_dir / "director_contract_rewrite_queue.yaml"
+        )
 
         llm_status = "not_configured"
         llm_error = ""
@@ -70,6 +73,13 @@ class DirectorContractStage(Stage):
                 preproduction_index,
                 context,
             )
+        if rewrite_segment_ids:
+            previous_contract = self._load_yaml(output)
+            shots = self._merge_rewritten_shots(
+                previous_contract.get("shots", []),
+                shots,
+                rewrite_segment_ids,
+            )
 
         contract = {
             "schema_version": "director_contract.v1",
@@ -82,6 +92,7 @@ class DirectorContractStage(Stage):
                 ),
                 "llm_status": llm_status,
                 "llm_error": llm_error,
+                "rework_segment_ids": sorted(rewrite_segment_ids),
             },
             "shots": shots,
         }
@@ -303,9 +314,71 @@ class DirectorContractStage(Stage):
 
     def _with_compiled_prompts(self, shot: dict[str, Any]) -> dict[str, Any]:
         generation = shot.setdefault("generation", {})
+        generation["prompt_blueprint"] = self._prompt_blueprint(shot)
         generation["prompt_schema_version"] = SCHEMA_VERSION
         generation["compiled_prompts"] = compile_video_prompts(shot)
         return shot
+
+    def _prompt_blueprint(self, shot: dict[str, Any]) -> dict[str, Any]:
+        film_language = (
+            shot.get("film_language", {}) if isinstance(shot.get("film_language"), dict) else {}
+        )
+        continuity = (
+            shot.get("continuity_constraints", {})
+            if isinstance(shot.get("continuity_constraints"), dict)
+            else {}
+        )
+        binding = (
+            shot.get("storyboard_binding", {})
+            if isinstance(shot.get("storyboard_binding"), dict)
+            else {}
+        )
+        generation = shot.get("generation", {}) if isinstance(shot.get("generation"), dict) else {}
+        qa = shot.get("qa", {}) if isinstance(shot.get("qa"), dict) else {}
+        return {
+            "schema_version": "prompt_blueprint.v1",
+            "narrative_intent": str(shot.get("story_reason") or ""),
+            "emotional_target": str(shot.get("emotional_target") or ""),
+            "subject_action": str(shot.get("story_reason") or ""),
+            "camera_plan": {
+                "shot_type": str(film_language.get("shot_type") or "medium"),
+                "motion": str(
+                    generation.get("motion") or film_language.get("camera_motion") or "still"
+                ),
+                "lighting": str(film_language.get("lighting") or continuity.get("lighting") or ""),
+                "composition": str(film_language.get("composition") or ""),
+            },
+            "continuity_locks": {
+                "characters": list(continuity.get("characters") or []),
+                "location": str(continuity.get("location") or binding.get("scene_ref") or ""),
+                "wardrobe": str(continuity.get("wardrobe") or binding.get("wardrobe_lock") or ""),
+                "lighting": str(continuity.get("lighting") or film_language.get("lighting") or ""),
+            },
+            "storyboard_locks": {
+                "storyboard_frame_ids": list(binding.get("storyboard_frame_ids") or []),
+                "character_positions": list(binding.get("character_positions") or []),
+                "scene_ref": str(binding.get("scene_ref") or ""),
+                "wardrobe_lock": str(binding.get("wardrobe_lock") or ""),
+                "composition_requirements": list(binding.get("composition_requirements") or []),
+            },
+            "reference_strategy": {
+                "required_reference_image_ids": list(binding.get("reference_image_ids") or []),
+                "provider_flow": "seedream_first_frame_to_seedance_video",
+                "identity_priority": "character_reference, wardrobe_lock, scene_reference, style_anchor",
+            },
+            "style_anchor": "oil painting, visible brush texture, cohesive painterly color palette",
+            "quality_bar": [
+                "one concrete subject action",
+                "one camera movement only",
+                "stable character identity",
+                "locked wardrobe and scene geography",
+                "no readable text or watermark",
+            ],
+            "qa_assertions": {
+                "must_show": list(qa.get("must_show") or []),
+                "must_not_show": list(qa.get("must_not_show") or []),
+            },
+        }
 
     def _must_show(self, characters: list[str], location: str, wardrobe: str) -> list[str]:
         values = [*characters, location, wardrobe]
@@ -545,6 +618,45 @@ class DirectorContractStage(Stage):
         if not path.exists():
             return {}
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+    def _segment_ids_from_queue(self, path: Path) -> set[int]:
+        if not path.exists():
+            return set()
+        data = self._load_yaml(path)
+        ids: set[int] = set()
+        for action in data.get("actions", []) or []:
+            if not isinstance(action, dict):
+                continue
+            segment_id = _to_int(action.get("segment_id"))
+            if segment_id is not None:
+                ids.add(segment_id)
+        return ids
+
+    def _merge_rewritten_shots(
+        self,
+        previous_shots: Any,
+        candidate_shots: list[dict[str, Any]],
+        rewrite_segment_ids: set[int],
+    ) -> list[dict[str, Any]]:
+        previous_by_segment: dict[int, dict[str, Any]] = {}
+        if isinstance(previous_shots, list):
+            for shot in previous_shots:
+                if not isinstance(shot, dict):
+                    continue
+                segment_id = _to_int(shot.get("segment_id"))
+                if segment_id is not None:
+                    previous_by_segment[segment_id] = shot
+
+        merged: list[dict[str, Any]] = []
+        for shot in candidate_shots:
+            segment_id = _to_int(shot.get("segment_id"))
+            if segment_id is None:
+                continue
+            if segment_id in rewrite_segment_ids or segment_id not in previous_by_segment:
+                merged.append(shot)
+            else:
+                merged.append(previous_by_segment[segment_id])
+        return merged
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:

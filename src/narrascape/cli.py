@@ -20,9 +20,11 @@ from narrascape import __version__
 from narrascape.api_keys import APIKeys
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
+    ImageProvider,
     NarrascapeConfig,
     Script,
     ScriptSegment,
+    VideoProvider,
     load_config,
     load_script,
 )
@@ -56,6 +58,15 @@ if sys.platform == "win32":
 
 console = Console(force_terminal=True, emoji=False if sys.platform == "win32" else True)
 
+PRODUCTION_PROFILE_NAME = "seedream-seedance-oil-painting"
+PRODUCTION_OIL_PAINTING_STYLE = (
+    "Oil painting style, painterly cinematic AI-film frames, visible brush texture, "
+    "layered pigments, canvas grain, rich chiaroscuro lighting, cohesive period-drama "
+    "color palette, character-led composition, restrained cinematic motion; "
+    "not photorealistic photography, not anime, not cartoon, no readable text, "
+    "no watermark, no platform label."
+)
+
 
 @contextmanager
 def _temporary_env(name: str, value: str) -> Iterator[None]:
@@ -82,6 +93,38 @@ def _pre_production_report_output(outputs: Any) -> str:
     if isinstance(outputs, dict):
         return str(outputs.get("pre_production_report", ""))
     return ""
+
+
+def _apply_build_profile(
+    config: NarrascapeConfig,
+    *,
+    profile: str = "",
+    production: bool = False,
+) -> NarrascapeConfig:
+    """Apply runtime build profile defaults without mutating config.yaml."""
+    requested_profile = profile.strip().lower()
+    if production and not requested_profile:
+        requested_profile = PRODUCTION_PROFILE_NAME
+    if not requested_profile:
+        return config
+    if requested_profile != PRODUCTION_PROFILE_NAME:
+        raise ValueError(
+            f"Unknown build profile {profile!r}. Supported profile: {PRODUCTION_PROFILE_NAME}"
+        )
+
+    updated = config.model_copy(deep=True)
+    updated.images.provider = ImageProvider.SEEDREAM
+    updated.images.style = PRODUCTION_OIL_PAINTING_STYLE
+    updated.video.provider = VideoProvider.SEEDANCE
+    updated.video.takes = max(updated.video.takes, 3)
+    updated.pipeline.video_generation = "required"
+    updated.pipeline.strict_director = True
+    updated.pipeline.production_quality_gates = True
+    updated.pipeline.auto_rework = True
+    updated.pipeline.max_rework_cycles = max(updated.pipeline.max_rework_cycles, 2)
+    if updated.llm.mode == "none":
+        updated.llm.mode = "ai_assistant"
+    return updated
 
 
 def _status_stage_names() -> list[str]:
@@ -367,12 +410,19 @@ def dashboard_cmd(
     host: Annotated[str, typer.Option("--host", "-h", help="Bind address")] = "127.0.0.1",
 ) -> None:
     """Launch the interactive web-based control panel."""
+    import importlib.util
     import subprocess
     import sys
 
     dashboard_path = Path(__file__).parent / "dashboard.py"
     if not dashboard_path.exists():
         console.print(f"[bold red]Error:[/] Dashboard file not found: {dashboard_path}")
+        raise typer.Exit(1)
+    if importlib.util.find_spec("streamlit") is None:
+        console.print(
+            "[bold red]Error:[/] Streamlit is not installed. "
+            'Install it with: pip install -e ".[dashboard]"'
+        )
         raise typer.Exit(1)
 
     console.print(f"[bold green]Launching Narrascape Dashboard[/] at http://{host}:{port}")
@@ -927,6 +977,23 @@ def build_cmd(
     auto_approve: Annotated[
         bool, typer.Option("--approve", "-a", help="Auto-approve all stages (non-interactive)")
     ] = False,
+    profile: Annotated[
+        str,
+        typer.Option(
+            "--profile",
+            help=f"Runtime build profile, e.g. {PRODUCTION_PROFILE_NAME}",
+        ),
+    ] = "",
+    production: Annotated[
+        bool,
+        typer.Option(
+            "--production",
+            help=(
+                "Use the production AI-film profile: seedream images, seedance video, "
+                "oil painting style, strict director mode, and prep quality gates"
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Build the complete video pipeline.
 
@@ -940,6 +1007,7 @@ def build_cmd(
 
     try:
         config = load_config(config_path)
+        config = _apply_build_profile(config, profile=profile, production=production)
     except Exception as e:
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)

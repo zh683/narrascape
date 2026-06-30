@@ -58,6 +58,14 @@ an inspectable React composition before the current FFmpeg-based
 
 By default, `pipeline.video_generation: auto` tries the generated-video path when it can run. If the configured video provider credentials are missing, the video stage is skipped and the timeline continues through source footage or generated-image fallback. Use `pipeline.video_generation: required` to make missing generated video a blocking production issue, or `off` to omit video generation stages.
 
+For a stricter AI-film run, use the built-in production profile:
+
+```bash
+narrascape build -p examples/golden-sample --production --approve
+```
+
+`--production` applies the `seedream-seedance-oil-painting` runtime profile: Seedream images, Seedance video, oil-painting visual style, `video_generation: required`, `strict_director: true`, `production_quality_gates: true`, at least three takes per shot, and two automatic rework cycles.
+
 `pipeline.video_generation: required` is treated as an AI-film production mode, so it cannot run with `llm.mode: none`. Required-video projects must use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`; otherwise configuration loading or pipeline startup fails before deterministic templates can silently take over.
 
 For production builds that must not mix fallback director output into the film,
@@ -67,16 +75,16 @@ immediately when their artifacts report `llm_status: not_configured` or
 to `pre_production`, `design`, `director_contract`, `take_select`,
 `creative_review`, and `visual_semantic_qa`.
 
-The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework_cycles: 1`. After `film_supervisor`, a `needs_rework` decision automatically executes `rework_execute`, then reruns the supervisor's requested stages such as `generate_video -> take_select -> film_timeline -> qa -> film_supervisor`.
+The default build also has `pipeline.auto_rework: true` and `pipeline.max_rework_cycles: 1`. After `film_supervisor`, a `needs_rework` decision automatically executes `rework_execute`, then reruns the supervisor's requested stages such as `generate_video -> take_select -> film_timeline -> qa -> film_supervisor`. Rework queues are consumed by downstream stages: `director_contract_rewrite_queue.yaml` limits director-contract rewrites to queued shots, and `video_regen_queue.yaml` limits generated-video reruns to queued segments.
 
-`production_readiness` is the last pre-video gate. It checks `reference_plates.yaml`, `storyboard_sheet.yaml`, and `animatic.yaml`, and only lets `generate_video` start when those prep artifacts are all in a ready state. In `video_generation: required` this is blocking; in the default `auto` mode it records the failed gate and lets the pipeline continue through source-footage or generated-image fallback instead of pretending generated video is ready.
+`production_readiness` is the last pre-video gate. It checks `reference_plates.yaml`, `storyboard_sheet.yaml`, and `animatic.yaml`, and only lets `generate_video` start when those prep artifacts are all in a ready state. In `video_generation: required` this is blocking; in the default `auto` mode it records the failed gate and lets the pipeline continue through source-footage or generated-image fallback instead of pretending generated video is ready. When `pipeline.production_quality_gates: true`, it also checks script density, pre-production character/scene/storyboard coverage, storyboard bindings, director-contract prompt blueprints, compiled prompts, continuity locks, and QA assertions.
 
 ## AI Director
 
 The AI Director is not just a prompt template. It now produces durable production artifacts:
 
 - `screenplay_structure.yaml`: act, scene, sequence, and shot hierarchy.
-- `director_contract.yaml`: per-shot story intent, film language, continuity constraints, storyboard binding, portable video prompt, provider-compiled prompts, negative prompts, and QA assertions.
+- `director_contract.yaml`: per-shot story intent, film language, continuity constraints, storyboard binding, portable video prompt, prompt blueprint, provider-compiled prompts, negative prompts, and QA assertions.
 - `reference_plates.yaml`: per-shot resolved style, character, scene, and storyboard reference handoff.
 - `storyboard_sheet.yaml` plus `storyboard_sheet.png` / `storyboard_sheet.pdf`: a 12-up review board for storyboard frames and director bindings.
 - `animatic.yaml` plus `animatic.mp4`: low-cost storyboard timing preview before expensive video generation.
@@ -97,7 +105,7 @@ The AI Director is not just a prompt template. It now produces durable productio
 - `composition_requirements`
 - `reference_image_ids`
 
-`generate_video` consumes `generation.compiled_prompts.<provider>.prompt` when available, passes the matching negative prompt into the provider request, and falls back to `generation.video_prompt` for legacy contracts. It writes `video_prompt_quality.yaml`, scores each prompt for executable video ingredients such as subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding, then blocks generic or under-specified prompts before provider execution. `visual_semantic_qa` checks the same contract for scene, wardrobe, character-position, and composition mismatches.
+`generation.prompt_blueprint` records the director's executable intent: narrative purpose, subject action, camera plan, continuity locks, storyboard locks, reference strategy, quality bar, and QA assertions. `generate_video` consumes `generation.compiled_prompts.<provider>.prompt` when available, passes the matching negative prompt into the provider request, and falls back to `generation.video_prompt` for legacy contracts. It writes `video_prompt_quality.yaml`, scores each prompt for executable video ingredients such as subject, action, scene, wardrobe, camera language, composition, lighting, style, and reference binding, then blocks generic or under-specified prompts before provider execution. `visual_semantic_qa` checks the same contract for scene, wardrobe, character-position, and composition mismatches.
 
 ## Quick Start
 
@@ -115,6 +123,13 @@ For an editable install:
 pip install -e ".[dev]"
 narrascape init my-video
 narrascape build -p my-video --approve
+```
+
+Install the optional dashboard UI when you want the Streamlit control panel:
+
+```bash
+pip install -e ".[dashboard]"
+narrascape dashboard
 ```
 
 For a no-network smoke test, configure local providers:

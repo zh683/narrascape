@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageStat
+
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_media_info, run_ffmpeg_raw, validate_video
@@ -268,6 +270,7 @@ class QAStage(Stage):
             + list((context.config.pipeline_dir / "timeline_segments").glob("*.mp4"))
         )
         hashes: dict[str, Path] = {}
+        perceptual_hashes: dict[str, Path] = {}
         for path in media_files:
             try:
                 digest = self._file_sha256(path)
@@ -276,6 +279,11 @@ class QAStage(Stage):
             if digest in hashes:
                 return True
             hashes[digest] = path
+            perceptual = self._media_average_hash(path)
+            if perceptual:
+                if perceptual in perceptual_hashes:
+                    return True
+                perceptual_hashes[perceptual] = path
         return False
 
     def _file_sha256(self, path: Path) -> str:
@@ -284,6 +292,49 @@ class QAStage(Stage):
             for chunk in iter(lambda: fh.read(1024 * 1024), b""):
                 hasher.update(chunk)
         return hasher.hexdigest()
+
+    def _media_average_hash(self, path: Path) -> str | None:
+        image_path = path
+        temp_frame: Path | None = None
+        if path.suffix.lower() in {".mp4", ".mov", ".mkv", ".webm"}:
+            temp_frame = path.with_suffix(".qa-frame.jpg")
+            try:
+                result = run_ffmpeg_raw(
+                    [
+                        "-hide_banner",
+                        "-nostats",
+                        "-y",
+                        "-i",
+                        str(path),
+                        "-frames:v",
+                        "1",
+                        str(temp_frame),
+                    ],
+                    timeout=30,
+                    loglevel="error",
+                )
+                if result.returncode != 0 or not temp_frame.exists():
+                    return None
+                image_path = temp_frame
+            except Exception:
+                return None
+        try:
+            with Image.open(image_path) as image:
+                gray = image.convert("L").resize((8, 8))
+                if hasattr(gray, "get_flattened_data"):
+                    pixels = list(gray.get_flattened_data())
+                else:
+                    pixels = list(gray.getdata())
+                mean = ImageStat.Stat(gray).mean[0]
+                return "".join("1" if value >= mean else "0" for value in pixels)
+        except Exception:
+            return None
+        finally:
+            if temp_frame and temp_frame.exists():
+                try:
+                    temp_frame.unlink()
+                except Exception:
+                    pass
 
     def _detect_placeholder_residue(self, context: StageContext) -> bool:
         state_path = context.config.pipeline_dir / "image_gen_state.json"

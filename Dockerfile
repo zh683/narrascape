@@ -24,8 +24,8 @@ COPY pyproject.toml ./
 COPY README.md ./
 COPY src/ ./src/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
+# Install Python dependencies, including the optional Streamlit dashboard.
+RUN pip install --no-cache-dir -e ".[dev,dashboard]"
 
 # Create directories for project assets
 RUN mkdir -p /app/projects /app/output

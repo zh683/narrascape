@@ -22,8 +22,8 @@ services:
       # FFmpeg path in container
       - NARRASCAPE_FFMPEG=/usr/bin/ffmpeg
     working_dir: /app
-    # Override default command to keep container running
-    command: ["check"]
+    # Default to a valid CLI command; override this for project builds.
+    command: ["--help"]
     # Or run a specific project:
     # command: ["build", "--project", "/app/projects/my-documentary"]
 

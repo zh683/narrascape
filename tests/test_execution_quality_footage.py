@@ -1018,6 +1018,24 @@ def test_qa_reports_deep_quality_checks(tmp_path, monkeypatch):
     assert checks["placeholder_residue"] is True
 
 
+def test_qa_detects_visually_repeated_images_with_different_bytes(tmp_path):
+    from PIL import Image, PngImagePlugin
+
+    from narrascape.stages.qa import QAStage
+
+    config = _config(tmp_path)
+    config.images_dir.mkdir(parents=True, exist_ok=True)
+    first = config.images_dir / "img_01.png"
+    second = config.images_dir / "img_02.png"
+    Image.new("RGB", (16, 16), color=(42, 42, 42)).save(first)
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("variant", "different encoded bytes")
+    Image.new("RGB", (16, 16), color=(42, 42, 42)).save(second, pnginfo=metadata)
+
+    assert first.read_bytes() != second.read_bytes()
+    assert QAStage()._detect_repeated_shots(_context(config)) is True
+
+
 def test_source_media_writes_real_footage_edit_timeline(tmp_path):
     from narrascape.stages.source_media import SourceMediaStage
 

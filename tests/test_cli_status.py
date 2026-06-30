@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import tomllib
 import yaml
 
 
@@ -19,6 +22,75 @@ def test_cli_exports_installed_entry_point():
     from narrascape.cli import main
 
     assert callable(main)
+
+
+def test_dashboard_extra_declares_streamlit_dependency():
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    optional = data["project"]["optional-dependencies"]
+    assert any(dep.startswith("streamlit") for dep in optional["dashboard"])
+    assert any(dep.startswith("streamlit") for dep in optional["dev"])
+
+
+def test_docker_compose_default_command_exists():
+    data = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert data["services"]["narrascape"]["command"] == ["--help"]
+
+
+def test_production_profile_applies_ai_film_quality_defaults(tmp_path):
+    from narrascape.cli import _apply_build_profile
+    from narrascape.config import (
+        ImageProvider,
+        LLMConfig,
+        NarrascapeConfig,
+        PipelineConfig,
+        ProjectConfig,
+        VideoProvider,
+    )
+
+    config = NarrascapeConfig(
+        project=ProjectConfig(
+            name="profile-test",
+            title="Profile Test",
+            script_file="scripts/script.yaml",
+        ),
+        pipeline=PipelineConfig(video_generation="auto", max_rework_cycles=1),
+        llm=LLMConfig(mode="none"),
+        project_dir=tmp_path,
+    )
+
+    profiled = _apply_build_profile(config, production=True)
+
+    assert profiled.images.provider == ImageProvider.SEEDREAM
+    assert profiled.video.provider == VideoProvider.SEEDANCE
+    assert profiled.video.takes >= 3
+    assert profiled.pipeline.video_generation == "required"
+    assert profiled.pipeline.strict_director is True
+    assert profiled.pipeline.production_quality_gates is True
+    assert profiled.pipeline.max_rework_cycles >= 2
+    assert profiled.llm.mode == "ai_assistant"
+    assert "Oil painting style" in profiled.images.style
+    assert config.pipeline.video_generation == "auto"
+
+
+def test_unknown_build_profile_is_rejected(tmp_path):
+    import pytest
+
+    from narrascape.cli import _apply_build_profile
+    from narrascape.config import NarrascapeConfig, ProjectConfig
+
+    config = NarrascapeConfig(
+        project=ProjectConfig(
+            name="profile-test",
+            title="Profile Test",
+            script_file="scripts/script.yaml",
+        ),
+        project_dir=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="Unknown build profile"):
+        _apply_build_profile(config, profile="random-profile")
 
 
 def test_clean_cmd_stage_cache_removes_cache_dir(tmp_path):

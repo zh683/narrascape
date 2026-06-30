@@ -1,0 +1,19 @@
+segments:
+  - id: 1
+    text: "Raskolnikov stands inside the rented room as if the walls have moved closer during the night."
+    shot_type: wide_env
+  - id: 2
+    text: "He tightens the worn student coat across his chest, then stops when his own hands begin to shake."
+    shot_type: medium
+  - id: 3
+    text: "The candle gutters beside old books and a cracked cup; every object seems to accuse him without speaking."
+    shot_type: detail
+  - id: 4
+    text: "He turns toward the door, but cannot cross the room, trapped between pride and confession."
+    shot_type: two_shot
+  - id: 5
+    text: "A memory of Sonya's steady face enters the silence, not as comfort, but as a demand for truth."
+    shot_type: close_up
+  - id: 6
+    text: "At dawn he lowers his head, still guilty, but no longer able to hide from responsibility."
+    shot_type: close_up

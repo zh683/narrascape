@@ -1,0 +1,92 @@
+project:
+  name: golden-sample
+  title: Crime And Punishment: Fever Room
+  subtitle: A 90-second AI-film quality benchmark
+  author: Narrascape
+  year: 2026
+  script_file: scripts/script.yaml
+  segment_count: 6
+  style: psychological literary AI film
+
+pipeline:
+  name: ai-film-production
+  category: golden_sample
+  version: "3.1"
+  design_overwrite: false
+  video_generation: required
+  strict_director: true
+  production_quality_gates: true
+  auto_rework: true
+  max_rework_cycles: 2
+
+llm:
+  mode: ai_assistant
+  temperature: 0.52
+  max_tokens: 6000
+
+tts:
+  provider: local
+  speed: 0.86
+  pitch: -2
+  vol: 1.0
+  sample_rate: 32000
+  language_boost: English
+  add_pauses: true
+
+images:
+  provider: seedream
+  model: doubao-seedream-5-0-260128
+  style: "Oil painting style, 1860s Saint Petersburg psychological chamber drama, painterly cinematic frames, visible brush texture, layered pigments, canvas grain, sickly yellow room light, candle shadows, worn period clothing, gaunt faces, moral pressure, rich chiaroscuro; not photorealistic photography, not anime, not cartoon, no readable text, no watermark, no platform label."
+  aspect_ratio: "16:9"
+  width: 1920
+  height: 1080
+  count: 6
+
+video:
+  provider: seedance
+  model: jimeng-video-seedance-2.0
+  resolution: 720p
+  ratio: "16:9"
+  duration: 5
+  frame_rate: 24
+  takes: 3
+
+visual:
+  type: film_timeline
+  zoom_rate: 0.00045
+  zoom_cap: 1.08
+  fade_in_duration: 0.8
+  supersample: auto
+  segment_gap: 0.45
+
+audio:
+  narration:
+    provider: local
+    format: mp3
+    sample_rate: 32000
+  music:
+    provider: local
+    volume: 0.18
+    target_lufs: -14
+
+encode:
+  width: 1920
+  height: 1080
+  fps: 24
+  crf: 18
+  preset: medium
+  codec: libx264
+  audio_codec: aac
+  audio_bitrate: 192k
+
+ending:
+  enabled: false
+
+budget:
+  total_usd: 0.0
+  mode: observe
+  per_action_threshold: 0.0
+  images_estimated: 0.0
+  video_estimated: 0.0
+  tts_estimated: 0.0
+  music_estimated: 0.0

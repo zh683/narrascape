@@ -12,6 +12,12 @@ $env:PYTHONPATH = "src"
 
 If installed as a package, use `narrascape` instead of `python -m narrascape.cli`.
 
+To use the Streamlit dashboard, install the optional UI extra:
+
+```powershell
+pip install -e ".[dashboard]"
+```
+
 ## 2. Create A Project
 
 ```powershell
@@ -77,6 +83,16 @@ With the default `pipeline.video_generation: auto`, missing Seedance/Ark
 credentials skip `generate_video` and continue with source footage or
 generated-image fallback. Use `pipeline.video_generation: required` when every
 shot must become generated video.
+
+For the stricter AI-film profile, run the included golden sample:
+
+```powershell
+.\.venv_test\Scripts\python.exe -m narrascape.cli build -p examples/golden-sample --production --approve
+```
+
+`--production` applies Seedream images, Seedance video, oil-painting style,
+strict director mode, production readiness quality gates, three takes per shot,
+and the automatic rework loop.
 
 Final outputs are written under:
 

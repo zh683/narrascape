@@ -355,6 +355,34 @@ def test_director_contract_writes_provider_specific_compiled_prompts(tmp_path):
     assert "extra characters" in compiled["agnes"]["negative_prompt"]
 
 
+def test_director_contract_writes_prompt_blueprint_for_quality_gates(tmp_path):
+    from narrascape.stages.director_contract import DirectorContractStage
+
+    config = _config(tmp_path)
+
+    result = DirectorContractStage().run(_context(config))
+
+    assert result.success
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    blueprint = contract["shots"][0]["generation"]["prompt_blueprint"]
+    assert blueprint["schema_version"] == "prompt_blueprint.v1"
+    assert blueprint["narrative_intent"] == "Reveal controlled fear without exposition."
+    assert blueprint["camera_plan"]["shot_type"] == "close_up"
+    assert blueprint["camera_plan"]["motion"] == "push_in"
+    assert blueprint["continuity_locks"]["characters"] == ["mira"]
+    assert blueprint["continuity_locks"]["location"] == "lab"
+    assert blueprint["continuity_locks"]["wardrobe"] == "field coat"
+    assert blueprint["storyboard_locks"]["storyboard_frame_ids"] == ["sb_01_01", "sb_01_02"]
+    assert blueprint["reference_strategy"]["required_reference_image_ids"] == [
+        "char_mira_anchor",
+        "scene_lab_mood",
+    ]
+    assert "stable character identity" in blueprint["quality_bar"]
+    assert "field coat" in blueprint["qa_assertions"]["must_show"]
+
+
 def test_director_contract_local_fallback_uses_storyboard_character_and_scene_locks(tmp_path):
     from narrascape.stages.director_contract import DirectorContractStage
 
@@ -597,6 +625,88 @@ def test_generate_video_passes_contract_references_to_task(tmp_path, monkeypatch
     assert "uploaded://scene_lab_mood" in first_refs
     state = json.loads((config.pipeline_dir / "video_gen_state.json").read_text(encoding="utf-8"))
     assert state["reference_inputs"]["vid_01"]["uploaded_reference_count"] >= 3
+
+
+def test_generate_video_consumes_regen_queue_for_target_segments(tmp_path, monkeypatch):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    (config.pipeline_dir / "video_regen_queue.yaml").write_text(
+        yaml.safe_dump(
+            {"actions": [{"segment_id": 2, "action": "regenerate_video"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    created: list[str] = []
+
+    stage = GenerateVideoStage(api_key="fake", sleep_between=0)
+    monkeypatch.setattr(stage.uploader, "upload", lambda value: f"uploaded://{Path(value).stem}")
+
+    def fake_generate_one(
+        prompt,
+        out_name,
+        model,
+        resolution,
+        first_frame,
+        last_frame,
+        videos_dir,
+        reference_images=None,
+        provider="seedance",
+        negative_prompt="",
+    ):
+        created.append(out_name)
+        (videos_dir / f"{out_name}.mp4").write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(stage, "_generate_one", fake_generate_one)
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert created == ["vid_02"]
+    assert result.metadata["rework_segment_ids"] == [2]
+
+
+def test_director_contract_consumes_rewrite_queue_without_touching_other_shots(tmp_path):
+    from narrascape.stages.director_contract import DirectorContractStage
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    previous = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    previous["shots"][0]["generation"]["video_prompt"] = "KEEP EXISTING SHOT ONE"
+    (config.pipeline_dir / "director_contract.yaml").write_text(
+        yaml.safe_dump(previous, sort_keys=False),
+        encoding="utf-8",
+    )
+    design = yaml.safe_load((config.project_dir / "design_report.yaml").read_text(encoding="utf-8"))
+    design["segments"][1]["director_vision"] = "Rewrite the second shot with sharper dread."
+    (config.project_dir / "design_report.yaml").write_text(
+        yaml.safe_dump(design, sort_keys=False),
+        encoding="utf-8",
+    )
+    (config.pipeline_dir / "director_contract_rewrite_queue.yaml").write_text(
+        yaml.safe_dump(
+            {"actions": [{"segment_id": 2, "action": "rewrite_director_contract"}]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = DirectorContractStage().run(_context(config))
+
+    assert result.success
+    updated = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    by_segment = {shot["segment_id"]: shot for shot in updated["shots"]}
+    assert by_segment[1]["generation"]["video_prompt"] == "KEEP EXISTING SHOT ONE"
+    assert "Rewrite the second shot with sharper dread" in by_segment[2]["story_reason"]
+    assert updated["compile_process"]["rework_segment_ids"] == [2]
 
 
 def test_generate_video_resolves_last_frame_reference_chain(tmp_path, monkeypatch):
@@ -1185,6 +1295,8 @@ def test_reference_plate_stage_writes_per_shot_reference_plates(tmp_path):
     assert any(asset["role"] == "style" for asset in first["reference_assets"])
     assert any(asset["role"] == "character" for asset in first["reference_assets"])
     assert first["compiled_prompts"]["agnes"]["prompt"]
+    assert first["prompt_blueprint"]["schema_version"] == "prompt_blueprint.v1"
+    assert first["prompt_blueprint"]["continuity_locks"]["wardrobe"] == "field coat"
     assert first["provider_negative_prompts"]["agnes"]
     assert first["qa_requirements"]["must_show"]
 

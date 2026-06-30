@@ -25,6 +25,9 @@
 6. Write recut and source-media replacement queues.
 7. Mark affected stages pending in `state.json`.
 8. Write `rework_execution.yaml` with every operation performed.
+9. Downstream stages consume these queues on rerun:
+   - `director_contract` preserves non-queued shots and rewrites only `director_contract_rewrite_queue.yaml` segment ids.
+   - `generate_video` restricts provider calls to `video_regen_queue.yaml` segment ids when the queue is non-empty.
 
 ## Do Not
 
