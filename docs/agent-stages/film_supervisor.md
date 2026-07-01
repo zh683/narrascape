@@ -24,6 +24,8 @@
    `film_timeline`.
 7. Keep downstream validation stages in the next cycle so regenerated shots are
    assembled, QA checked, reviewed, replanned, and supervised again.
+8. Include `assistant_handoff` after supervision so Codex-style assistants can
+   read a fresh takeover packet before the next intervention.
 
 ## Do Not
 

@@ -49,6 +49,8 @@ Production-oriented features already implemented:
   pacing risk.
 - `rework_execute` that consumes rework plans, quarantines failed generated
   clips, writes regeneration/recut/replacement queues, and triggers reruns.
+- `assistant_handoff` that writes a Codex-readable takeover packet with stage
+  docs, next actions, quality gates, artifacts, and commands.
 - Offline deterministic providers for end-to-end tests.
 
 ## Production Flow
@@ -81,6 +83,7 @@ script
   -> creative_review
   -> visual_semantic_qa
   -> film_supervisor
+  -> assistant_handoff
   -> rework_execute + rerun requested stages
 ```
 
@@ -211,6 +214,7 @@ narrascape dashboard
 - [System Design](docs/design.md)
 - [Architecture](docs/architecture.md)
 - [AI Director](docs/ai-director.md)
+- [Assistant Handoff Protocol](docs/assistant-handoff.md)
 - [Configuration Reference](docs/config-reference.md)
 - [Provider Governance](docs/provider-governance.md)
 - [Reference Image + Storyboard Workflow](docs/reference-image-storyboard-workflow.md)

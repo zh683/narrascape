@@ -29,6 +29,7 @@ This page describes the implemented product surface as it exists in the codebase
   - `creative_review` uses an LLM when configured to review story clarity, cinematic intent, pacing, emotion, and continuity.
   - `visual_semantic_qa` uses an LLM when configured to check whether visuals match script, character, costume, scene, and shot intent.
   - `film_supervisor` reads director reports and decides the next pipeline stages.
+  - `assistant_handoff` writes a Codex-readable takeover packet with required reading, artifacts, quality gates, commands, and next actions.
   - `rework_execute` applies a rework plan by quarantining failed generated clips, writing rework queues, marking affected stages pending, and feeding the automatic rerun loop.
 
 ## AI Director
@@ -58,6 +59,8 @@ This page describes the implemented product surface as it exists in the codebase
   - `pipeline/<project>/creative_review.yaml`
   - `pipeline/<project>/visual_semantic_report.yaml`
   - `pipeline/<project>/film_supervisor.yaml`
+  - `pipeline/<project>/assistant_handoff.yaml`
+  - `pipeline/<project>/assistant_handoff.md`
   - `pipeline/<project>/rework_execution.yaml`
 - Each LLM shot design carries:
   - `director_vision`
@@ -159,6 +162,7 @@ This page describes the implemented product surface as it exists in the codebase
 - `continuity_bible`, `editing_review`, and `rework_plan` complete the director loop after QA by preserving continuity context, diagnosing edit rhythm, and grouping executable rework actions.
 - `creative_review` and `visual_semantic_qa` add LLM-assisted creative and semantic review when an LLM client is configured, with deterministic metadata fallback for offline verification.
 - `film_supervisor` is the default supervising report: it reads the director artifacts and returns the next stages to run.
+- `assistant_handoff` turns the supervisor decision into a project takeover packet for AI assistants such as Codex.
 - In the default build, `pipeline.auto_rework: true` lets `film_supervisor` trigger `rework_execute` automatically when it reports `needs_rework`.
 - `rework_execute` safely moves invalid generated videos to `pipeline/<project>/rework_quarantine/`, writes `video_regen_queue.yaml`, `recut_queue.yaml`, and `source_media_replacement_queue.yaml`, resets affected stage state, and lets the pipeline rerun the requested stages up to `pipeline.max_rework_cycles`. `director_contract` and `generate_video` consume their queues so rewrites and provider calls are limited to queued segments.
 
@@ -182,7 +186,7 @@ This page describes the implemented product surface as it exists in the codebase
 - Provider registry reports configured and local providers.
 - Provider selector scores candidates by task fit, quality, control, reliability, cost efficiency, latency, and continuity.
 - Provider selector is wired into `generate_images`, `generate_tts`, `generate_music`, and `generate_video`.
-- Canonical artifact validation exists for `asset_manifest`, `design_report`, `film_timeline`, `remotion_preview`, `render_report`, `screenplay_structure`, `director_contract`, `continuity_bible`, `editing_review`, `rework_plan`, `take_selection`, `creative_review`, `visual_semantic_report`, `film_supervisor`, `rework_execution`, and `storyboard_sheet`.
+- Canonical artifact validation exists for `asset_manifest`, `assistant_handoff`, `design_report`, `film_timeline`, `remotion_preview`, `render_report`, `screenplay_structure`, `director_contract`, `continuity_bible`, `editing_review`, `rework_plan`, `take_selection`, `creative_review`, `visual_semantic_report`, `film_supervisor`, `rework_execution`, and `storyboard_sheet`.
 - Composition runtime registry exposes `ffmpeg` now and reserves a Remotion integration surface.
 
 ## Cache And Rebuilds

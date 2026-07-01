@@ -15,6 +15,7 @@ and rework queues.
 | Understand the whole workflow | [System Design](design.md) |
 | Understand the code architecture | [Architecture](architecture.md) |
 | Understand AI Director behavior and boundaries | [AI Director](ai-director.md) |
+| Let Codex or another AI assistant take over a project | [Assistant Handoff Protocol](assistant-handoff.md) |
 | Configure a project | [Configuration Reference](config-reference.md) |
 | Understand provider selection | [Provider Governance](provider-governance.md) |
 | Use reference images and storyboard bindings | [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md) |
@@ -53,7 +54,8 @@ pre_production -> design -> screenplay_structure -> director_contract -> referen
 -> remotion_preview -> film_assemble -> generate_music -> remix_audio
 -> audio -> subtitles -> qa -> continuity_bible -> editing_review
 -> director_review -> rework_plan -> creative_review -> visual_semantic_qa
--> film_supervisor -> rework_execute + rerun requested stages when needed
+-> film_supervisor -> assistant_handoff
+-> rework_execute + rerun requested stages when needed
 ```
 
 If `scripts/script.yaml` does not exist, the pipeline prepends:
@@ -89,6 +91,7 @@ research -> write
 | `render_report.yaml` | final render QA report |
 | `rework_plan.yaml` | grouped regeneration, recut, and replacement actions |
 | `film_supervisor.yaml` | next-stage production decision |
+| `assistant_handoff.yaml/md` | Codex-readable takeover packet |
 
 ## Agent Stage Docs
 
@@ -96,6 +99,7 @@ These docs are written for AI assistants and developers implementing or
 debugging one stage at a time:
 
 - [animatic](agent-stages/animatic.md)
+- [assistant_handoff](agent-stages/assistant_handoff.md)
 - [continuity_bible](agent-stages/continuity_bible.md)
 - [creative_review](agent-stages/creative_review.md)
 - [design](agent-stages/design.md)

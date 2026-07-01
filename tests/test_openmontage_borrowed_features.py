@@ -156,6 +156,16 @@ def test_agent_stage_director_docs_exist_for_core_stages():
         assert "Do Not" in text
 
 
+def test_stage_catalog_doc_paths_exist_and_expose_assistant_handoff():
+    from narrascape.catalog import STAGE_DOC_PATHS, core_artifact_templates, stage_intent
+
+    assert "assistant_handoff" in STAGE_DOC_PATHS
+    for path in STAGE_DOC_PATHS.values():
+        assert Path(path).exists(), path
+    assert core_artifact_templates()["assistant_handoff"].endswith("assistant_handoff.yaml")
+    assert "video" in stage_intent("generate_video")
+
+
 def test_composition_runtime_selects_ffmpeg_by_default(tmp_path):
     from narrascape.compose import CompositionPlan, CompositionRuntimeRegistry
 

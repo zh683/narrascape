@@ -37,10 +37,10 @@ design
 screenplay_structure
 director_contract
 reference_plate
+generate_images
 storyboard_sheet
 animatic
 production_readiness
-generate_images
 generate_video
 take_select
 generate_tts
@@ -61,6 +61,7 @@ rework_plan
 creative_review
 visual_semantic_qa
 film_supervisor
+assistant_handoff
 rework_execute
 ```
 
@@ -79,6 +80,7 @@ pre_production -> design -> screenplay_structure -> director_contract -> referen
 -> remotion_preview -> film_assemble -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
+-> assistant_handoff
 -> rework_execute -> supervisor requested rerun stages (when rework is needed)
 ```
 
@@ -126,6 +128,7 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 | `creative_review` | `editing_review`, `continuity_bible` |
 | `visual_semantic_qa` | `qa` |
 | `film_supervisor` | `rework_plan`, `creative_review`, `visual_semantic_qa` |
+| `assistant_handoff` | `film_supervisor` |
 | `rework_execute` | `rework_plan` |
 
 `_resolve_dependencies()` expands requested targets with transitive dependencies and performs a topological sort.
@@ -204,6 +207,7 @@ The post-design director layers are implemented as regular stages:
 - `CreativeReviewStage` writes `creative_review.yaml`.
 - `VisualSemanticQAStage` writes `visual_semantic_report.yaml`.
 - `FilmSupervisorStage` writes `film_supervisor.yaml`.
+- `AssistantHandoffStage` writes `assistant_handoff.yaml` and `assistant_handoff.md`.
 - `ReworkExecuteStage` writes `rework_execution.yaml` plus concrete rework queues.
 
 Some layers are deterministic by default, but they consume LLM-authored design

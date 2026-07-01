@@ -400,15 +400,17 @@ class TestPipelineStageFactory:
         assert "production_readiness" in stages
         assert "animatic" in stages
         assert "take_select" in stages
+        assert "assistant_handoff" in stages
         assert stages.index("reference_plate") < stages.index("animatic")
         assert stages.index("reference_plate") < stages.index("storyboard_sheet")
-        assert stages.index("storyboard_sheet") < stages.index("generate_images")
+        assert stages.index("generate_images") < stages.index("storyboard_sheet")
         assert stages.index("storyboard_sheet") < stages.index("production_readiness")
         assert stages.index("production_readiness") < stages.index("generate_video")
         assert stages.index("animatic") < stages.index("generate_video")
         assert stages.index("generate_video") < stages.index("take_select")
         assert stages.index("take_select") < stages.index("film_timeline")
-        assert stages[-1] == "film_supervisor"
+        assert stages.index("film_supervisor") < stages.index("assistant_handoff")
+        assert stages[-1] == "assistant_handoff"
 
     def test_default_stages_can_disable_video_generation(self, tmp_path):
         config = NarrascapeConfig(

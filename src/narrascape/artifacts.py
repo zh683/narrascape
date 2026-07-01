@@ -35,6 +35,22 @@ SCHEMAS = {
         ("schema_version", "status", "panels", "findings"),
         "animatic.v1",
     ),
+    "assistant_handoff": ArtifactSchema(
+        "assistant_handoff",
+        (
+            "schema_version",
+            "project",
+            "status",
+            "director_decision",
+            "assistant_contract",
+            "required_reading",
+            "artifacts",
+            "quality_gates",
+            "next_actions",
+            "commands",
+        ),
+        "assistant_handoff.v1",
+    ),
     "continuity_bible": ArtifactSchema(
         "continuity_bible",
         ("schema_version", "characters", "locations", "continuity_risks"),

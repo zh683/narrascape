@@ -291,6 +291,7 @@ def test_film_supervisor_reads_director_reports_and_decides_next_stages(tmp_path
     assert "generate_video" in report["next_stages"]
     assert "film_timeline" in report["next_stages"]
     assert "remotion_preview" in report["next_stages"]
+    assert "assistant_handoff" in report["next_stages"]
     assert report["next_stages"].index("film_timeline") < report["next_stages"].index(
         "remotion_preview"
     )
@@ -298,6 +299,39 @@ def test_film_supervisor_reads_director_reports_and_decides_next_stages(tmp_path
         "film_assemble"
     )
     assert report["decision"]["rework_action_count"] == 3
+
+
+def test_assistant_handoff_writes_codex_takeover_packet(tmp_path):
+    from narrascape.stages.assistant_handoff import AssistantHandoffStage
+    from narrascape.stages.creative_review import CreativeReviewStage
+    from narrascape.stages.film_supervisor import FilmSupervisorStage
+    from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+
+    config = _config(tmp_path)
+    CreativeReviewStage().run(_context(config))
+    VisualSemanticQAStage().run(_context(config))
+    FilmSupervisorStage().run(_context(config))
+
+    result = AssistantHandoffStage().run(_context(config))
+
+    assert result.success
+    handoff = yaml.safe_load(
+        (config.pipeline_dir / "assistant_handoff.yaml").read_text(encoding="utf-8")
+    )
+    assert handoff["schema_version"] == "assistant_handoff.v1"
+    assert handoff["status"] == "needs_rework"
+    assert handoff["director_decision"]["next_stages"][0] == "rework_execute"
+    reading_paths = {item["path"] for item in handoff["required_reading"]}
+    assert "docs/ai-director.md" in reading_paths
+    assert "docs/assistant-handoff.md" in reading_paths
+    assert "docs/agent-stages/generate_video.md" in reading_paths
+    action_by_stage = {item["stage"]: item for item in handoff["next_actions"]}
+    assert action_by_stage["generate_video"]["command"].endswith("--stage generate_video --approve")
+    assert any(
+        item["id"] == "director_contract_is_source_of_truth"
+        for item in handoff["assistant_contract"]
+    )
+    assert (config.pipeline_dir / "assistant_handoff.md").exists()
 
 
 def test_film_supervisor_reruns_contract_chain_for_director_contract_rewrite(tmp_path):
@@ -538,13 +572,20 @@ def test_supervisor_stages_are_registered_and_llm_client_is_injected(tmp_path):
     from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
 
     stage_map = get_stage_map()
-    for name in ("creative_review", "visual_semantic_qa", "film_supervisor", "rework_execute"):
+    for name in (
+        "creative_review",
+        "visual_semantic_qa",
+        "film_supervisor",
+        "assistant_handoff",
+        "rework_execute",
+    ):
         assert name in stage_map
 
-    order = _resolve_dependencies(["film_supervisor"], stage_map)
+    order = _resolve_dependencies(["assistant_handoff"], stage_map)
     assert order.index("rework_plan") < order.index("film_supervisor")
     assert order.index("creative_review") < order.index("film_supervisor")
     assert order.index("visual_semantic_qa") < order.index("film_supervisor")
+    assert order.index("film_supervisor") < order.index("assistant_handoff")
 
     llm = object()
     pipeline = Pipeline(_config(tmp_path), llm_client=llm)

@@ -28,6 +28,7 @@ pipeline/<project>/take_selection.yaml
 pipeline/<project>/creative_review.yaml
 pipeline/<project>/visual_semantic_report.yaml
 pipeline/<project>/film_supervisor.yaml
+pipeline/<project>/assistant_handoff.yaml
 pipeline/<project>/rework_execution.yaml
 ```
 
@@ -203,6 +204,11 @@ available.
 `film_supervisor` reads `rework_plan.yaml`, `creative_review.yaml`,
 `visual_semantic_report.yaml`, and QA output. It writes `film_supervisor.yaml`
 with the next stages to run. It does not mutate media.
+
+`assistant_handoff` runs after `film_supervisor`. It translates the supervisor
+decision into `assistant_handoff.yaml` and `assistant_handoff.md`, listing stage
+docs, next commands, artifacts, quality gates, blocking items, and assistant
+rules that Codex should read before taking over the project.
 
 In the default build, `pipeline.auto_rework: true` lets the supervisor trigger
 `rework_execute` automatically when it reports `needs_rework`. `rework_execute`

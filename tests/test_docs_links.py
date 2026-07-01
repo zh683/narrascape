@@ -7,7 +7,7 @@ MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
 
 def test_markdown_relative_links_resolve():
-    roots = [Path("README.md"), Path("docs")]
+    roots = [Path("README.md"), Path("AGENTS.md"), Path("docs")]
     files = [roots[0], *sorted(roots[1].rglob("*.md"))]
     missing: list[str] = []
 

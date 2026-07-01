@@ -15,6 +15,7 @@ from narrascape.config import (
 )
 from narrascape.pipeline_approval import PipelineApproval
 from narrascape.stages.animatic import AnimaticStage
+from narrascape.stages.assistant_handoff import AssistantHandoffStage
 from narrascape.stages.audio import AudioRemixStage, AudioStage
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.concat import ConcatStage
@@ -85,10 +86,10 @@ ALL_STAGES: list[type[Stage]] = [
     ScriptSceneDirectorStage,
     DirectorContractStage,
     ReferencePlateStage,
+    GenerateImagesStage,
     StoryboardSheetStage,
     AnimaticStage,
     ProductionReadinessStage,
-    GenerateImagesStage,
     GenerateVideoStage,
     TakeSelectStage,
     GenerateTTSStage,
@@ -109,6 +110,7 @@ ALL_STAGES: list[type[Stage]] = [
     CreativeReviewStage,
     VisualSemanticQAStage,
     FilmSupervisorStage,
+    AssistantHandoffStage,
     ReworkExecuteStage,
 ]
 
@@ -391,10 +393,10 @@ class Pipeline:
             "screenplay_structure",
             "director_contract",
             "reference_plate",
-            "storyboard_sheet",
-            "production_readiness",
             "generate_images",
+            "storyboard_sheet",
             "animatic",
+            "production_readiness",
             "generate_tts",
         ]
         video_policy = self.config.pipeline.video_generation
@@ -417,6 +419,7 @@ class Pipeline:
                 "creative_review",
                 "visual_semantic_qa",
                 "film_supervisor",
+                "assistant_handoff",
             ]
         )
         return stages
@@ -1012,6 +1015,13 @@ class Pipeline:
             dirs_to_clean.append(self.config.pipeline_dir / "visual_semantic_report.yaml")
         if stages is None or "film_supervisor" in stages:
             dirs_to_clean.append(self.config.pipeline_dir / "film_supervisor.yaml")
+        if stages is None or "assistant_handoff" in stages:
+            dirs_to_clean.extend(
+                [
+                    self.config.pipeline_dir / "assistant_handoff.yaml",
+                    self.config.pipeline_dir / "assistant_handoff.md",
+                ]
+            )
         if stages is None or "rework_execute" in stages:
             dirs_to_clean.extend(
                 [

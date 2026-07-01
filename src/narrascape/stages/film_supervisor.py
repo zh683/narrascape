@@ -117,6 +117,7 @@ class FilmSupervisorStage(Stage):
                     "creative_review",
                     "visual_semantic_qa",
                     "film_supervisor",
+                    "assistant_handoff",
                 ]
             )
         return self._dedupe(stages)

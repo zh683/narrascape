@@ -86,6 +86,8 @@ visual_semantic_qa -> visual_semantic_report.yaml
         |
 film_supervisor -> film_supervisor.yaml
         |
+assistant_handoff -> assistant_handoff.yaml + assistant_handoff.md
+        |
 rework_execute -> rework queues + quarantined failed media + rerun plan
 ```
 
@@ -142,6 +144,7 @@ Canonical artifacts can be validated before they flow downstream:
 
 - `asset_manifest`
 - `animatic`
+- `assistant_handoff`
 - `continuity_bible`
 - `creative_review`
 - `design_report`
@@ -209,6 +212,9 @@ director layers:
   flags metadata mismatches such as scene or wardrobe drift.
 - `film_supervisor` reads all director reports and writes `film_supervisor.yaml`
   with the next stages that should run.
+- `assistant_handoff` reads the supervisor decision, QA, production readiness,
+  and state files, then writes `assistant_handoff.yaml` and
+  `assistant_handoff.md` so Codex-style assistants know what to read and run next.
 - `rework_execute` executes `rework_plan.yaml` safely by quarantining failed
   generated video clips, writing concrete queues, and resetting affected stage
   state. In the default auto-rework path, the pipeline runs it after a
@@ -312,6 +318,7 @@ reads `director_contract.yaml` so semantic review checks the same contract that
 guided video generation, including storyboard frame ids, scene references,
 wardrobe locks, character positions, and composition requirements.
 `film_supervisor` does not mutate media; it decides the next stage list.
+`assistant_handoff` records that decision for AI assistants, and
 `rework_execute` performs the mutation. Default builds run it automatically when
 `pipeline.auto_rework` is true; set `auto_rework: false` to inspect the plan
 before moving generated clips into quarantine.
@@ -377,5 +384,7 @@ This proves the workflow is wired end to end without pretending that local place
 
 - Add a provider by implementing the provider path inside the relevant stage or client.
 - Add a stage by subclassing `Stage`, registering it in `ALL_STAGES`, and declaring `depends_on`.
+- If the stage should appear in assistant takeover packets, register its doc path,
+  intent, or artifact template in `src/narrascape/catalog.py`.
 - Add new output fields through Pydantic models first, then export them to YAML.
 - Add human review rules through `PipelineApproval`.

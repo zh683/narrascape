@@ -77,7 +77,7 @@ pre_production -> design -> screenplay_structure -> director_contract
 -> generate_music -> remix_audio -> audio -> subtitles -> qa
 -> continuity_bible -> editing_review -> director_review -> rework_plan
 -> creative_review -> visual_semantic_qa -> film_supervisor
--> rework_execute + rerun requested stages when needed
+-> assistant_handoff -> rework_execute + rerun requested stages when needed
 ```
 
 With the default `pipeline.video_generation: auto`, missing Seedance/Ark
@@ -108,6 +108,7 @@ pipeline/<project>/remotion_preview.yaml
 pipeline/<project>/remotion_preview/
 pipeline/<project>/render_report.yaml
 pipeline/<project>/director_review.yaml
+pipeline/<project>/assistant_handoff.yaml
 film_timeline.yaml
 ```
 
