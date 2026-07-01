@@ -224,12 +224,16 @@ narrascape dashboard
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+python -m pip install -r requirements-dev.txt
 ruff check src tests
 black --check src tests
 mypy
 pytest -q --tb=short --no-cov
 ```
+
+`requirements-dev.txt` is a thin wrapper around `pip install -e ".[dev]"`.
+Use it when bootstrapping a fresh checkout so CLI dependencies such as Typer and
+test tools such as pytest are installed before running `python -m narrascape.cli`.
 
 ## License
 

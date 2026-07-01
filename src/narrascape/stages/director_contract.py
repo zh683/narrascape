@@ -9,6 +9,7 @@ import yaml
 from narrascape.artifacts import validate_artifact
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class DirectorContractStage(Stage):
@@ -97,7 +98,7 @@ class DirectorContractStage(Stage):
             "shots": shots,
         }
         validate_artifact("director_contract", contract)
-        output.write_text(yaml.safe_dump(contract, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, contract)
         return StageResult(
             self.name,
             True,

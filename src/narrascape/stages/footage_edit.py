@@ -7,6 +7,7 @@ import yaml
 
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
+from narrascape.utils.safe_io import atomic_write_text
 
 
 class FootageEditStage(Stage):
@@ -53,9 +54,9 @@ class FootageEditStage(Stage):
             )
 
         concat_file = config.pipeline_dir / "footage_roughcut.txt"
-        concat_file.write_text(
+        atomic_write_text(
+            concat_file,
             "\n".join(f"file '{path.as_posix()}'" for path in rendered),
-            encoding="utf-8",
         )
         roughcut = config.pipeline_dir / "footage_roughcut.mp4"
         ok = run_ffmpeg(

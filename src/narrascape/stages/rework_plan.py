@@ -7,6 +7,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ReworkPlanStage(Stage):
@@ -60,7 +61,7 @@ class ReworkPlanStage(Stage):
             "actions_by_type": self._actions_by_type(actions),
         }
         validate_artifact("rework_plan", plan)
-        output.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, plan)
         return StageResult(
             self.name,
             True,

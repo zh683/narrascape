@@ -5,11 +5,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import load_yaml_mapping
+from narrascape.utils.safe_io import (
+    atomic_write_json,
+    atomic_write_text,
+    atomic_write_yaml,
+    load_yaml_mapping,
+)
 
 
 class RemotionPreviewStage(Stage):
@@ -59,12 +62,8 @@ class RemotionPreviewStage(Stage):
             "subtitles": timeline.get("tracks", {}).get("subtitles", []),
         }
 
-        (public_dir / "timeline.json").write_text(
-            json.dumps(timeline_json, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        (src_dir / "timeline-data.json").write_text(
-            json.dumps(timeline_json, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        atomic_write_json(public_dir / "timeline.json", timeline_json)
+        atomic_write_json(src_dir / "timeline-data.json", timeline_json)
         self._write_remotion_files(preview_dir, src_dir, composition)
 
         missing_assets = [
@@ -100,7 +99,7 @@ class RemotionPreviewStage(Stage):
         }
         validate_artifact("remotion_preview", report)
         report_path = config.pipeline_dir / "remotion_preview.yaml"
-        report_path.write_text(yaml.safe_dump(report, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(report_path, report)
 
         success = not missing_assets
         return StageResult(
@@ -196,7 +195,8 @@ class RemotionPreviewStage(Stage):
         src_dir: Path,
         composition: dict[str, Any],
     ) -> None:
-        (preview_dir / "package.json").write_text(
+        atomic_write_text(
+            preview_dir / "package.json",
             json.dumps(
                 {
                     "scripts": {
@@ -224,9 +224,9 @@ class RemotionPreviewStage(Stage):
                 },
                 indent=2,
             ),
-            encoding="utf-8",
         )
-        (preview_dir / "tsconfig.json").write_text(
+        atomic_write_text(
+            preview_dir / "tsconfig.json",
             json.dumps(
                 {
                     "compilerOptions": {
@@ -243,17 +243,17 @@ class RemotionPreviewStage(Stage):
                 },
                 indent=2,
             ),
-            encoding="utf-8",
         )
-        (src_dir / "index.ts").write_text(
+        atomic_write_text(
+            src_dir / "index.ts",
             "import {registerRoot} from 'remotion';\n"
             "import {RemotionRoot} from './Root';\n\n"
             "registerRoot(RemotionRoot);\n",
-            encoding="utf-8",
         )
-        (src_dir / "Root.tsx").write_text(self._root_template(composition), encoding="utf-8")
-        (src_dir / "TimelineComposition.tsx").write_text(
-            self._composition_template(), encoding="utf-8"
+        atomic_write_text(src_dir / "Root.tsx", self._root_template(composition))
+        atomic_write_text(
+            src_dir / "TimelineComposition.tsx",
+            self._composition_template(),
         )
 
     def _root_template(self, composition: dict[str, Any]) -> str:

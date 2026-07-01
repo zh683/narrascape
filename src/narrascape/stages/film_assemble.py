@@ -5,7 +5,7 @@ from typing import Any
 
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
-from narrascape.utils.safe_io import load_yaml_mapping
+from narrascape.utils.safe_io import atomic_write_text, load_yaml_mapping
 
 
 class FilmAssembleStage(Stage):
@@ -74,9 +74,9 @@ class FilmAssembleStage(Stage):
             )
 
         concat_file = config.pipeline_dir / "film_assemble.txt"
-        concat_file.write_text(
+        atomic_write_text(
+            concat_file,
             "\n".join(f"file '{path.resolve().as_posix()}'" for path in rendered),
-            encoding="utf-8",
         )
         assembled = config.pipeline_dir / "film_assembled.mp4"
         ok = run_ffmpeg(

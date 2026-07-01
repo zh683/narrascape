@@ -51,6 +51,23 @@ class OutputValidator:
         return validator
 
     @staticmethod
+    def list_items_have_keys(*required_keys: str) -> Callable[[Any], tuple[bool, str]]:
+        """Create a validator that checks required keys on each item in a top-level list."""
+
+        def validator(data: Any) -> tuple[bool, str]:
+            if not isinstance(data, list):
+                return False, f"Expected list, got {type(data).__name__}"
+            for i, item in enumerate(data):
+                if not isinstance(item, dict):
+                    return False, f"Item {i} is not a dict"
+                missing = [k for k in required_keys if k not in item]
+                if missing:
+                    return False, f"Item {i} missing keys: {missing}"
+            return True, ""
+
+        return validator
+
+    @staticmethod
     def type_check(field: str, expected_type: type) -> Callable[[Any], tuple[bool, str]]:
         """Check that a field has the expected type."""
 

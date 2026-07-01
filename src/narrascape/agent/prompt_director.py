@@ -676,7 +676,7 @@ Guidelines:
         try:
             data = self.llm_client.run_template_validated(
                 template,
-                validator=OutputValidator.has_nested_keys(
+                validator=OutputValidator.list_items_have_keys(
                     "consistency_score",
                     "issues",
                     "suggested_adjustments",

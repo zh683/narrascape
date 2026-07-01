@@ -3,11 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_media_info
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class SourceMediaStage(Stage):
@@ -52,9 +51,9 @@ class SourceMediaStage(Stage):
 
         data = {"assets": assets}
         validate_artifact("asset_manifest", data)
-        manifest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(manifest_path, data)
         timeline = self._build_footage_timeline(assets, context)
-        timeline_path.write_text(yaml.safe_dump(timeline, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(timeline_path, timeline)
 
         return StageResult(
             self.name,

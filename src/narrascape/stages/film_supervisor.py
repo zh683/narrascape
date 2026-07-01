@@ -7,6 +7,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class FilmSupervisorStage(Stage):
@@ -64,7 +65,7 @@ class FilmSupervisorStage(Stage):
             },
         }
         validate_artifact("film_supervisor", report)
-        output.write_text(yaml.safe_dump(report, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, report)
         return StageResult(
             self.name,
             True,

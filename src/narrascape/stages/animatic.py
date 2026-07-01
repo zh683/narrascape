@@ -6,7 +6,12 @@ from typing import Any
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
-from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
+from narrascape.utils.safe_io import (
+    atomic_write_text,
+    atomic_write_yaml,
+    load_json_mapping,
+    load_yaml_mapping,
+)
 
 
 class AnimaticStage(Stage):
@@ -136,9 +141,9 @@ class AnimaticStage(Stage):
             rendered.append(out)
 
         concat_file = config.pipeline_dir / "animatic.txt"
-        concat_file.write_text(
+        atomic_write_text(
+            concat_file,
             "\n".join(f"file '{path.resolve().as_posix()}'" for path in rendered),
-            encoding="utf-8",
         )
         out_video = config.pipeline_dir / "animatic.mp4"
         return run_ffmpeg(

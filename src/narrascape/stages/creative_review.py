@@ -8,6 +8,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class CreativeReviewStage(Stage):
@@ -67,7 +68,7 @@ class CreativeReviewStage(Stage):
             "recommendations": recommendations,
         }
         validate_artifact("creative_review", review)
-        output.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, review)
         return StageResult(
             self.name,
             True,

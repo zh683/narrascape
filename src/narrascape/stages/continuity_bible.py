@@ -7,6 +7,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ContinuityBibleStage(Stage):
@@ -103,7 +104,7 @@ class ContinuityBibleStage(Stage):
             "continuity_risks": self._dedupe_risks(risks),
         }
         validate_artifact("continuity_bible", bible)
-        output.write_text(yaml.safe_dump(bible, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, bible)
         return StageResult(
             self.name,
             True,

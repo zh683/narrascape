@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.catalog import (
     core_artifact_templates,
@@ -14,7 +12,12 @@ from narrascape.catalog import (
     stage_intent,
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import load_json_mapping, load_yaml_mapping
+from narrascape.utils.safe_io import (
+    atomic_write_text,
+    atomic_write_yaml,
+    load_json_mapping,
+    load_yaml_mapping,
+)
 
 
 class AssistantHandoffStage(Stage):
@@ -65,8 +68,8 @@ class AssistantHandoffStage(Stage):
             "commands": self._commands(config, next_stages),
         }
         validate_artifact("assistant_handoff", handoff)
-        output_yaml.write_text(yaml.safe_dump(handoff, sort_keys=False), encoding="utf-8")
-        output_md.write_text(self._render_markdown(handoff), encoding="utf-8")
+        atomic_write_yaml(output_yaml, handoff)
+        atomic_write_text(output_md, self._render_markdown(handoff))
 
         return StageResult(
             self.name,

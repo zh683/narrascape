@@ -22,7 +22,7 @@ from narrascape.motion import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg
-from narrascape.utils.safe_io import load_json_mapping
+from narrascape.utils.safe_io import atomic_write_text, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.kenburns")
 
@@ -198,7 +198,7 @@ def _render_multi_image(
     # Concat parts with stream copy
     concat_file = seg_dir / f"seg_{seg_id:02d}_concat.txt"
     lines = [f"file '{p.as_posix()}'" for p in parts]
-    concat_file.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(concat_file, "\n".join(lines))
 
     ok = run_ffmpeg(
         ["-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(seg_video)],

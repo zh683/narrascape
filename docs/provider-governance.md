@@ -63,14 +63,33 @@ configs, but the supported production route is `seedream -> seedance` with
 
 ## Canonical Artifacts
 
-`narrascape.artifacts` validates lightweight canonical artifacts:
+`narrascape.artifacts` validates lightweight canonical artifacts. The current
+schema registry covers:
 
+- `animatic`
 - `asset_manifest`
+- `assistant_handoff`
+- `continuity_bible`
+- `creative_review`
 - `design_report`
+- `director_contract`
+- `editing_review`
+- `film_supervisor`
 - `film_timeline`
+- `production_readiness`
+- `reference_plates`
+- `remotion_preview`
 - `render_report`
+- `rework_execution`
+- `rework_plan`
+- `screenplay_structure`
+- `storyboard_sheet`
+- `take_selection`
+- `video_prompt_quality`
+- `visual_semantic_report`
 
-This prevents malformed handoffs such as missing `assets` in a source-media manifest.
+This prevents malformed handoffs such as missing `assets` in a source-media
+manifest or missing `schema_version` on downstream director artifacts.
 
 ## Source Media
 

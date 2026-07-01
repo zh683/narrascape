@@ -8,6 +8,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ScriptSceneDirectorStage(Stage):
@@ -77,7 +78,7 @@ class ScriptSceneDirectorStage(Stage):
             "shot_index": shot_index,
         }
         validate_artifact("screenplay_structure", structure)
-        output.write_text(yaml.safe_dump(structure, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, structure)
         return StageResult(
             self.name,
             True,

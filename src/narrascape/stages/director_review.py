@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class DirectorReviewStage(Stage):
@@ -33,7 +34,7 @@ class DirectorReviewStage(Stage):
             "notes": self._notes(report, queue),
         }
         output = context.config.pipeline_dir / "director_review.yaml"
-        output.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, review)
         return StageResult(
             self.name,
             True,

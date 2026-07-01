@@ -29,6 +29,7 @@ from narrascape.config import (
 )
 from narrascape.motion.factory import SHOT_SIZE_MAP
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 logger = logging.getLogger("narrascape.stages.design")
 
@@ -262,8 +263,7 @@ class DesignStage(Stage):
         # project intentionally keeps curated prompt files as its execution source.
         prompts_data = report.to_image_prompts()
         if config.pipeline.design_overwrite or not prompts_path.exists():
-            with open(prompts_path, "w", encoding="utf-8") as f:
-                yaml.dump(prompts_data, f, allow_unicode=True, sort_keys=False)
+            atomic_write_yaml(prompts_path, prompts_data)
             logger.info(f"[design] Wrote {prompts_path}")
         else:
             load_image_prompts(prompts_path)
@@ -273,8 +273,7 @@ class DesignStage(Stage):
         # Write image_map.yaml
         map_data = report.to_image_map()
         if config.pipeline.design_overwrite or not map_path.exists():
-            with open(map_path, "w", encoding="utf-8") as f:
-                yaml.dump(map_data, f, allow_unicode=True, sort_keys=False)
+            atomic_write_yaml(map_path, map_data)
             logger.info(f"[design] Wrote {map_path}")
         else:
             load_image_map(map_path)
@@ -292,8 +291,7 @@ class DesignStage(Stage):
             "prompt_director" if self.llm_client else "local_deterministic_design",
         )
         report_dict["director_process"] = director_process
-        with open(report_path, "w", encoding="utf-8") as f:
-            yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
+        atomic_write_yaml(report_path, report_dict)
         logger.info(f"[design] Wrote {report_path}")
 
         # Validate design quality

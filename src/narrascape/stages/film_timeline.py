@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
 
 
 class FilmTimelineStage(Stage):
@@ -215,7 +213,7 @@ class FilmTimelineStage(Stage):
             },
         }
         validate_artifact("film_timeline", timeline)
-        output_path.write_text(yaml.safe_dump(timeline, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output_path, timeline)
 
         return StageResult(
             self.name,
@@ -232,13 +230,10 @@ class FilmTimelineStage(Stage):
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path or not path.exists():
             return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return load_yaml_mapping(path, default={})
 
     def _load_json(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        return load_json_mapping(path, default={})
 
     def _items_by_int_key(self, items: Any, key: str) -> dict[int, dict[str, Any]]:
         result: dict[int, dict[str, Any]] = {}

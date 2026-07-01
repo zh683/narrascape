@@ -9,6 +9,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class TakeSelectStage(Stage):
@@ -63,7 +64,7 @@ class TakeSelectStage(Stage):
             "selections": selections,
         }
         validate_artifact("take_selection", selection)
-        output.write_text(yaml.safe_dump(selection, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, selection)
         return StageResult(
             self.name,
             True,

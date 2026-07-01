@@ -11,6 +11,7 @@ from typing import Any
 
 from narrascape.research import ResearchEngine
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.research")
 
@@ -38,7 +39,7 @@ class ResearchStage(Stage):
 
         # Write report
         report_path = config.project_dir / "research_report.md"
-        report_path.write_text(result.to_markdown(), encoding="utf-8")
+        atomic_write_text(report_path, result.to_markdown())
         logger.info(f"[research] Wrote report: {report_path}")
 
         # Print summary

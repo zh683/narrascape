@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from narrascape.config import (
     BudgetConfig,
@@ -117,6 +118,30 @@ class TestNarrascapeConfig:
         assert cfg.video.provider == VideoProvider.SEEDANCE
         assert "Oil painting style" in cfg.images.style
         assert "photorealistic photography" in cfg.images.style
+
+    def test_all_example_yaml_files_parse(self):
+        examples_dir = Path(__file__).resolve().parents[1] / "examples"
+        failures: list[str] = []
+
+        for path in sorted(examples_dir.rglob("*.yaml")):
+            try:
+                yaml.safe_load(path.read_text(encoding="utf-8"))
+            except yaml.YAMLError as exc:
+                failures.append(f"{path.relative_to(examples_dir)}: {exc}")
+
+        assert failures == []
+
+    def test_all_example_config_files_load(self):
+        examples_dir = Path(__file__).resolve().parents[1] / "examples"
+        failures: list[str] = []
+
+        for path in sorted(examples_dir.rglob("config*.yaml")):
+            try:
+                load_config(path)
+            except Exception as exc:
+                failures.append(f"{path.relative_to(examples_dir)}: {exc}")
+
+        assert failures == []
 
     def test_project_dir_is_not_serialized(self):
         cfg = NarrascapeConfig(

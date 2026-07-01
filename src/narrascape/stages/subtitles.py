@@ -7,6 +7,7 @@ from typing import Any
 from narrascape.config import Script, SubtitleConfig
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font_name, run_ffmpeg
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.subtitles")
 
@@ -42,7 +43,7 @@ class SubtitleStage(Stage):
         srt_entries = self._build_srt(
             script, durations, sub_cfg, config.visual.gap_map, config.visual.segment_gap
         )
-        srt_path.write_text(srt_entries, encoding="utf-8")
+        atomic_write_text(srt_path, srt_entries)
         logger.info(f"SRT: {srt_entries.count(chr(10)+chr(10))} entries")
 
         # Burn subtitles

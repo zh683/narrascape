@@ -22,12 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from narrascape.agent.models import (
     CharacterReferenceImage,
@@ -44,6 +41,11 @@ from narrascape.prompt_safety import sanitize_prompt_for_provider
 from narrascape.providers import select_provider
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_images import GenerateImagesStage
+from narrascape.stages.pre_production_services import (
+    PreProductionNotesExtractor,
+    PreProductionReferenceFactory,
+    PreProductionReportWriter,
+)
 
 logger = logging.getLogger("narrascape.stages.pre_production")
 
@@ -88,6 +90,9 @@ class PreProductionStage(Stage):
         self.image_model = image_model
         self.image_api_key = image_api_key
         self._director_steps: dict[str, dict[str, Any]] = {}
+        self.notes_extractor = PreProductionNotesExtractor(max_characters, max_scenes)
+        self.reference_factory = PreProductionReferenceFactory()
+        self.report_writer = PreProductionReportWriter()
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -148,8 +153,7 @@ class PreProductionStage(Stage):
             report_dict = report.to_pre_production_report()
             director_process = self._director_process("local_visual_pre_production")
             report_dict["director_process"] = director_process
-            with open(report_path, "w", encoding="utf-8") as f:
-                yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
+            self.report_writer.write(report_path, report_dict)
             return StageResult(
                 stage_name=self.name,
                 success=True,
@@ -251,8 +255,7 @@ class PreProductionStage(Stage):
         report_dict = report.to_pre_production_report()
         director_process = self._director_process("llm_visual_pre_production")
         report_dict["director_process"] = director_process
-        with open(report_path, "w", encoding="utf-8") as f:
-            yaml.dump(report_dict, f, allow_unicode=True, sort_keys=False)
+        self.report_writer.write(report_path, report_dict)
         logger.info(f"[pre_production] Wrote {report_path}")
 
         return StageResult(
@@ -273,6 +276,11 @@ class PreProductionStage(Stage):
         )
 
     # ── Step 1: Extract characters and scenes ───────────────────────────
+
+    def _current_notes_extractor(self) -> PreProductionNotesExtractor:
+        self.notes_extractor.max_characters = self.max_characters
+        self.notes_extractor.max_scenes = self.max_scenes
+        return self.notes_extractor
 
     def _extract_characters_and_scenes(
         self, script: Script, config: NarrascapeConfig
@@ -387,308 +395,77 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         Curated projects can provide `director_notes.md`; generic projects fall back
         to script-derived scene anchors so pre-production can still run end to end.
         """
-        notes_path = config.project_dir / "director_notes.md"
-        if notes_path.exists():
-            notes = notes_path.read_text(encoding="utf-8")
-            characters = self._characters_from_director_notes(notes)[: self.max_characters]
-            scenes = self._scenes_from_director_notes(notes)[: self.max_scenes]
-            if characters or scenes:
-                return characters, scenes
-
-        return [], self._scenes_from_script(script)[: self.max_scenes]
+        return self._current_notes_extractor().extract_local(script, config.project_dir)
 
     def _characters_from_director_notes(self, notes: str) -> list[dict[str, Any]]:
-        sections = self._markdown_subsections(notes, "Character Bible")
-        characters: list[dict[str, Any]] = []
-        for raw_id, lines in sections:
-            char_id = self._slug(raw_id)
-            role = self._bullet_value(lines, "Role")
-            age = self._bullet_value(lines, "Age")
-            face = self._bullet_value(lines, "Face and body")
-            wardrobe = self._bullet_value(lines, "Wardrobe lock")
-            behavior = self._bullet_value(lines, "Behavior")
-            negative = self._bullet_value(lines, "Negative anchors")
-            identity_parts = [
-                part
-                for part in (
-                    f"Role: {role}" if role else "",
-                    f"Age: {age}" if age else "",
-                    face,
-                    f"Wardrobe: {wardrobe}" if wardrobe else "",
-                    f"Behavior: {behavior}" if behavior else "",
-                )
-                if part
-            ]
-            characters.append(
-                {
-                    "char_id": char_id,
-                    "name": raw_id.replace("_", " ").title(),
-                    "identity_block": ". ".join(identity_parts) or raw_id,
-                    "face_description": face,
-                    "hair_description": "",
-                    "body_description": face,
-                    "default_outfit": wardrobe,
-                    "signature_accessories": self._accessories_from_text(wardrobe),
-                    "negative_anchors": [negative] if negative else [],
-                    "expression_range": ["neutral", "tense", "fearful", "resolved"],
-                }
-            )
-        return characters
+        return self._current_notes_extractor().characters_from_director_notes(notes)
 
     def _scenes_from_director_notes(self, notes: str) -> list[dict[str, Any]]:
-        sections = self._markdown_subsections(notes, "Scene Bible")
-        scenes: list[dict[str, Any]] = []
-        for raw_id, lines in sections:
-            scene_id = self._slug(raw_id)
-            core = self._bullet_value(lines, "Core look")
-            lighting = self._bullet_value(lines, "Lighting")
-            continuity = self._bullet_value(lines, "Continuity")
-            description = ". ".join(part for part in (core, continuity) if part) or raw_id
-            scenes.append(
-                {
-                    "scene_id": scene_id,
-                    "scene_name": raw_id.replace("_", " ").title(),
-                    "scene_type": self._scene_type(description),
-                    "description": description,
-                    "time_of_day": self._time_of_day(description),
-                    "weather": self._weather(description),
-                    "lighting_signature": lighting or "naturalistic period lighting",
-                    "color_palette": self._color_palette(description, lighting),
-                    "key_landmarks": self._landmarks_from_text(description),
-                    "mood": "psychological pressure",
-                }
-            )
-        return scenes
+        return self._current_notes_extractor().scenes_from_director_notes(notes)
 
     def _scenes_from_script(self, script: Script) -> list[dict[str, Any]]:
-        scenes: list[dict[str, Any]] = []
-        for seg in script.segments[: self.max_scenes]:
-            scenes.append(
-                {
-                    "scene_id": f"script_segment_{seg.id:02d}",
-                    "scene_name": f"Script Segment {seg.id}",
-                    "scene_type": "story",
-                    "description": seg.text[:240],
-                    "time_of_day": "day",
-                    "weather": "unspecified",
-                    "lighting_signature": "cinematic natural light",
-                    "color_palette": "story-driven natural contrast",
-                    "key_landmarks": [],
-                    "mood": "narrative",
-                }
-            )
-        return scenes
+        return self._current_notes_extractor().scenes_from_script(script)
 
     def _markdown_subsections(self, markdown: str, heading: str) -> list[tuple[str, list[str]]]:
-        in_section = False
-        current_title = ""
-        current_lines: list[str] = []
-        sections: list[tuple[str, list[str]]] = []
-        target = f"## {heading}".lower()
-
-        for line in markdown.splitlines():
-            stripped = line.strip()
-            if stripped.lower() == target:
-                in_section = True
-                continue
-            if in_section and stripped.startswith("## "):
-                break
-            if not in_section:
-                continue
-            if stripped.startswith("### "):
-                if current_title:
-                    sections.append((current_title, current_lines))
-                current_title = stripped[4:].strip()
-                current_lines = []
-            elif current_title:
-                current_lines.append(stripped)
-
-        if current_title:
-            sections.append((current_title, current_lines))
-        return sections
+        return self._current_notes_extractor().markdown_subsections(markdown, heading)
 
     def _bullet_value(self, lines: list[str], label: str) -> str:
-        prefix = f"- {label}:"
-        for line in lines:
-            if line.startswith(prefix):
-                return line[len(prefix) :].strip()
-        return ""
+        return self._current_notes_extractor().bullet_value(lines, label)
 
     def _slug(self, value: str) -> str:
-        slug = re.sub(r"[^a-z0-9_]+", "_", value.lower().replace("-", "_")).strip("_")
-        return slug or "item"
+        return self._current_notes_extractor().slug(value)
 
     def _accessories_from_text(self, text: str) -> list[str]:
-        accessories = []
-        for keyword in ("cross", "key", "watch", "spectacles", "cap", "shawl", "coat"):
-            if keyword in text.lower():
-                accessories.append(keyword)
-        return accessories
+        return self._current_notes_extractor().accessories_from_text(text)
 
     def _scene_type(self, text: str) -> str:
-        lower = text.lower()
-        if any(word in lower for word in ("room", "office", "flat", "apartment")):
-            return "indoor"
-        if any(word in lower for word in ("street", "yard", "canal", "river", "square")):
-            return "urban"
-        return "environment"
+        return self._current_notes_extractor().scene_type(text)
 
     def _time_of_day(self, text: str) -> str:
-        lower = text.lower()
-        if "dawn" in lower:
-            return "dawn"
-        if "night" in lower:
-            return "night"
-        if "candle" in lower:
-            return "evening"
-        return "day"
+        return self._current_notes_extractor().time_of_day(text)
 
     def _weather(self, text: str) -> str:
-        lower = text.lower()
-        if "snow" in lower:
-            return "snow"
-        if "rain" in lower or "wet" in lower:
-            return "rain"
-        if "fog" in lower:
-            return "fog"
-        return "clear"
+        return self._current_notes_extractor().weather(text)
 
     def _color_palette(self, description: str, lighting: str) -> str:
-        lower = f"{description} {lighting}".lower()
-        colors = [
-            color
-            for color in ("yellow", "gray", "green", "brown", "black", "snow")
-            if color in lower
-        ]
-        return ", ".join(colors) if colors else "muted period palette"
+        return self._current_notes_extractor().color_palette(description, lighting)
 
     def _landmarks_from_text(self, text: str) -> list[str]:
-        lower = text.lower()
-        landmarks = []
-        for keyword in ("canal", "door", "keys", "icon", "candle", "river", "snow", "cobblestones"):
-            if keyword in lower:
-                landmarks.append(keyword)
-        return landmarks[:3]
+        return self._current_notes_extractor().landmarks_from_text(text)
 
     def _storyboard_intent_from_notes(self, config: NarrascapeConfig) -> dict[str, str]:
-        notes_path = config.project_dir / "director_notes.md"
-        if not notes_path.exists():
-            return {}
-        notes = notes_path.read_text(encoding="utf-8")
-        in_section = False
-        intents: dict[str, str] = {}
-        for line in notes.splitlines():
-            stripped = line.strip()
-            if stripped.lower() == "## storyboard intent":
-                in_section = True
-                continue
-            if in_section and stripped.startswith("## "):
-                break
-            if not in_section:
-                continue
-            match = re.match(r"-\s+`?(sb_\d+_\d+)`?\s*:\s*(.+)", stripped)
-            if match:
-                intents[match.group(1)] = match.group(2).strip()
-        return intents
+        return self._current_notes_extractor().storyboard_intent_from_project(config.project_dir)
 
     def _storyboard_scene_from_text(
         self,
         text: str,
         scene_ids: list[str],
     ) -> str:
-        lower = text.lower()
-        scene_keywords = {
-            "police_office": ("office", "porfiry", "magistrate", "papers", "ink"),
-            "sonya_room": ("sonya", "candle", "icon"),
-            "rented_room": ("rented room", "attic", "yellow wallpaper", "sloped ceiling"),
-            "pawnbroker_flat": ("pawnbroker", "door chain", "keys", "flat"),
-            "petersburg_street": ("petersburg", "street", "canal", "cobblestone"),
-            "siberian_yard": ("siberian", "siberia", "prison", "snow", "river"),
-        }
-        for scene_id in scene_ids:
-            normalized = scene_id.replace("_", " ")
-            if normalized in lower or scene_id.lower() in lower:
-                return scene_id
-            if any(keyword in lower for keyword in scene_keywords.get(scene_id, ())):
-                return scene_id
-        return ""
+        return self._current_notes_extractor().storyboard_scene_from_text(text, scene_ids)
 
     def _storyboard_characters_from_text(
         self,
         text: str,
         character_ids: list[str],
     ) -> list[str]:
-        lower = text.lower()
-        aliases = {
-            "raskolnikov": ("raskolnikov", "student", "former student"),
-            "porfiry": ("porfiry", "magistrate"),
-            "sonya": ("sonya",),
-            "pawnbroker": ("pawnbroker",),
-        }
-        result = []
-        for char_id in character_ids:
-            normalized = char_id.replace("_", " ").lower()
-            if normalized in lower or any(alias in lower for alias in aliases.get(char_id, ())):
-                result.append(char_id)
-        return result
+        return self._current_notes_extractor().storyboard_characters_from_text(
+            text,
+            character_ids,
+        )
 
     def _metadata_only_character_reference(
         self,
         char_data: dict[str, Any],
         refs_dir: Path,
     ) -> CharacterReferenceSheet:
-        char_id = str(char_data.get("char_id") or "character")
-        anchor_path = refs_dir / f"char_{char_id}_anchor.png"
-        existing_anchor = str(anchor_path) if anchor_path.exists() else ""
-        return CharacterReferenceSheet(
-            char_id=char_id,
-            name=str(char_data.get("name") or char_id),
-            identity_block=str(char_data.get("identity_block") or char_id),
-            primary_reference_path=existing_anchor,
-            seedream_model=char_data.get("seedream_model", ""),
-            seedream_sample_strength=char_data.get("seedream_sample_strength", 0.7),
-            anchor_image=(
-                CharacterReferenceImage(
-                    image_id=f"char_{char_id}_anchor",
-                    image_type="anchor",
-                    local_path=existing_anchor,
-                    description=f"Metadata-only character anchor for {char_id}",
-                )
-                if existing_anchor
-                else None
-            ),
-        )
+        return self.reference_factory.metadata_only_character_reference(char_data, refs_dir)
 
     def _metadata_only_environment_reference(
         self,
         scene_data: dict[str, Any],
         refs_dir: Path,
     ) -> EnvironmentReference:
-        scene_id = str(scene_data.get("scene_id") or "scene")
-        mood_path = refs_dir / f"scene_{scene_id}_mood.png"
-        existing_mood = str(mood_path) if mood_path.exists() else ""
-        return EnvironmentReference(
-            scene_id=scene_id,
-            scene_name=str(scene_data.get("scene_name") or scene_id),
-            scene_type=str(scene_data.get("scene_type") or "environment"),
-            primary_reference_path=existing_mood,
-            time_of_day=str(scene_data.get("time_of_day") or ""),
-            weather=str(scene_data.get("weather") or ""),
-            lighting_signature=str(scene_data.get("lighting_signature") or ""),
-            color_palette=str(scene_data.get("color_palette") or ""),
-            mood_images=(
-                [
-                    EnvironmentReferenceImage(
-                        image_id=f"scene_{scene_id}_mood",
-                        image_type="mood",
-                        local_path=existing_mood,
-                        description=f"Metadata-only scene mood for {scene_id}",
-                    )
-                ]
-                if existing_mood
-                else []
-            ),
-        )
+        return self.reference_factory.metadata_only_environment_reference(scene_data, refs_dir)
 
     # ── Step 0: Generate unified style anchor ───────────────────────────
 

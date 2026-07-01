@@ -7,11 +7,12 @@ offline verification to real AI providers.
 
 ```powershell
 cd C:\Users\32472\.openclaw\workspace\narrascape
-$env:PYTHONPATH = "src"
-.\.venv_test\Scripts\python.exe -m narrascape.cli version
+python -m pip install -r requirements-dev.txt
+narrascape version
 ```
 
-If installed as a package, use `narrascape` instead of `python -m narrascape.cli`.
+For import-only checks in an uninstalled checkout, setting `PYTHONPATH=src` is
+enough. The CLI needs the package dependencies installed.
 
 To use the Streamlit dashboard, install the optional UI extra:
 

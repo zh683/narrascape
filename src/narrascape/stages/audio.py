@@ -9,6 +9,7 @@ from typing import Any, TypedDict
 from narrascape.config import BGMMap, NarrascapeConfig, Script
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration, run_ffmpeg, run_ffmpeg_raw
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.audio")
 
@@ -304,7 +305,7 @@ class AudioRemixStage(Stage):
             concat_lines.append(f"file '{sf.as_posix()}'")
 
         concat_file = pipeline_dir / "concat_gapped.txt"
-        concat_file.write_text("\n".join(concat_lines), encoding="utf-8")
+        atomic_write_text(concat_file, "\n".join(concat_lines))
 
         # Use aconcat filter for gapless concatenation
         inputs = []

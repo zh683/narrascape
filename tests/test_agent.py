@@ -759,3 +759,33 @@ class TestLLMResponseParsing:
         repaired = JSONRepair.repair('{"text": "brace } inside", "items": [1, 2]')
 
         assert repaired == '{"text": "brace } inside", "items": [1, 2]}'
+
+    def test_list_items_have_keys_validates_top_level_list(self):
+        from narrascape.llm.output_parser import OutputValidator
+
+        validator = OutputValidator.list_items_have_keys("id", "status")
+
+        is_valid, error = validator([{"id": 1, "status": "ok"}])
+
+        assert is_valid is True
+        assert error == ""
+
+    def test_list_items_have_keys_rejects_wrong_shape(self):
+        from narrascape.llm.output_parser import OutputValidator
+
+        validator = OutputValidator.list_items_have_keys("id", "status")
+
+        is_valid, error = validator({"items": [{"id": 1, "status": "ok"}]})
+
+        assert is_valid is False
+        assert "Expected list" in error
+
+    def test_list_items_have_keys_reports_missing_item_keys(self):
+        from narrascape.llm.output_parser import OutputValidator
+
+        validator = OutputValidator.list_items_have_keys("id", "status")
+
+        is_valid, error = validator([{"id": 1}])
+
+        assert is_valid is False
+        assert "missing keys" in error

@@ -6,6 +6,7 @@ from pathlib import Path
 from narrascape.config import EndingConfig, NarrascapeConfig
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font, run_ffmpeg, validate_video
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.concat")
 
@@ -77,7 +78,7 @@ class ConcatStage(Stage):
                     lines.append(f"file '{gv.as_posix()}'")
 
         concat_file = config.pipeline_dir / "concat_body.txt"
-        concat_file.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(concat_file, "\n".join(lines))
 
         body_video = config.pipeline_dir / "body_concat.mp4"
         run_ffmpeg(
@@ -100,7 +101,7 @@ class ConcatStage(Stage):
             if ending_card.exists() and validate_video(ending_card):
                 fc = config.pipeline_dir / "concat_with_ending.txt"
                 fc_lines = [f"file '{body_video.as_posix()}'", f"file '{ending_card.as_posix()}'"]
-                fc.write_text("\n".join(fc_lines), encoding="utf-8")
+                atomic_write_text(fc, "\n".join(fc_lines))
                 run_ffmpeg(
                     ["-f", "concat", "-safe", "0", "-i", str(fc), "-c", "copy", str(final_video)],
                     desc="concat with ending",

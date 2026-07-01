@@ -11,6 +11,7 @@ from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class VisualSemanticQAStage(Stage):
@@ -98,7 +99,7 @@ class VisualSemanticQAStage(Stage):
             "findings": findings,
         }
         validate_artifact("visual_semantic_report", report)
-        output.write_text(yaml.safe_dump(report, sort_keys=False), encoding="utf-8")
+        atomic_write_yaml(output, report)
         return StageResult(
             self.name,
             True,

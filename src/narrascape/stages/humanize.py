@@ -12,6 +12,7 @@ import yaml
 
 from narrascape.humanizer import HumanizerEngine
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_text, atomic_write_yaml
 
 logger = logging.getLogger("narrascape.stages.humanize")
 
@@ -83,9 +84,8 @@ class HumanizeStage(Stage):
         # Save result if not score-only
         if not self.score_only:
             backup_path = script_path.with_suffix(".yaml.backup")
-            backup_path.write_text(text, encoding="utf-8")
-            with open(script_path, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
+            atomic_write_text(backup_path, text)
+            atomic_write_yaml(script_path, data)
             logger.info(f"[humanize] Saved backup: {backup_path}")
 
         from rich.console import Console

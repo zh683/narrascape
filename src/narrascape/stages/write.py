@@ -10,11 +10,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.humanizer import HumanizerEngine
 from narrascape.research import ResearchEngine, load_research_report
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.utils.safe_io import atomic_write_text, atomic_write_yaml
 from narrascape.writer import ScriptWriter
 
 logger = logging.getLogger("narrascape.stages.write")
@@ -76,7 +75,7 @@ class WriteStage(Stage):
             research = research_engine.research(topic, depth="standard")
             # Save research report for reference
             report_path = project_dir / "research_report.md"
-            report_path.write_text(research.to_markdown(), encoding="utf-8")
+            atomic_write_text(report_path, research.to_markdown())
 
         # Step 2: Write raw script
         writer = ScriptWriter(llm_client=self.llm_client, style=self.style)
@@ -86,8 +85,7 @@ class WriteStage(Stage):
         # Step 3: Save raw script (before humanization)
         raw_path = scripts_dir / "script_raw.yaml"
         raw_data = {"segments": [seg.model_dump() for seg in script.segments]}
-        with open(raw_path, "w", encoding="utf-8") as f:
-            yaml.dump(raw_data, f, allow_unicode=True, sort_keys=False)
+        atomic_write_yaml(raw_path, raw_data)
         logger.info(f"[write] Raw script saved: {raw_path}")
 
         # Step 4: Humanize (LLM-first, rule-based fallback)
@@ -100,15 +98,15 @@ class WriteStage(Stage):
         script_path = scripts_dir / "script.yaml"
         if script_path.exists():
             backup_path = scripts_dir / f"script.yaml.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            backup_path.write_text(script_path.read_text(encoding="utf-8"), encoding="utf-8")
+            atomic_write_text(backup_path, script_path.read_text(encoding="utf-8"))
         script_data = {"segments": [seg.model_dump() for seg in script.segments]}
-        with open(script_path, "w", encoding="utf-8") as f:
-            yaml.dump(script_data, f, allow_unicode=True, sort_keys=False)
+        atomic_write_yaml(script_path, script_data)
         logger.info(f"[write] Humanized script saved: {script_path}")
 
         # Step 6: Create approval marker
         approval_path = project_dir / ".approval_pending"
-        approval_path.write_text(
+        atomic_write_text(
+            approval_path,
             f"Script generated on: {__import__('datetime').datetime.now().isoformat()}\n"
             f"Status: PENDING_APPROVAL\n"
             f"\n"
@@ -117,7 +115,6 @@ class WriteStage(Stage):
             f"After approval, run:\n"
             f"  narrascape design -p {project_dir}\n"
             f"  narrascape build -p {project_dir}\n",
-            encoding="utf-8",
         )
 
         # Step 7: Print summary
