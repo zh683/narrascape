@@ -545,7 +545,9 @@ def _launch_detached_worker(record: JobRecord) -> None:
         "cwd": record.cwd,
     }
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "DETACHED_PROCESS", 0
+        )
     else:
         kwargs["start_new_session"] = True
     subprocess.Popen(command, **kwargs)
