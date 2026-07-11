@@ -14,7 +14,9 @@ class BudgetTrackerLike(Protocol):
 
     def reserve(self, reservation_id: str, estimated_cost: float) -> tuple[bool, str]: ...
 
-    def commit_reservation(self, reservation_id: str) -> tuple[bool, str]: ...
+    def commit_reservation(
+        self, reservation_id: str, actual_cost: float | None = None
+    ) -> tuple[bool, str]: ...
 
     def release_reservation(self, reservation_id: str) -> None: ...
 
@@ -69,6 +71,45 @@ class ProviderTaskRepository:
         current["status"] = status
         return self._write(key, current)
 
+    def record_callback(
+        self,
+        key: str,
+        provider: str,
+        *,
+        event_id: str,
+        status: str,
+        **metadata: Any,
+    ) -> bool:
+        current = self.get(key, provider=provider)
+        callback_ids = current.get("callback_ids", [])
+        ids = [str(value) for value in callback_ids] if isinstance(callback_ids, list) else []
+        if event_id in ids:
+            return False
+        ids.append(event_id)
+        current.update(metadata)
+        current.update(
+            {
+                "provider": provider,
+                "status": status,
+                "callback_ids": ids[-100:],
+            }
+        )
+        self._write(key, current)
+        return True
+
+    def recovery_action(self, key: str, *, provider: str) -> str:
+        task = self.get(key, provider=provider)
+        if not task:
+            return "submit"
+        status = str(task.get("status") or "")
+        if status == "completed":
+            return "done"
+        if task.get("task_id") or task.get("video_id"):
+            return "poll"
+        if status in {"submitting", "charged_failed"}:
+            return "reconcile"
+        return "submit"
+
     def _write(self, key: str, value: dict[str, Any]) -> dict[str, Any]:
         self.mapping[key] = value
         if self.persist is not None:
@@ -99,6 +140,20 @@ class BudgetReservationCoordinator:
             raise BudgetReservationError(message)
 
     def release(self, reservation_id: str) -> None:
+        self.tracker.release_reservation(reservation_id)
+
+    def settle_failure(
+        self,
+        reservation_id: str,
+        *,
+        charged: bool,
+        actual_cost: float | None = None,
+    ) -> None:
+        if charged:
+            committed, message = self.tracker.commit_reservation(reservation_id, actual_cost)
+            if not committed:
+                raise BudgetReservationError(message)
+            return
         self.tracker.release_reservation(reservation_id)
 
 

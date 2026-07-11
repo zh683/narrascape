@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ScriptSceneDirectorStage(Stage):
@@ -75,8 +74,7 @@ class ScriptSceneDirectorStage(Stage):
             "acts": acts,
             "shot_index": shot_index,
         }
-        validate_artifact("screenplay_structure", structure)
-        atomic_write_yaml(output, structure)
+        write_artifact("screenplay_structure", output, structure)
         return StageResult(
             self.name,
             True,

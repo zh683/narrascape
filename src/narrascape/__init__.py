@@ -9,7 +9,7 @@ Key features:
 - Pydantic-validated configuration with auto-completion
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0-beta.1"
 
 from narrascape.config import NarrascapeConfig, load_config
 from narrascape.pipeline import Pipeline

@@ -7,10 +7,10 @@ from typing import Any
 
 from PIL import Image, ImageStat
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
+from narrascape.media_analysis import analyze_media
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_media_info, run_ffmpeg_raw, validate_video
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class QAStage(Stage):
@@ -47,6 +47,7 @@ class QAStage(Stage):
             "audio_analysis": {},
             "black_frame_risk": None,
             "black_frame_analysis": {},
+            "perceptual": {"status": "not_run"},
             "repeated_shot_risk": self._detect_repeated_shots(context),
             "placeholder_residue": self._detect_placeholder_residue(context),
         }
@@ -91,13 +92,13 @@ class QAStage(Stage):
             warnings.append("narrative pacing risk")
 
         report = {
+            "schema_version": "render_report.v1",
             "output": final.as_posix(),
             "checks": checks,
             "errors": errors,
             "warnings": warnings,
         }
-        validate_artifact("render_report", report)
-        atomic_write_yaml(report_path, report)
+        write_artifact("render_report", report_path, report)
 
         return StageResult(
             self.name,
@@ -161,6 +162,39 @@ class QAStage(Stage):
                 errors.append("black frame risk detected")
         elif black.get("status") == "unavailable":
             warnings.append("black frame analysis unavailable")
+
+        self._populate_perceptual_checks(final, checks, errors, warnings)
+
+    def _populate_perceptual_checks(
+        self,
+        final: Path,
+        checks: dict[str, Any],
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        try:
+            perceptual = analyze_media(final)
+        except Exception as exc:
+            perceptual = {"status": "unavailable", "errors": {"analysis": str(exc)}}
+        checks["perceptual"] = perceptual
+        if perceptual.get("status") != "ok":
+            warnings.append("perceptual media analysis unavailable or incomplete")
+
+        frames = perceptual.get("frames", {})
+        if float(frames.get("dark_frame_ratio", 0.0)) >= 0.5:
+            warnings.append("perceptual frame sample is mostly dark")
+        if float(frames.get("low_detail_ratio", 0.0)) >= 0.5:
+            warnings.append("perceptual frame sample has low visual detail")
+        if float(frames.get("frozen_pair_ratio", 0.0)) >= 0.5:
+            warnings.append("perceptual frame sample appears frozen")
+
+        audio = perceptual.get("audio", {})
+        rms = float(audio.get("rms", 1.0))
+        silence_ratio = float(audio.get("silence_ratio", 0.0))
+        if rms < 0.001 or silence_ratio >= 0.98:
+            errors.append("perceptual audio appears near-silent")
+        if float(audio.get("clipping_ratio", 0.0)) >= 0.01:
+            warnings.append("perceptual audio clipping detected")
 
     def _subtitle_output_present(self, context: StageContext) -> bool:
         return self._final_video(context).exists()

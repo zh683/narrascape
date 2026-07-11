@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
 from narrascape.utils.safe_io import (
     atomic_write_text,
-    atomic_write_yaml,
     load_json_mapping,
 )
 
@@ -47,8 +46,7 @@ class AnimaticStage(Stage):
         }
 
         out_yaml = config.pipeline_dir / "animatic.yaml"
-        validate_artifact("animatic", report)
-        atomic_write_yaml(out_yaml, report)
+        write_artifact("animatic", out_yaml, report)
         if status != "ready":
             return StageResult(
                 self.name,

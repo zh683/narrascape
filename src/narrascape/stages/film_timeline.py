@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping
+from narrascape.utils.safe_io import load_json_mapping
 
 
 class FilmTimelineStage(Stage):
@@ -212,8 +212,7 @@ class FilmTimelineStage(Stage):
                 "subtitles": self._subtitle_track(config),
             },
         }
-        validate_artifact("film_timeline", timeline)
-        atomic_write_yaml(output_path, timeline)
+        write_artifact("film_timeline", output_path, timeline)
 
         return StageResult(
             self.name,

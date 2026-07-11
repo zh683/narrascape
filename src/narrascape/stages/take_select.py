@@ -5,9 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class TakeSelectStage(Stage):
@@ -61,8 +60,7 @@ class TakeSelectStage(Stage):
             },
             "selections": selections,
         }
-        validate_artifact("take_selection", selection)
-        atomic_write_yaml(output, selection)
+        write_artifact("take_selection", output, selection)
         return StageResult(
             self.name,
             True,

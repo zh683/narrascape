@@ -342,4 +342,6 @@ class PreProductionReportWriter:
     """Persists pre-production reports with artifact-safe writes."""
 
     def write(self, path: Path, report: dict[str, Any]) -> None:
-        write_artifact("pre_production", path, report)
+        current = dict(report)
+        current["schema_version"] = "pre_production.v1"
+        write_artifact("pre_production", path, current)

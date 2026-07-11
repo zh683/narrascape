@@ -1,0 +1,17 @@
+{
+  "project_id": "historical-project-b",
+  "artifacts": {
+    "production_readiness": {"project": {}, "status": "ready", "gates": [], "findings": []},
+    "reference_plates": {"status": "ready", "plates": [], "findings": []},
+    "remotion_preview": {"status": "ready", "project": {}, "composition": {}, "assets": {}, "commands": {}},
+    "render_report": {"output": "output/film.mp4", "checks": {}, "errors": [], "warnings": []},
+    "rework_execution": {"status": "completed", "executed_actions": [], "queues": {}},
+    "rework_plan": {"status": "approved", "actions": [], "actions_by_type": {}},
+    "screenplay_structure": {"grain_order": [], "acts": [], "shot_index": []},
+    "script": {"title": "Historical Project B", "segments": []},
+    "storyboard_sheet": {"status": "ready", "project": {}, "shot_count": 0, "page_count": 0, "pages": [], "findings": []},
+    "take_selection": {"selection_process": {}, "selections": []},
+    "video_prompt_quality": {"status": "approved", "findings": []},
+    "visual_semantic_report": {"status": "approved", "findings": [], "review_process": {}}
+  }
+}

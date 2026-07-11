@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ProductionReadinessStage(Stage):
@@ -81,8 +80,7 @@ class ProductionReadinessStage(Stage):
             "gates": gates,
             "findings": findings,
         }
-        validate_artifact("production_readiness", report)
-        atomic_write_yaml(output, report)
+        write_artifact("production_readiness", output, report)
         return StageResult(
             self.name,
             not blocking,

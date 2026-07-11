@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ReworkPlanStage(Stage):
@@ -58,8 +57,7 @@ class ReworkPlanStage(Stage):
             "actions": actions,
             "actions_by_type": self._actions_by_type(actions),
         }
-        validate_artifact("rework_plan", plan)
-        atomic_write_yaml(output, plan)
+        write_artifact("rework_plan", output, plan)
         return StageResult(
             self.name,
             True,

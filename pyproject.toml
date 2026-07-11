@@ -67,6 +67,7 @@ workbench = [
 
 [project.scripts]
 narrascape = "narrascape.cli:main"
+narrascape-worker = "narrascape.worker:main"
 
 [project.urls]
 Homepage = "https://github.com/zh683/narrascape"

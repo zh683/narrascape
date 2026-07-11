@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import (
     atomic_write_yaml,
@@ -101,8 +101,7 @@ class ReworkExecuteStage(Stage):
             "executed_actions": executed,
             "queues": queues,
         }
-        validate_artifact("rework_execution", execution)
-        atomic_write_yaml(output, execution)
+        write_artifact("rework_execution", output, execution)
         return StageResult(
             self.name,
             True,
