@@ -100,7 +100,10 @@ class WriteStage(Stage):
         if script_path.exists():
             backup_path = scripts_dir / f"script.yaml.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
             atomic_write_text(backup_path, script_path.read_text(encoding="utf-8"))
-        script_data = {"segments": [seg.model_dump() for seg in script.segments]}
+        script_data = {
+            "schema_version": "script.v1",
+            "segments": [seg.model_dump() for seg in script.segments],
+        }
         write_artifact("script", script_path, script_data)
         logger.info(f"[write] Humanized script saved: {script_path}")
 

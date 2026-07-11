@@ -26,6 +26,7 @@ class DirectorReviewStage(Stage):
         queue = self._build_rework_queue(checks, context)
         status = "needs_rework" if queue or report.get("errors") else "approved"
         review = {
+            "schema_version": "director_review.v1",
             "status": status,
             "source_report": report_path.as_posix(),
             "rework_queue": queue,

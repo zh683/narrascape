@@ -7,10 +7,10 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.reference_assets import build_reference_index, resolve_reference_ids
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_promote_file, atomic_write_yaml, load_yaml_mapping
+from narrascape.utils.safe_io import atomic_promote_file, load_yaml_mapping
 
 
 class StoryboardSheetStage(Stage):
@@ -134,11 +134,10 @@ class StoryboardSheetStage(Stage):
             "findings": findings,
         }
 
-        validate_artifact("storyboard_sheet", report)
         yaml_path = pipe_dir / "storyboard_sheet.yaml"
         png_path = pipe_dir / "storyboard_sheet.png"
         pdf_path = pipe_dir / "storyboard_sheet.pdf"
-        atomic_write_yaml(yaml_path, report)
+        write_artifact("storyboard_sheet", yaml_path, report)
         self._save_page_image(page_images[0], png_path)
         self._save_pdf(page_images, pdf_path)
 

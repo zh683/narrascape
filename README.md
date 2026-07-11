@@ -25,10 +25,11 @@ Every major stage writes files that can be inspected, edited, tested, and rerun.
 
 ## Current Status
 
-Narrascape is an early AI film studio prototype. The pipeline is real and
-covered by CI across Ubuntu and Windows with Python 3.10, 3.11, and 3.12, but
-final creative quality still depends on the configured LLM, media providers,
-source material, and human review.
+Narrascape `0.2.0-beta.1` is a supervised evaluation release. The pipeline is
+covered by CI across Ubuntu and Windows with Python 3.10 through 3.13, but it is
+not production-ready until at least 10 real-user production projects satisfy
+the documented benchmark gate. Final creative quality still depends on the
+configured LLM, media providers, source material, and human review.
 
 Production-oriented features already implemented:
 
@@ -52,6 +53,9 @@ Production-oriented features already implemented:
 - `assistant_handoff` that writes a Codex-readable takeover packet with stage
   docs, next actions, quality gates, artifacts, and commands.
 - Offline deterministic providers for end-to-end tests.
+- SQLite-backed persistent jobs executed by an independent local worker.
+- Real decoded-frame and PCM audio analysis in render QA.
+- Versioned canonical artifacts with YAML/JSON historical replay.
 
 ## Production Flow
 
@@ -151,6 +155,21 @@ cast, clear wardrobe locks, storyboard intent, and six shots.
 It exists to answer one question after every optimization:
 
 > Did the pipeline produce better controllable film material, or did it only run?
+
+## Stabilization Benchmarks
+
+The beta fixes three production baselines: `golden-sample`, `documentary`, and
+`crime-and-punishment`. Record reviewed runs and inspect the release gate with:
+
+```bash
+narrascape benchmark list
+narrascape benchmark record --help
+narrascape benchmark report
+```
+
+Each run records success, provider cost, elapsed time, manual rework count, and
+final human quality score. Offline and synthetic runs cannot satisfy the
+10-real-project gate. See [Release Readiness](docs/release-readiness.md).
 
 ## AI Director Boundary
 

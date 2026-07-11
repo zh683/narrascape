@@ -86,6 +86,7 @@ class HumanizeStage(Stage):
         if not self.score_only:
             backup_path = script_path.with_suffix(".yaml.backup")
             atomic_write_text(backup_path, text)
+            data["schema_version"] = "script.v1"
             write_artifact("script", script_path, data)
             logger.info(f"[humanize] Saved backup: {backup_path}")
 

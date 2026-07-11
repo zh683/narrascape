@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ReferencePlateStage(Stage):
@@ -63,9 +62,8 @@ class ReferencePlateStage(Stage):
             "plates": plates,
             "findings": findings,
         }
-        validate_artifact("reference_plates", report)
         out_path = config.pipeline_dir / "reference_plates.yaml"
-        atomic_write_yaml(out_path, report)
+        write_artifact("reference_plates", out_path, report)
         return StageResult(
             self.name,
             not blocking,

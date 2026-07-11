@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class FilmSupervisorStage(Stage):
@@ -62,8 +61,7 @@ class FilmSupervisorStage(Stage):
                 "render_report": (config.pipeline_dir / "render_report.yaml").as_posix(),
             },
         }
-        validate_artifact("film_supervisor", report)
-        atomic_write_yaml(output, report)
+        write_artifact("film_supervisor", output, report)
         return StageResult(
             self.name,
             True,

@@ -113,7 +113,11 @@ def test_stage_yaml_loader_validates_canonical_artifacts(tmp_path):
 @pytest.mark.parametrize(
     ("artifact_name", "payload", "missing_field"),
     [
-        ("director_contract", {"compile_process": {}, "shots": []}, "schema_version"),
+        (
+            "director_contract",
+            {"schema_version": "director_contract.v1", "compile_process": {}},
+            "shots",
+        ),
         (
             "reference_plates",
             {

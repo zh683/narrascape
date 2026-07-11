@@ -116,6 +116,19 @@ def test_qa_reports_film_level_checks_from_timeline(tmp_path, monkeypatch):
     monkeypatch.setattr(
         stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0}
     )
+    monkeypatch.setattr(
+        "narrascape.stages.qa.analyze_media",
+        lambda path: {
+            "status": "ok",
+            "frames": {
+                "sample_count": 8,
+                "dark_frame_ratio": 0.0,
+                "low_detail_ratio": 0.0,
+                "frozen_pair_ratio": 0.0,
+            },
+            "audio": {"rms": 0.2, "silence_ratio": 0.0, "clipping_ratio": 0.0},
+        },
+    )
 
     result = stage.run(_context(config))
 
@@ -125,8 +138,52 @@ def test_qa_reports_film_level_checks_from_timeline(tmp_path, monkeypatch):
     assert checks["missing_generated_video_segments"] == [2, 3]
     assert checks["continuity_risk"] is True
     assert checks["pacing_risk"] is True
+    assert checks["perceptual"]["status"] == "ok"
     assert not result.success
     assert any("shot coverage incomplete" in error for error in result.metadata["errors"])
+
+
+def test_qa_turns_perceptual_failures_into_stable_findings(tmp_path, monkeypatch):
+    from narrascape.stages.qa import QAStage
+
+    config = _config(tmp_path)
+    monkeypatch.setattr("narrascape.stages.qa.validate_video", lambda path: True)
+    monkeypatch.setattr(
+        "narrascape.stages.qa.get_media_info",
+        lambda path: {
+            "format": {"duration": "15.0"},
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080},
+                {"codec_type": "audio"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "narrascape.stages.qa.analyze_media",
+        lambda path: {
+            "status": "ok",
+            "frames": {
+                "sample_count": 8,
+                "dark_frame_ratio": 0.75,
+                "low_detail_ratio": 0.75,
+                "frozen_pair_ratio": 0.8,
+            },
+            "audio": {"rms": 0.0001, "silence_ratio": 0.99, "clipping_ratio": 0.02},
+        },
+    )
+    stage = QAStage()
+    monkeypatch.setattr(stage, "_detect_silence", lambda path: {"ok": True})
+    monkeypatch.setattr(
+        stage, "_detect_black_frames", lambda path, duration: {"risk": False, "black_seconds": 0.0}
+    )
+
+    result = stage.run(_context(config))
+
+    assert "perceptual audio appears near-silent" in result.metadata["errors"]
+    assert "perceptual frame sample is mostly dark" in result.metadata["warnings"]
+    assert "perceptual frame sample has low visual detail" in result.metadata["warnings"]
+    assert "perceptual frame sample appears frozen" in result.metadata["warnings"]
+    assert "perceptual audio clipping detected" in result.metadata["warnings"]
 
 
 def test_director_review_marks_failed_shots_for_regeneration_and_recuts(tmp_path):

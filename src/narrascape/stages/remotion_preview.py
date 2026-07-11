@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import (
     atomic_copy_file,
     atomic_write_json,
     atomic_write_text,
-    atomic_write_yaml,
 )
 
 
@@ -96,9 +95,8 @@ class RemotionPreviewStage(Stage):
                 ),
             },
         }
-        validate_artifact("remotion_preview", report)
         report_path = config.pipeline_dir / "remotion_preview.yaml"
-        atomic_write_yaml(report_path, report)
+        write_artifact("remotion_preview", report_path, report)
 
         success = not missing_assets
         return StageResult(

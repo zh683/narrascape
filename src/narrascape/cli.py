@@ -42,6 +42,8 @@ app = typer.Typer(
     help="Production-grade video pipeline for book explainer and documentary content.",
     rich_markup_mode="rich",
 )
+benchmark_app = typer.Typer(help="Record and report fixed production benchmarks.")
+app.add_typer(benchmark_app, name="benchmark")
 
 
 def _reconfigure_text_stream(stream: TextIO | Any) -> None:
@@ -68,6 +70,106 @@ PRODUCTION_OIL_PAINTING_STYLE = (
     "not photorealistic photography, not anime, not cartoon, no readable text, "
     "no watermark, no platform label."
 )
+
+
+def _benchmark_repository(catalog_path: Path, database_path: Path) -> Any:
+    from narrascape.benchmarks import BenchmarkCatalog, BenchmarkRunRepository
+
+    return BenchmarkRunRepository(database_path, BenchmarkCatalog.load(catalog_path))
+
+
+@benchmark_app.command("list")
+def benchmark_list_cmd(
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+) -> None:
+    """List the fixed production benchmarks."""
+    from narrascape.benchmarks import BenchmarkCatalog
+
+    catalog = BenchmarkCatalog.load(catalog_path)
+    table = Table("Benchmark", "Type", "Project")
+    for item in catalog.benchmarks:
+        table.add_row(item.id, item.production_type, item.project_path)
+    console.print(table)
+
+
+@benchmark_app.command("record")
+def benchmark_record_cmd(
+    benchmark_id: Annotated[str, typer.Option("--benchmark")],
+    project_id: Annotated[str, typer.Option("--project-id")],
+    operator_id: Annotated[str, typer.Option("--operator-id")],
+    cost_usd: Annotated[float, typer.Option("--cost-usd", min=0.0)],
+    elapsed_seconds: Annotated[float, typer.Option("--elapsed-seconds", min=0.0)],
+    manual_reworks: Annotated[int, typer.Option("--manual-reworks", min=0)],
+    quality_score: Annotated[float, typer.Option("--quality-score", min=0.0, max=100.0)],
+    run_mode: Annotated[
+        Literal["production", "offline", "synthetic"], typer.Option("--run-mode")
+    ] = "synthetic",
+    real_user: Annotated[bool, typer.Option("--real-user/--synthetic")] = False,
+    success: Annotated[bool, typer.Option("--success/--failed")] = False,
+    notes: Annotated[str, typer.Option("--notes")] = "",
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+    database_path: Annotated[
+        Path, typer.Option("--database", help="Benchmark SQLite database")
+    ] = Path(".narrascape/benchmarks.sqlite3"),
+) -> None:
+    """Record one completed benchmark production and its human quality score."""
+    from narrascape.benchmarks import BenchmarkRunInput
+
+    repository = _benchmark_repository(catalog_path, database_path)
+    record = repository.record(
+        BenchmarkRunInput(
+            benchmark_id=benchmark_id,
+            project_id=project_id,
+            operator_id=operator_id,
+            real_user=real_user,
+            success=success,
+            cost_usd=cost_usd,
+            elapsed_seconds=elapsed_seconds,
+            manual_reworks=manual_reworks,
+            quality_score=quality_score,
+            run_mode=run_mode,
+            notes=notes,
+        )
+    )
+    console.print(
+        f"[green]Recorded[/] {record.benchmark_id} project={record.project_id} id={record.id}"
+    )
+
+
+@benchmark_app.command("report")
+def benchmark_report_cmd(
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+    database_path: Annotated[
+        Path, typer.Option("--database", help="Benchmark SQLite database")
+    ] = Path(".narrascape/benchmarks.sqlite3"),
+) -> None:
+    """Show aggregate production metrics and the beta release gate."""
+    report = _benchmark_repository(catalog_path, database_path).report()
+    table = Table("Benchmark", "Runs", "Success", "Cost USD", "Time s", "Reworks", "Quality")
+    for benchmark_id, metrics in report["by_benchmark"].items():
+        table.add_row(
+            benchmark_id,
+            str(metrics["run_count"]),
+            f"{metrics['success_rate']:.0%}",
+            f"{metrics['total_cost_usd']:.2f}",
+            f"{metrics['total_elapsed_seconds']:.1f}",
+            str(metrics["total_manual_reworks"]),
+            f"{metrics['average_quality_score']:.1f}",
+        )
+    console.print(table)
+    gate = report["release_gate"]
+    status = "READY" if gate["ready"] else "NOT READY"
+    console.print(
+        f"Release gate: [bold]{status}[/] | real projects "
+        f"{gate['real_project_count']}/{gate['required_real_projects']} | "
+        f"success {gate['success_rate']:.0%} | quality {gate['average_quality_score']:.1f}"
+    )
 
 
 @contextmanager

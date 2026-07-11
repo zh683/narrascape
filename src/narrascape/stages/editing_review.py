@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class EditingReviewStage(Stage):
@@ -45,8 +44,7 @@ class EditingReviewStage(Stage):
             "emotion_curve": emotion_curve,
             "recommendations": recommendations,
         }
-        validate_artifact("editing_review", review)
-        atomic_write_yaml(output, review)
+        write_artifact("editing_review", output, review)
         return StageResult(
             self.name,
             True,

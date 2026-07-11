@@ -4,10 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class DirectorContractStage(Stage):
@@ -95,8 +94,7 @@ class DirectorContractStage(Stage):
             },
             "shots": shots,
         }
-        validate_artifact("director_contract", contract)
-        atomic_write_yaml(output, contract)
+        write_artifact("director_contract", output, contract)
         return StageResult(
             self.name,
             True,

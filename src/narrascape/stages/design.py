@@ -287,6 +287,7 @@ class DesignStage(Stage):
             if hasattr(report, "to_design_report")
             else report.model_dump()
         )
+        report_dict["schema_version"] = "design_report.v1"
         director_process = self._director_process(
             director_steps,
             "prompt_director" if self.llm_client else "local_deterministic_design",

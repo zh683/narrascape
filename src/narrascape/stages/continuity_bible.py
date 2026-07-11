@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ContinuityBibleStage(Stage):
@@ -101,8 +100,7 @@ class ContinuityBibleStage(Stage):
             "locations": locations,
             "continuity_risks": self._dedupe_risks(risks),
         }
-        validate_artifact("continuity_bible", bible)
-        atomic_write_yaml(output, bible)
+        write_artifact("continuity_bible", output, bible)
         return StageResult(
             self.name,
             True,

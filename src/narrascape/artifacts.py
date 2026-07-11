@@ -5,7 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
+from narrascape.artifact_migrations import ArtifactMigrationError, migrate_artifact
+from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
 
 
 class ArtifactValidationError(ValueError):
@@ -24,15 +25,18 @@ class ProjectRef(ArtifactModel):
 
 
 class AssetManifestArtifact(ArtifactModel):
+    schema_version: Literal["asset_manifest.v1"]
     assets: list[dict[str, Any]]
 
 
 class ScriptArtifact(ArtifactModel):
+    schema_version: Literal["script.v1"]
     title: str = ""
     segments: list[dict[str, Any]]
 
 
 class PreProductionArtifact(ArtifactModel):
+    schema_version: Literal["pre_production.v1"]
     project_title: str = ""
     style_template: str = ""
     characters: list[dict[str, Any]] = Field(default_factory=list)
@@ -42,6 +46,7 @@ class PreProductionArtifact(ArtifactModel):
 
 
 class DesignReportArtifact(ArtifactModel):
+    schema_version: Literal["design_report.v1"]
     project_title: str
     segments: list[dict[str, Any]]
 
@@ -99,6 +104,7 @@ class EditingReviewArtifact(ArtifactModel):
 
 
 class DirectorReviewArtifact(ArtifactModel):
+    schema_version: Literal["director_review.v1"]
     status: str
     source_report: str = ""
     rework_queue: list[dict[str, Any]]
@@ -128,6 +134,7 @@ class FilmTimelineArtifact(ArtifactModel):
 
 
 class RenderReportArtifact(ArtifactModel):
+    schema_version: Literal["render_report.v1"]
     output: str
     checks: dict[str, Any]
     errors: list[str] = Field(default_factory=list)
@@ -260,14 +267,21 @@ def validate_artifact(name: str, data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ArtifactValidationError(f"{name} must be a mapping")
     try:
-        return model.model_validate(data).model_dump(mode="python")
+        migrated = migrate_artifact(name, data)
+        return model.model_validate(migrated).model_dump(mode="python")
+    except ArtifactMigrationError as exc:
+        raise ArtifactValidationError(str(exc)) from exc
     except ValidationError as exc:
         raise ArtifactValidationError(f"Invalid {name} artifact: {exc}") from exc
 
 
 def load_artifact(name: str, path: Path) -> dict[str, Any]:
-    """Load and validate a canonical YAML artifact."""
-    return validate_artifact(name, load_yaml_mapping(path))
+    """Load and validate a canonical YAML or JSON artifact."""
+    target = Path(path)
+    data = (
+        load_json_mapping(target) if target.suffix.lower() == ".json" else load_yaml_mapping(target)
+    )
+    return validate_artifact(name, data)
 
 
 def load_artifact_file(path: Path, *, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -283,8 +297,8 @@ def load_artifact_file(path: Path, *, default: dict[str, Any] | None = None) -> 
 
 def write_artifact(name: str, path: Path, data: dict[str, Any]) -> None:
     """Validate a canonical artifact before atomically replacing its YAML file."""
-    validate_artifact(name, data)
-    atomic_write_yaml(path, data)
+    normalized = validate_artifact(name, data)
+    atomic_write_yaml(path, normalized)
 
 
 def available_schemas() -> list[str]:
