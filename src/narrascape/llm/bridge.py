@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.llm.models import LLMResponse, Message, PromptTemplate
+from narrascape.utils.safe_io import atomic_promote_file, atomic_write_text
 
 logger = logging.getLogger("narrascape.llm.bridge")
 
@@ -59,10 +60,7 @@ def _bridge_lock(lock_path: Path, timeout: float) -> Iterator[None]:
 
 def _atomic_write_text(path: Path, content: str) -> None:
     """Write text atomically so bridge readers never see partial JSON/Markdown."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    tmp_path.replace(path)
+    atomic_write_text(path, content, lock=False)
 
 
 class BridgeLLMClient:
@@ -192,8 +190,10 @@ class BridgeLLMClient:
                 if not isinstance(data.get("content"), str):
                     raise KeyError("content must be a string")
                 if task_file.exists():
-                    task_file.replace(self.archive_dir / task_file.name)
-                response_file.replace(self.archive_dir / response_file.name)
+                    atomic_promote_file(task_file, self.archive_dir / task_file.name, lock=False)
+                atomic_promote_file(
+                    response_file, self.archive_dir / response_file.name, lock=False
+                )
 
             logger.info(f"[bridge] Response received for task {task_id}")
             return LLMResponse(

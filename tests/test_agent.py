@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from narrascape.agent.models import BGMZoneSuggestion, DesignReport, SegmentAnalysis, ShotDesign
@@ -151,6 +153,44 @@ class TestAssistantBridgeBatching:
         assert response.content == "done"
         assert (task_dir / "archive" / f"response_{task_id}.json").exists()
         assert not (task_dir / ".bridge.lock").exists()
+
+    def test_bridge_uses_safe_io_for_task_write_and_archive(self, tmp_path, monkeypatch):
+        import json
+
+        from narrascape.llm.bridge import BridgeLLMClient
+
+        task_dir = tmp_path / "bridge"
+        task_dir.joinpath("completed").mkdir(parents=True)
+        client = BridgeLLMClient(task_dir=task_dir, timeout=1)
+        task_id = client._task_id("## User\n\nhello", False, "")
+        response_file = task_dir / "completed" / f"response_{task_id}.json"
+        response_file.write_text(json.dumps({"content": "done", "usage": {}}), encoding="utf-8")
+        writes: list[Path] = []
+        promotions: list[tuple[Path, Path]] = []
+
+        def fake_atomic_write_text(path, content, *, encoding="utf-8", lock=True):
+            writes.append(Path(path))
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(content, encoding=encoding)
+
+        def fake_atomic_promote_file(temp_path, path, *, lock=True):
+            promotions.append((Path(temp_path), Path(path)))
+            Path(temp_path).replace(path)
+
+        monkeypatch.setattr("narrascape.llm.bridge.atomic_write_text", fake_atomic_write_text)
+        monkeypatch.setattr("narrascape.llm.bridge.atomic_promote_file", fake_atomic_promote_file)
+
+        response = client.chat([Message(role="user", content="hello")])
+
+        assert response.content == "done"
+        assert writes == [task_dir / "pending" / f"task_{task_id}.md"]
+        assert promotions == [
+            (
+                task_dir / "pending" / f"task_{task_id}.md",
+                task_dir / "archive" / f"task_{task_id}.md",
+            ),
+            (response_file, task_dir / "archive" / f"response_{task_id}.json"),
+        ]
 
     def test_bridge_rejects_response_without_string_content(self, tmp_path):
         import json

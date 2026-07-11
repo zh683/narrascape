@@ -353,6 +353,7 @@ def test_film_supervisor_reruns_contract_chain_for_director_contract_rewrite(tmp
                         "priority": "medium",
                     }
                 ],
+                "actions_by_type": {"rewrite_director_contract": []},
             },
             sort_keys=False,
         ),

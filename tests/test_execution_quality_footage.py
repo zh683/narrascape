@@ -117,6 +117,30 @@ def test_generate_images_executes_provider_selected_by_selector(tmp_path):
     assert state["provider_selection"]["name"] == "local_image"
 
 
+def test_generate_images_reserves_budget_before_provider_call(tmp_path, monkeypatch):
+    from narrascape.stages.generate_images import GenerateImagesStage
+
+    config = _config(tmp_path)
+    config.images.provider = ImageProvider.SEEDREAM
+    observed = []
+    stage = GenerateImagesStage(api_key="fake", sleep_between=0)
+
+    def fake_generate_one(prompt, out_name, size, ref_image, images_dir, **kwargs):
+        budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+        observed.append(dict(budget["reservations"]))
+        (images_dir / f"{out_name}.png").write_bytes(b"image")
+        return True
+
+    monkeypatch.setattr(stage, "_generate_one", fake_generate_one)
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert observed and observed[0]
+    budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+    assert budget["reservations"] == {}
+
+
 def test_agnes_image_payload_uses_official_extra_body_format(tmp_path):
     from narrascape.stages.generate_images import GenerateImagesStage
 
@@ -138,6 +162,24 @@ def test_agnes_image_payload_uses_official_extra_body_format(tmp_path):
     assert payload["extra_body"]["response_format"] == "url"
     assert payload["extra_body"]["image"] == ["https://example.com/ref.png"]
     assert "response_format" not in payload
+
+
+def test_generate_images_b64_write_uses_atomic_writer(tmp_path, monkeypatch):
+    from narrascape.stages.generate_images import GenerateImagesStage
+
+    calls = []
+
+    def fake_atomic_write_bytes(path, data):
+        calls.append((path, data))
+
+    monkeypatch.setattr(
+        "narrascape.stages.generate_images.atomic_write_bytes", fake_atomic_write_bytes
+    )
+
+    out = tmp_path / "image.png"
+    GenerateImagesStage(api_key="fake")._write_b64_image("data:image/png;base64,QUJDRA==", out)
+
+    assert calls == [(out, b"ABCD")]
 
 
 def test_agnes_image_payload_sanitizes_literary_risk_terms():
@@ -362,9 +404,12 @@ def test_pre_production_reference_prompt_sanitizes_for_agnes(tmp_path, monkeypat
     refs_dir = config.project_dir / "assets" / "references"
     refs_dir.mkdir(parents=True)
     calls: list[str] = []
+    reservations = []
 
     def fake_generate_one(self, prompt, out_name, size, ref_image, images_dir, **kwargs):
         calls.append(prompt)
+        budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+        reservations.append(dict(budget["reservations"]))
         (images_dir / f"{out_name}.png").write_bytes(b"png")
         return True
 
@@ -397,6 +442,7 @@ def test_pre_production_reference_prompt_sanitizes_for_agnes(tmp_path, monkeypat
     assert "murderer" not in prompt
     assert "axe" not in prompt
     assert "worn dark student coat" in prompt
+    assert reservations and reservations[0]
 
 
 def test_generate_images_reports_empty_prompt_file_as_stage_failure(tmp_path):
@@ -512,6 +558,33 @@ def test_generate_tts_executes_provider_selected_by_selector(tmp_path, monkeypat
     assert state["provider_selection"]["name"] == "local_tts"
 
 
+def test_generate_tts_reserves_budget_before_provider_call(tmp_path, monkeypatch):
+    from narrascape.stages.generate_tts import GenerateTTSStage
+
+    config = _config(tmp_path)
+    config.tts.provider = TTSProvider.MINIMAX
+    observed = []
+
+    class Response:
+        def read(self):
+            budget = json.loads(
+                (config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8")
+            )
+            observed.append(dict(budget["reservations"]))
+            return json.dumps({"base_resp": {"status_code": 0}, "data": {"audio": "00ff"}}).encode()
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=120: Response())
+    monkeypatch.setattr("narrascape.stages.generate_tts.get_duration", lambda path: 1.0)
+    monkeypatch.setattr("narrascape.stages.generate_tts.time.sleep", lambda seconds: None)
+
+    result = GenerateTTSStage(api_key="fake").run(_context(config))
+
+    assert result.success
+    assert observed and observed[0]
+    budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+    assert budget["reservations"] == {}
+
+
 def test_generate_music_executes_provider_selected_by_selector(tmp_path, monkeypatch):
     from narrascape.stages.generate_music import GenerateMusicStage
 
@@ -529,6 +602,35 @@ def test_generate_music_executes_provider_selected_by_selector(tmp_path, monkeyp
     assert result.metadata["provider_selection"]["name"] == "local_music"
     state = json.loads((config.pipeline_dir / "bgm_state.json").read_text(encoding="utf-8"))
     assert state["provider_selection"]["name"] == "local_music"
+
+
+def test_generate_music_reserves_budget_before_provider_call(tmp_path, monkeypatch):
+    from narrascape.stages.generate_music import GenerateMusicStage
+
+    config = _config(tmp_path, bgm=True)
+    config.audio.music.provider = MusicProvider.MINIMAX
+    config.pipeline_dir.mkdir(parents=True)
+    (config.pipeline_dir / "timing.json").write_text(json.dumps({"1": 4.0}), encoding="utf-8")
+    observed = []
+    stage = GenerateMusicStage(api_key="fake")
+
+    def fake_generate_one(zone, duration, music_cfg, state, music_dir):
+        budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+        observed.append(dict(budget["reservations"]))
+        output = music_dir / f"{zone.id}.mp3"
+        output.write_bytes(b"music")
+        return output
+
+    monkeypatch.setattr(stage, "_generate_one", fake_generate_one)
+    monkeypatch.setattr("narrascape.stages.generate_music.get_duration", lambda path: 4.0)
+    monkeypatch.setattr("narrascape.stages.generate_music.time.sleep", lambda seconds: None)
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert observed and observed[0]
+    budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
+    assert budget["reservations"] == {}
 
 
 def test_generate_video_checks_selected_provider_requirements(tmp_path):
@@ -608,6 +710,8 @@ def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(tmp_p
     (config.pipeline_dir / "director_contract.yaml").write_text(
         yaml.safe_dump(
             {
+                "schema_version": "director_contract.v1",
+                "compile_process": {"mode": "test"},
                 "shots": [
                     {
                         "segment_id": 1,
@@ -644,7 +748,7 @@ def test_generate_video_passes_compiled_agnes_negative_prompt_to_execution(tmp_p
                             },
                         },
                     }
-                ]
+                ],
             },
             sort_keys=False,
         ),
@@ -876,21 +980,89 @@ def test_agnes_video_generation_downloads_completed_result(tmp_path, monkeypatch
     assert (videos_dir / "vid_01.mp4").exists()
 
 
-def test_agnes_video_task_creation_retries_read_timeout(monkeypatch):
+def test_generate_video_reuses_persisted_provider_task(tmp_path, monkeypatch):
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    stage = GenerateVideoStage(api_key="test-key")
+    task_map = {
+        "vid_01": {
+            "provider": "seedance",
+            "task_id": "task-existing",
+            "status": "submitted",
+        }
+    }
+    create_calls = []
+    poll_calls = []
+    persisted = []
+
+    monkeypatch.setattr(stage, "_create_task", lambda *args, **kwargs: create_calls.append(args))
+
+    def fake_poll(task_id):
+        poll_calls.append(task_id)
+        return "https://example.invalid/video.mp4"
+
+    monkeypatch.setattr(stage, "_poll_task", fake_poll)
+    monkeypatch.setattr("narrascape.stages.generate_video.validate_video", lambda path: True)
+
+    def fake_download(url, path, **kwargs):
+        path.write_bytes(b"video")
+
+    monkeypatch.setattr("narrascape.stages.generate_video.download_to_path", fake_download)
+
+    result = stage._generate_one(
+        "prompt",
+        "vid_01",
+        "model",
+        "720p",
+        None,
+        None,
+        tmp_path,
+        provider="seedance",
+        task_map=task_map,
+        persist_task_map=lambda: persisted.append(dict(task_map)),
+    )
+
+    assert result is True
+    assert create_calls == []
+    assert poll_calls == ["task-existing"]
+    assert task_map["vid_01"]["status"] == "completed"
+    assert persisted
+
+
+def test_generate_video_does_not_repeat_ambiguous_submission(tmp_path, monkeypatch):
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    stage = GenerateVideoStage(api_key="test-key")
+    task_map = {"vid_01": {"provider": "seedance", "status": "submitting"}}
+    create_calls = []
+    monkeypatch.setattr(stage, "_create_task", lambda *args, **kwargs: create_calls.append(args))
+
+    result = stage._generate_one(
+        "prompt",
+        "vid_01",
+        "model",
+        "720p",
+        None,
+        None,
+        tmp_path,
+        provider="seedance",
+        task_map=task_map,
+        persist_task_map=lambda: None,
+    )
+
+    assert result is False
+    assert create_calls == []
+
+
+def test_agnes_video_task_creation_does_not_retry_ambiguous_timeout(monkeypatch):
     from narrascape.stages.generate_video import GenerateVideoStage
 
     attempts = []
     sleeps = []
 
-    class Response:
-        def read(self):
-            return json.dumps({"task_id": "task_1", "video_id": "video_1"}).encode()
-
     def fake_urlopen(req, timeout=60):
         attempts.append(timeout)
-        if len(attempts) == 1:
-            raise TimeoutError("The read operation timed out")
-        return Response()
+        raise TimeoutError("The read operation timed out")
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
@@ -906,9 +1078,33 @@ def test_agnes_video_task_creation_retries_read_timeout(monkeypatch):
         reference_images=[],
     )
 
-    assert (task_id, video_id) == ("task_1", "video_1")
-    assert attempts == [stage.AGNES_CREATE_TIMEOUT, stage.AGNES_CREATE_TIMEOUT]
-    assert sleeps == [65.0]
+    assert (task_id, video_id) == (None, None)
+    assert attempts == [stage.AGNES_CREATE_TIMEOUT]
+    assert sleeps == []
+
+
+def test_seedance_task_creation_does_not_retry_ambiguous_transport_error(monkeypatch):
+    import urllib.error
+
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    attempts = []
+    sleeps = []
+
+    def fake_urlopen(req, timeout=60):
+        attempts.append(timeout)
+        raise urllib.error.URLError("response lost")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    stage = GenerateVideoStage(api_key="fake")
+
+    task_id = stage._create_task("prompt", "model", "720p", None, None)
+
+    assert task_id is None
+    assert attempts == [60]
+    assert sleeps == []
 
 
 def test_agnes_video_poll_uses_recommended_video_id_endpoint(monkeypatch):
@@ -951,6 +1147,62 @@ def test_generate_video_poll_exits_after_repeated_transport_errors(monkeypatch):
     def fail_urlopen(*args, **kwargs):
         attempts.append(1)
         raise urllib.error.URLError("server unavailable")
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    stage = GenerateVideoStage(
+        api_key="fake",
+        poll_interval=10,
+        max_poll_time=300,
+        max_poll_errors=2,
+    )
+
+    assert stage._poll_task("task") is None
+    assert len(attempts) == 2
+    assert sleeps == [10]
+
+
+def test_generate_video_poll_stops_immediately_on_permanent_http_error(monkeypatch):
+    import urllib.error
+
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    attempts = []
+
+    def fail_urlopen(*args, **kwargs):
+        attempts.append(1)
+        raise urllib.error.HTTPError("https://provider.test", 401, "unauthorized", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
+
+    def fail_sleep(seconds):
+        raise AssertionError(f"must not sleep after permanent HTTP error: {seconds}")
+
+    monkeypatch.setattr("time.sleep", fail_sleep)
+
+    stage = GenerateVideoStage(
+        api_key="fake",
+        poll_interval=10,
+        max_poll_time=300,
+        max_poll_errors=3,
+    )
+
+    assert stage._poll_task("task") is None
+    assert len(attempts) == 1
+
+
+def test_generate_video_poll_retries_rate_limit_http_error(monkeypatch):
+    import urllib.error
+
+    from narrascape.stages.generate_video import GenerateVideoStage
+
+    attempts = []
+    sleeps = []
+
+    def fail_urlopen(*args, **kwargs):
+        attempts.append(1)
+        raise urllib.error.HTTPError("https://provider.test", 429, "rate limited", {}, None)
 
     monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
     monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))

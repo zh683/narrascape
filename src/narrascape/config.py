@@ -6,8 +6,10 @@ Replaces raw YAML dicts with validated, typed, auto-completed configs.
 
 from __future__ import annotations
 
+import os
+import re
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -114,7 +116,13 @@ class SubtitleEngine(str, Enum):
     VTT = "vtt"
 
 
-class LLMConfig(BaseModel):
+class StrictConfigModel(BaseModel):
+    """Base model for user-authored configuration sections."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LLMConfig(StrictConfigModel):
     """LLM configuration for the project."""
 
     mode: str = Field("auto", description="LLM mode: auto, ai_assistant, api, bridge, none")
@@ -127,6 +135,14 @@ class LLMConfig(BaseModel):
     base_url: str = Field("", description="Custom API base URL")
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(2000, ge=100, le=16000)
+    log_enabled: bool = Field(True, description="Keep bounded in-memory LLM diagnostics")
+    log_persist: bool = Field(False, description="Persist sanitized diagnostics in the project")
+    log_max_entries: int = Field(100, ge=1, le=1000)
+    log_max_text_chars: int = Field(2000, ge=32, le=20000)
+    log_include_parsed_output: bool = Field(
+        False,
+        description="Retain bounded parsed output instead of only its type",
+    )
 
     @field_validator("mode")
     @classmethod
@@ -142,7 +158,7 @@ class LLMConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class ProjectConfig(BaseModel):
+class ProjectConfig(StrictConfigModel):
     """Project identity and metadata."""
 
     name: str = Field(
@@ -160,8 +176,39 @@ class ProjectConfig(BaseModel):
     )
     style: str | None = Field("documentary", description="Default video style")
 
+    @field_validator("name")
+    @classmethod
+    def validate_project_name(cls, value: str) -> str:
+        name = value.strip()
+        if (
+            not name
+            or name in {".", ".."}
+            or not re.fullmatch(r"[\w][\w.-]*", name, flags=re.UNICODE)
+            or Path(name).is_absolute()
+        ):
+            raise ValueError("project.name must be a path-free project slug")
+        return name
 
-class PipelineConfig(BaseModel):
+    @field_validator("script_file")
+    @classmethod
+    def validate_script_file(cls, value: str) -> str:
+        path = Path(value)
+        posix_path = PurePosixPath(value)
+        windows_path = PureWindowsPath(value)
+        if (
+            not value.strip()
+            or path.is_absolute()
+            or posix_path.is_absolute()
+            or windows_path.is_absolute()
+            or windows_path.drive
+            or ".." in posix_path.parts
+            or ".." in windows_path.parts
+        ):
+            raise ValueError("project.script_file must be a relative path inside the project")
+        return path.as_posix()
+
+
+class PipelineConfig(StrictConfigModel):
     """Pipeline identity and production-loop behavior."""
 
     name: str = Field("animated-explainer", description="Pipeline type identifier")
@@ -212,14 +259,14 @@ class PipelineConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class PronunciationEntry(BaseModel):
+class PronunciationEntry(StrictConfigModel):
     """A single pronunciation override."""
 
     original: str = Field(..., description="Original text to replace")
     replacement: str = Field(..., description="Phonetic replacement")
 
 
-class TTSConfig(BaseModel):
+class TTSConfig(StrictConfigModel):
     """Text-to-speech configuration."""
 
     provider: TTSProvider = Field(TTSProvider.MINIMAX, description="TTS provider")
@@ -245,7 +292,7 @@ class TTSConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class ImageConfig(BaseModel):
+class ImageConfig(StrictConfigModel):
     """Image generation configuration."""
 
     provider: ImageProvider = Field(ImageProvider.SEEDREAM)
@@ -258,7 +305,7 @@ class ImageConfig(BaseModel):
     count: int | None = Field(None, description="Number of images (auto-detected)")
 
 
-class VideoConfig(BaseModel):
+class VideoConfig(StrictConfigModel):
     """Generated-video provider configuration."""
 
     provider: VideoProvider = Field(VideoProvider.SEEDANCE)
@@ -280,7 +327,7 @@ class VideoConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class VisualConfig(BaseModel):
+class VisualConfig(StrictConfigModel):
     """Visual rendering configuration."""
 
     type: str = Field("ken_burns", description="Motion type identifier")
@@ -310,7 +357,7 @@ class VisualConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class SubtitleConfig(BaseModel):
+class SubtitleConfig(StrictConfigModel):
     """Subtitle rendering configuration."""
 
     engine: SubtitleEngine = Field(SubtitleEngine.SRT)
@@ -333,7 +380,7 @@ class SubtitleConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class NarrationAudioConfig(BaseModel):
+class NarrationAudioConfig(StrictConfigModel):
     """Narration track audio settings."""
 
     provider: str | None = Field(None)
@@ -341,7 +388,7 @@ class NarrationAudioConfig(BaseModel):
     sample_rate: int = Field(32000)
 
 
-class MusicAudioConfig(BaseModel):
+class MusicAudioConfig(StrictConfigModel):
     """Background music audio settings."""
 
     provider: MusicProvider = Field(MusicProvider.MINIMAX)
@@ -359,7 +406,7 @@ class MusicAudioConfig(BaseModel):
     fade_out_seconds: int = Field(5, ge=0, le=30)
 
 
-class AudioConfig(BaseModel):
+class AudioConfig(StrictConfigModel):
     """Combined audio configuration."""
 
     narration: NarrationAudioConfig = Field(default_factory=NarrationAudioConfig)
@@ -371,7 +418,7 @@ class AudioConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class BGMZone(BaseModel):
+class BGMZone(StrictConfigModel):
     """A single background music zone."""
 
     id: str = Field(..., description="Zone identifier, used for filename")
@@ -383,7 +430,7 @@ class BGMZone(BaseModel):
     min_duration: int = Field(120, ge=10, description="Minimum generated duration in seconds")
 
 
-class BGMMap(BaseModel):
+class BGMMap(StrictConfigModel):
     """Background music zone mapping."""
 
     zone_crossfade: float = Field(
@@ -397,7 +444,7 @@ class BGMMap(BaseModel):
 # ───────────────────────────────────────────
 
 
-class EncodeConfig(BaseModel):
+class EncodeConfig(StrictConfigModel):
     """Video encoding parameters."""
 
     width: int = Field(1920, ge=360, le=7680)
@@ -415,14 +462,14 @@ class EncodeConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class EndingLine(BaseModel):
+class EndingLine(StrictConfigModel):
     """A single line of text on the ending card."""
 
     text: str
     size: int = Field(36, ge=8, le=120)
 
 
-class EndingConfig(BaseModel):
+class EndingConfig(StrictConfigModel):
     """Ending card configuration."""
 
     enabled: bool = Field(True)
@@ -439,7 +486,7 @@ class EndingConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class BudgetConfig(BaseModel):
+class BudgetConfig(StrictConfigModel):
     """Cost estimation and budget controls."""
 
     total_usd: float = Field(10.0, ge=0.0)
@@ -457,7 +504,7 @@ class BudgetConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
-class NarrascapeConfig(BaseModel):
+class NarrascapeConfig(StrictConfigModel):
     """Root configuration model — validates entire config.yaml."""
 
     project: ProjectConfig
@@ -528,8 +575,6 @@ class NarrascapeConfig(BaseModel):
     @property
     def aspect_ratio(self) -> float:
         return self.encode.width / self.encode.height
-
-    model_config = ConfigDict(extra="forbid")
 
 
 # ───────────────────────────────────────────
@@ -710,10 +755,20 @@ def load_config(path: Path) -> NarrascapeConfig:
     # If path is a directory, look for config.yaml inside it
     if path.is_dir():
         path = path / "config.yaml"
-    data = load_yaml_mapping(path)
+    data = _expand_environment_values(load_yaml_mapping(path))
     cfg = NarrascapeConfig(**data)
     cfg.project_dir = path.parent
     return cfg
+
+
+def _expand_environment_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _expand_environment_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_environment_values(item) for item in value]
+    if isinstance(value, str):
+        return os.path.expandvars(value)
+    return value
 
 
 def load_script(path: Path) -> Script:

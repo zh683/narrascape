@@ -128,6 +128,7 @@ def _project(tmp_path: Path, *, with_images: bool) -> NarrascapeConfig:
     reference_plates = {
         "schema_version": "reference_plates.v1",
         "status": "ready",
+        "findings": [],
         "blocking": False,
         "plate_count": 2,
         "plates": [
@@ -255,6 +256,27 @@ def test_storyboard_sheet_renders_pdf_png_and_yaml(tmp_path):
         assert any(low != high for low, high in stat.extrema)
 
     assert pdf_path.read_bytes().startswith(b"%PDF")
+
+
+def test_storyboard_sheet_promotes_rendered_outputs_atomically(tmp_path, monkeypatch):
+    from narrascape.stages.storyboard_sheet import StoryboardSheetStage
+
+    config = _project(tmp_path, with_images=True)
+    promotions: list[Path] = []
+
+    def fake_atomic_promote_file(temp_path, path, *, lock=True):
+        promotions.append(Path(path))
+        Path(temp_path).replace(path)
+
+    monkeypatch.setattr(
+        "narrascape.stages.storyboard_sheet.atomic_promote_file", fake_atomic_promote_file
+    )
+
+    result = StoryboardSheetStage().run(_context(config))
+
+    assert result.success is True
+    assert config.pipeline_dir / "storyboard_sheet.png" in promotions
+    assert config.pipeline_dir / "storyboard_sheet.pdf" in promotions
 
 
 def test_storyboard_sheet_falls_back_when_preview_images_are_missing(tmp_path):

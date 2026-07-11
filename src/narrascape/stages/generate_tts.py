@@ -10,7 +10,6 @@ import json
 import logging
 import re
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,6 @@ from narrascape.providers import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
-from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_tts")
@@ -149,6 +147,11 @@ class GenerateTTSStage(Stage):
             merged_tone = self._merge_pronunciations(global_dict, seg.pronunciation)
 
             logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
+            per_tts = budget_tracker.get_cost_estimate("tts", 1)
+            reservation_id = f"generate_tts:{selection.tool.provider}:{sid}"
+            reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_tts)
+            if not reserved:
+                return StageResult(self.name, False, message=reserve_msg)
 
             payload = {
                 "model": tts_cfg.model,
@@ -184,16 +187,12 @@ class GenerateTTSStage(Stage):
                 req.add_header("Authorization", f"Bearer {self.api_key}")
                 req.add_header("Content-Type", "application/json")
 
-                r = retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=120).read().decode()),
-                    max_retries=3,
-                    base_delay=2.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                )
+                r = json.loads(urllib.request.urlopen(req, timeout=120).read().decode())
 
                 if r["base_resp"]["status_code"] != 0:
                     logger.error(f"FAIL: {r['base_resp']}")
                     state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                    budget_tracker.release_reservation(reservation_id)
                 else:
                     raw_hex = (
                         r["data"]["audio"]
@@ -207,11 +206,9 @@ class GenerateTTSStage(Stage):
                     done.add(sid)
                     state["done"] = list(done)
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
-                    # Record actual cost per successful TTS generation
-                    per_tts = budget_tracker.get_cost_estimate("tts", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_tts)
-                    if not spend_ok:
-                        return StageResult(self.name, False, message=spend_msg)
+                    committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                    if not committed:
+                        return StageResult(self.name, False, message=commit_msg)
             except Exception as e:
                 logger.error(f"FAIL: {e}")
                 state["errors"].append(f"seg_{sid}: {e}")
@@ -253,6 +250,11 @@ class GenerateTTSStage(Stage):
         return StageResult(
             self.name,
             len(errors) == 0,
+            outputs=[
+                *(tts_dir / f"seg_{seg.id:02d}.mp3" for seg in segments),
+                pipe_dir / "timing.json",
+                state_path,
+            ],
             message=f"{len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s",
             metadata={
                 "provider_selection": provider_meta,

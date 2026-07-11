@@ -36,6 +36,39 @@ def test_dashboard_extra_declares_streamlit_dependency():
     assert any(dep.startswith("streamlit") for dep in optional["dev"])
 
 
+def test_dashboard_cmd_accepts_project_short_option(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from narrascape.cli import app
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (project_dir / "config.yaml").write_text(
+        "project:\n"
+        "  name: dashboard-test\n"
+        "  title: Dashboard Test\n"
+        "  script_file: scripts/script.yaml\n",
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: object())
+
+    def fake_run(cmd, check, env):
+        calls.append((cmd, check, env))
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = CliRunner().invoke(app, ["dashboard", "-p", str(project_dir), "--port", "8600"])
+
+    assert result.exit_code == 0
+    assert calls
+    cmd, check, env = calls[0]
+    assert check is True
+    assert "--server.port" in cmd
+    assert cmd[cmd.index("--server.port") + 1] == "8600"
+    assert env["NARRASCAPE_DASHBOARD_PROJECT"] == str(project_dir.resolve())
+
+
 def test_docker_compose_default_command_exists():
     data = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
 
@@ -118,6 +151,114 @@ def test_clean_cmd_stage_cache_removes_cache_dir(tmp_path):
 
     assert result.exit_code == 0
     assert not cache_dir.exists()
+
+
+def test_clean_cmd_rejects_stage_path_traversal(tmp_path):
+    from typer.testing import CliRunner
+
+    from narrascape.cli import app
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    sentinel = project_dir / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    (project_dir / "config.yaml").write_text(
+        "project:\n"
+        "  name: clean-safety-test\n"
+        "  title: Clean Safety Test\n"
+        "  script_file: scripts/script.yaml\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["clean", "--project", str(project_dir), "--stage", "../.."])
+
+    assert result.exit_code != 0
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_clean_cmd_uses_stage_artifact_contract(tmp_path):
+    from typer.testing import CliRunner
+
+    from narrascape.cli import app
+
+    project_dir = tmp_path / "project"
+    pipeline_dir = project_dir / "pipeline" / "clean-stage-test"
+    pipeline_dir.mkdir(parents=True)
+    report = pipeline_dir / "render_report.yaml"
+    report.write_text("checks: []\n", encoding="utf-8")
+    (project_dir / "config.yaml").write_text(
+        "project:\n"
+        "  name: clean-stage-test\n"
+        "  title: Clean Stage Test\n"
+        "  script_file: scripts/script.yaml\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["clean", "-p", str(project_dir), "--stage", "qa"])
+
+    assert result.exit_code == 0
+    assert not report.exists()
+
+
+def test_approve_cmd_copies_script_with_atomic_copy(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from narrascape.cli import app
+
+    project_dir = tmp_path / "project"
+    scripts_dir = project_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    script_path = scripts_dir / "script.yaml"
+    script_path.write_text("segments:\n- id: 1\n  text: hi\n", encoding="utf-8")
+    (project_dir / ".approval_pending").write_text("pending\n", encoding="utf-8")
+    copies: list[tuple[Path, Path]] = []
+
+    def fake_atomic_copy_file(source, path):
+        copies.append((Path(source), Path(path)))
+        Path(path).write_text(Path(source).read_text(encoding="utf-8"), encoding="utf-8")
+
+    monkeypatch.setattr("narrascape.cli.atomic_copy_file", fake_atomic_copy_file)
+
+    result = CliRunner().invoke(app, ["approve", "--project", str(project_dir)])
+
+    assert result.exit_code == 0
+    assert copies == [(script_path, scripts_dir / "script_approved.yaml")]
+    assert not (project_dir / ".approval_pending").exists()
+
+
+def test_design_cmd_auto_approve_copies_script_with_atomic_copy(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from narrascape.cli import app
+
+    project_dir = tmp_path / "project"
+    scripts_dir = project_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    script_path = scripts_dir / "script.yaml"
+    script_path.write_text("segments:\n- id: 1\n  text: hi\n", encoding="utf-8")
+    (project_dir / "config.yaml").write_text(
+        "project:\n"
+        "  name: cli-design-test\n"
+        "  title: CLI Design Test\n"
+        "  script_file: scripts/script.yaml\n",
+        encoding="utf-8",
+    )
+    (project_dir / ".approval_pending").write_text("pending\n", encoding="utf-8")
+    copies: list[tuple[Path, Path]] = []
+
+    def fake_atomic_copy_file(source, path):
+        copies.append((Path(source), Path(path)))
+        Path(path).write_text(Path(source).read_text(encoding="utf-8"), encoding="utf-8")
+
+    monkeypatch.setattr("narrascape.cli.atomic_copy_file", fake_atomic_copy_file)
+
+    result = CliRunner().invoke(
+        app, ["design", "--project", str(project_dir), "--auto-approve", "--dry-run"]
+    )
+
+    assert result.exit_code == 0
+    assert copies == [(script_path, scripts_dir / "script_approved.yaml")]
+    assert not (project_dir / ".approval_pending").exists()
 
 
 def test_status_cmd_prints_rework_loop_summary(tmp_path):

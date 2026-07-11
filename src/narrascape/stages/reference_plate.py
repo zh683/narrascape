@@ -5,7 +5,7 @@ from typing import Any
 from narrascape.artifacts import validate_artifact
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ReferencePlateStage(Stage):
@@ -24,8 +24,8 @@ class ReferencePlateStage(Stage):
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         design = self._load_design(config)
-        pre_production = load_yaml_mapping(config.pipeline_dir / "pre_production.yaml")
-        director_contract = load_yaml_mapping(config.pipeline_dir / "director_contract.yaml")
+        pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")
+        director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         design_by_segment = self._design_by_segment(design)
 
         plates: list[dict[str, Any]] = []
@@ -85,7 +85,7 @@ class ReferencePlateStage(Stage):
             config.project_dir / "design_report.yaml",
         ):
             if path.exists():
-                return load_yaml_mapping(path)
+                return self._load_yaml(path)
         return {}
 
     def _design_by_segment(self, design: dict[str, Any]) -> dict[int, dict[str, Any]]:

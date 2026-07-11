@@ -5,7 +5,7 @@ from typing import Any
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
+from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping
 
 
 class FilmTimelineStage(Stage):
@@ -228,9 +228,7 @@ class FilmTimelineStage(Stage):
         )
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path or not path.exists():
-            return {}
-        return load_yaml_mapping(path, default={})
+        return super()._load_yaml(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={})

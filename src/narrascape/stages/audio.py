@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Any, TypedDict
 
 from narrascape.config import BGMMap, NarrascapeConfig, Script
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration, run_ffmpeg, run_ffmpeg_raw
-from narrascape.utils.safe_io import atomic_write_text
+from narrascape.utils.safe_io import atomic_copy_file, atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.audio")
 
@@ -70,7 +69,7 @@ class AudioStage(Stage):
                     validate_output=False,
                 )
             else:
-                shutil.copy(str(mixed_audio), str(audio_aligned))
+                atomic_copy_file(mixed_audio, audio_aligned)
                 logger.info(f"Audio OK: {audio_dur:.1f}s >= {need:.1f}s")
 
         # Ending volume envelope (optional, simplified)

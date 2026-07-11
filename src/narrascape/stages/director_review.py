@@ -3,10 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import yaml
-
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class DirectorReviewStage(Stage):
@@ -23,7 +21,7 @@ class DirectorReviewStage(Stage):
 
     def run(self, context: StageContext) -> StageResult:
         report_path = context.config.pipeline_dir / "render_report.yaml"
-        report = yaml.safe_load(report_path.read_text(encoding="utf-8")) or {}
+        report = self._load_yaml(report_path)
         checks = report.get("checks", {})
         queue = self._build_rework_queue(checks, context)
         status = "needs_rework" if queue or report.get("errors") else "approved"
@@ -34,7 +32,7 @@ class DirectorReviewStage(Stage):
             "notes": self._notes(report, queue),
         }
         output = context.config.pipeline_dir / "director_review.yaml"
-        atomic_write_yaml(output, review)
+        write_artifact("director_review", output, review)
         return StageResult(
             self.name,
             True,

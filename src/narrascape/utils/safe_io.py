@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import yaml
 
@@ -102,10 +102,50 @@ def atomic_write_json(path: Path, data: Any, *, lock: bool = True, indent: int |
 def atomic_write_yaml(path: Path, data: Any, *, lock: bool = True) -> None:
     atomic_write_text(
         path,
-        yaml.safe_dump(data, sort_keys=False),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
         lock=lock,
     )
+
+
+def open_append_text(path: Path, *, encoding: str = "utf-8", buffering: int = 1) -> TextIO:
+    """Open an append-only operational log outside the atomic artifact write path."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return open(target, "a", encoding=encoding, buffering=buffering)
+
+
+def atomic_copy_file(
+    source: Path,
+    path: Path,
+    *,
+    lock: bool = True,
+    min_free_mb: float = 64.0,
+) -> None:
+    """Copy a local file through a sibling temp file, then atomically promote it."""
+
+    src = Path(source)
+    target = Path(path)
+    ensure_min_free_space(target, min_free_mb=min_free_mb, purpose=f"copy {target.name}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if lock:
+        with file_lock(target):
+            _atomic_copy_file_unlocked(src, target)
+    else:
+        _atomic_copy_file_unlocked(src, target)
+
+
+def atomic_promote_file(temp_path: Path, path: Path, *, lock: bool = True) -> None:
+    """Atomically promote an already-written local file to the final path."""
+
+    tmp = Path(temp_path)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if lock:
+        with file_lock(target):
+            _replace_with_retry(tmp, target)
+    else:
+        _replace_with_retry(tmp, target)
 
 
 def update_json_mapping(
@@ -219,7 +259,7 @@ def download_to_path(
         if expected_content_prefixes:
             _validate_download_signature(tmp, expected_content_prefixes)
         with file_lock(target):
-            os.replace(tmp, target)
+            atomic_promote_file(tmp, target, lock=False)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
@@ -261,6 +301,19 @@ def _atomic_write_bytes_unlocked(path: Path, data: bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        _replace_with_retry(tmp, target)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_copy_file_unlocked(source: Path, target: Path) -> None:
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.copy")
+    try:
+        with open(source, "rb") as src_fh, open(tmp, "wb") as dst_fh:
+            shutil.copyfileobj(src_fh, dst_fh, length=1024 * 1024)
+            dst_fh.flush()
+            os.fsync(dst_fh.fileno())
         _replace_with_retry(tmp, target)
     except Exception:
         tmp.unlink(missing_ok=True)

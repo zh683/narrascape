@@ -1,40 +1,55 @@
-# Dockerfile for narrascape
-# Provides a complete environment with FFmpeg, Python, and all dependencies
+FROM python:3.13-slim AS wheel-builder
 
-FROM python:3.12-slim
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip wheel --no-cache-dir --wheel-dir /wheels ".[dashboard,workbench]"
+
+
+FROM python:3.13-slim AS runtime
 
 LABEL maintainer="narrascape"
-LABEL description="Narrascape video pipeline container"
+LABEL description="Narrascape AI film-production pipeline"
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    ffprobe \
-    fonts-noto-cjk \
-    fonts-dejavu \
-    curl \
     ca-certificates \
+    ffmpeg \
+    fonts-dejavu \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+COPY --from=wheel-builder /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels \
+        "narrascape[dashboard,workbench]" \
+    && rm -rf /wheels \
+    && ffmpeg -version \
+    && ffprobe -version \
+    && narrascape --help
+
 WORKDIR /app
+RUN useradd --create-home --uid 10001 narrascape \
+    && mkdir -p /app/projects /app/output \
+    && chown -R narrascape:narrascape /app
 
-# Copy project files
-COPY pyproject.toml ./
-COPY README.md ./
-COPY src/ ./src/
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NARRASCAPE_FFMPEG=/usr/bin/ffmpeg \
+    NARRASCAPE_FFPROBE=/usr/bin/ffprobe
 
-# Install Python dependencies, including the optional Streamlit dashboard.
-RUN pip install --no-cache-dir -e ".[dev,dashboard]"
-
-# Create directories for project assets
-RUN mkdir -p /app/projects /app/output
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV NARRASCAPE_FFMPEG=/usr/bin/ffmpeg
-
-# Default entrypoint
+USER narrascape
 ENTRYPOINT ["narrascape"]
 CMD ["--help"]
+
+
+FROM runtime AS development
+
+USER root
+COPY . /app
+RUN python -m pip install --no-cache-dir -e ".[dev,dashboard,workbench]"
+USER narrascape
+ENTRYPOINT []
+CMD ["pytest", "-q", "--tb=short", "--no-cov"]
+
+
+FROM runtime AS production

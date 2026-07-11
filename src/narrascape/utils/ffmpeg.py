@@ -12,10 +12,13 @@ import os
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+from narrascape.utils.safe_io import atomic_promote_file
 
 logger = logging.getLogger("narrascape.ffmpeg")
 
@@ -26,6 +29,8 @@ logger = logging.getLogger("narrascape.ffmpeg")
 
 _FFMPEG_EXE: Path | None = None
 _FFPROBE_EXE: Path | None = None
+DEFAULT_FFPROBE_TIMEOUT = int(os.environ.get("NARRASCAPE_FFPROBE_TIMEOUT", "30"))
+DEFAULT_FFMPEG_TIMEOUT = int(os.environ.get("NARRASCAPE_FFMPEG_TIMEOUT", "1800"))
 _MEDIA_EXTENSIONS = (
     ".mp4",
     ".mp3",
@@ -157,7 +162,7 @@ def find_ffprobe() -> Path:
 # ═══════════════════════════════════════════
 
 
-def get_duration(path: Path) -> float:
+def get_duration(path: Path, *, timeout: int | None = None) -> float:
     """Get media duration in seconds using ffprobe."""
     probe = find_ffprobe()
     media_path = safe_media_arg(path)
@@ -174,6 +179,7 @@ def get_duration(path: Path) -> float:
         ],
         capture_output=True,
         text=True,
+        timeout=DEFAULT_FFPROBE_TIMEOUT if timeout is None else timeout,
     )
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(f"Cannot get duration for {path}: {r.stderr}")
@@ -189,7 +195,7 @@ def get_duration(path: Path) -> float:
     return duration
 
 
-def get_media_info(path: Path) -> dict[str, Any]:
+def get_media_info(path: Path, *, timeout: int | None = None) -> dict[str, Any]:
     """Get comprehensive media metadata as JSON."""
     probe = find_ffprobe()
     media_path = safe_media_arg(path)
@@ -206,6 +212,7 @@ def get_media_info(path: Path) -> dict[str, Any]:
         ],
         capture_output=True,
         text=True,
+        timeout=DEFAULT_FFPROBE_TIMEOUT if timeout is None else timeout,
     )
     if r.returncode != 0:
         raise RuntimeError(f"ffprobe failed for {path}: {r.stderr}")
@@ -256,23 +263,16 @@ def run_ffmpeg(
         desc: Human-readable description for logging
         retries: Number of retry attempts on failure
         validate_output: Whether to ffprobe-validate the output file
-        timeout: Max execution time in seconds (None = no limit)
+        timeout: Max execution time in seconds (None uses the bounded project default)
         capture_output: Whether to capture stdout/stderr
 
     Returns:
         True if successful, False otherwise
     """
     ffmpeg = find_ffmpeg()
-    normalized_args = _normalize_ffmpeg_args(args)
+    normalized_args, output_path, temporary_path = _atomic_output_args(args)
     cmd = [str(ffmpeg), "-y"] + normalized_args
-
-    # Detect output file path from args
-    output_path: Path | None = None
-    for i in range(len(normalized_args) - 1, -1, -1):
-        a = normalized_args[i]
-        if not a.startswith("-") and _is_media_path(a):
-            output_path = Path(a)
-            break
+    effective_timeout = DEFAULT_FFMPEG_TIMEOUT if timeout is None else timeout
 
     for attempt in range(retries + 1):
         logger.info(f"[ffmpeg] {desc or 'cmd'} (attempt {attempt + 1}/{retries + 1})")
@@ -283,16 +283,18 @@ def run_ffmpeg(
                 cmd,
                 capture_output=capture_output,
                 text=capture_output,
-                timeout=timeout,
+                timeout=effective_timeout,
             )
         except subprocess.TimeoutExpired:
-            logger.error(f"[ffmpeg] TIMEOUT after {timeout}s: {desc}")
+            _remove_temporary_output(temporary_path)
+            logger.error(f"[ffmpeg] TIMEOUT after {effective_timeout}s: {desc}")
             if attempt < retries:
                 time.sleep(1)
                 continue
             return False
 
         if result.returncode != 0:
+            _remove_temporary_output(temporary_path)
             stderr = (result.stderr or "")[:500] if capture_output else "(output not captured)"
             logger.error(f"[ffmpeg] ERROR: {stderr}")
             if attempt < retries:
@@ -304,15 +306,21 @@ def run_ffmpeg(
         elapsed = time.monotonic() - start
 
         # Validate output
-        if validate_output and output_path and output_path.exists():
-            if not validate_video(output_path):
-                logger.error(f"[ffmpeg] Output validation failed: {output_path.name}")
+        produced_path = temporary_path or output_path
+        if validate_output and produced_path is not None:
+            output_name = (output_path or produced_path).name
+            if not _validate_media_output(produced_path):
+                _remove_temporary_output(temporary_path)
+                logger.error(f"[ffmpeg] Output validation failed: {output_name}")
                 if attempt < retries:
                     continue
                 return False
-            logger.info(f"[ffmpeg] OK {elapsed:.1f}s: {output_path.name}")
+            logger.info(f"[ffmpeg] OK {elapsed:.1f}s: {output_name}")
         else:
             logger.info(f"[ffmpeg] OK {elapsed:.1f}s: {desc}")
+
+        if temporary_path is not None and output_path is not None:
+            atomic_promote_file(temporary_path, output_path)
 
         return True
 
@@ -324,8 +332,16 @@ def run_ffmpeg_silent(
 ) -> subprocess.CompletedProcess[str]:
     """Run ffmpeg silently, returning the full result. For internal use."""
     ffmpeg = find_ffmpeg()
-    cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + _normalize_ffmpeg_args(args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    normalized, output_path, temporary_path = _atomic_output_args(args)
+    cmd = [str(ffmpeg), "-y", "-loglevel", "error"] + normalized
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=DEFAULT_FFMPEG_TIMEOUT if timeout is None else timeout,
+    )
+    _promote_completed_output(result, output_path, temporary_path)
+    return result
 
 
 def run_ffmpeg_raw(
@@ -336,8 +352,62 @@ def run_ffmpeg_raw(
 ) -> subprocess.CompletedProcess[str]:
     """Run ffmpeg with normalized media path arguments and return process output."""
     ffmpeg = find_ffmpeg()
-    cmd = [str(ffmpeg), "-y", "-loglevel", loglevel] + _normalize_ffmpeg_args(args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    normalized, output_path, temporary_path = _atomic_output_args(args)
+    cmd = [str(ffmpeg), "-y", "-loglevel", loglevel] + normalized
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=DEFAULT_FFMPEG_TIMEOUT if timeout is None else timeout,
+    )
+    _promote_completed_output(result, output_path, temporary_path)
+    return result
+
+
+def _atomic_output_args(args: list[str]) -> tuple[list[str], Path | None, Path | None]:
+    normalized = _normalize_ffmpeg_args(args)
+    if not normalized or not _is_media_path(normalized[-1]):
+        return normalized, None, None
+    output_path = Path(normalized[-1])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex}.render{output_path.suffix}"
+    )
+    normalized[-1] = safe_output_arg(temporary_path)
+    return normalized, output_path, temporary_path
+
+
+def _validate_media_output(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+        try:
+            from PIL import Image
+
+            with Image.open(path) as image:
+                image.verify()
+            return True
+        except Exception:
+            return False
+    return validate_video(path)
+
+
+def _remove_temporary_output(path: Path | None) -> None:
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
+def _promote_completed_output(
+    result: subprocess.CompletedProcess[str],
+    output_path: Path | None,
+    temporary_path: Path | None,
+) -> None:
+    if temporary_path is None or output_path is None:
+        return
+    if result.returncode == 0 and _validate_media_output(temporary_path):
+        atomic_promote_file(temporary_path, output_path)
+        return
+    _remove_temporary_output(temporary_path)
 
 
 # ═══════════════════════════════════════════

@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
@@ -235,9 +233,7 @@ class ScriptSceneDirectorStage(Stage):
         return max(set(emotions), key=emotions.count) if emotions else "neutral"
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return super()._load_yaml(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():

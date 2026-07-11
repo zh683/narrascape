@@ -34,12 +34,13 @@ Usage in Pipeline.run():
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from narrascape.stages.base import StageResult
-from narrascape.utils.safe_io import atomic_write_text
+from narrascape.utils.safe_io import atomic_write_text, file_lock
 
 logger = logging.getLogger("narrascape.approval")
 
@@ -56,30 +57,39 @@ class PipelineApproval:
         self.approvals_dir = self.pipeline_dir / "approvals"
         self.approvals_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _validate_stage_name(stage_name: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", stage_name):
+            raise ValueError(f"Invalid stage name: {stage_name!r}")
+        return stage_name
+
+    def _status_path(self, stage_name: str, status: str) -> Path:
+        stage = self._validate_stage_name(stage_name)
+        return self.approvals_dir / f"{stage}.{status}"
+
     # ── Status checks ───────────────────────────────────────────────
 
     def is_pending(self, stage_name: str) -> bool:
-        return (self.approvals_dir / f"{stage_name}.pending").exists()
+        return self._status_path(stage_name, "pending").exists()
 
     def is_approved(self, stage_name: str) -> bool:
-        return (self.approvals_dir / f"{stage_name}.approved").exists()
+        return self._status_path(stage_name, "approved").exists()
 
     def is_rejected(self, stage_name: str) -> bool:
-        return (self.approvals_dir / f"{stage_name}.rejected").exists()
+        return self._status_path(stage_name, "rejected").exists()
 
     def is_skipped(self, stage_name: str) -> bool:
-        return (self.approvals_dir / f"{stage_name}.skipped").exists()
+        return self._status_path(stage_name, "skipped").exists()
 
     def get_status(self, stage_name: str) -> str:
         """Return one of: pending, approved, rejected, skipped, unknown."""
-        if self.is_approved(stage_name):
-            return "approved"
-        if self.is_rejected(stage_name):
-            return "rejected"
-        if self.is_skipped(stage_name):
-            return "skipped"
-        if self.is_pending(stage_name):
-            return "pending"
+        candidates = [
+            (status, self._status_path(stage_name, status))
+            for status in ("pending", "approved", "rejected", "skipped")
+        ]
+        existing = [(status, path) for status, path in candidates if path.exists()]
+        if existing:
+            return max(existing, key=lambda item: item[1].stat().st_mtime_ns)[0]
         return "unknown"
 
     # ── Request review ──────────────────────────────────────────────
@@ -99,10 +109,10 @@ class PipelineApproval:
         - Key metrics
         - Instructions for how to approve/reject
         """
-        pending_file = self.approvals_dir / f"{stage_name}.pending"
+        pending_file = self._status_path(stage_name, "pending")
         review_content = self._format_review_request(stage_name, stage_result, assets)
 
-        atomic_write_text(pending_file, review_content)
+        self._replace_status(stage_name, "pending", review_content)
 
         logger.info(f"[approval] Created review request: {pending_file}")
 
@@ -172,8 +182,6 @@ class PipelineApproval:
 
     def approve(self, stage_name: str, reviewer: str = "human", notes: str = "") -> None:
         """Mark a stage as approved."""
-        self._clear_status_files(stage_name)
-        approved_file = self.approvals_dir / f"{stage_name}.approved"
         content = [
             f"stage: {stage_name}",
             "status: approved",
@@ -182,13 +190,11 @@ class PipelineApproval:
         ]
         if notes:
             content.append(f"notes: {notes}")
-        atomic_write_text(approved_file, "\n".join(content) + "\n")
+        self._replace_status(stage_name, "approved", "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' approved by {reviewer}")
 
     def reject(self, stage_name: str, reviewer: str = "human", notes: str = "") -> None:
         """Mark a stage as rejected."""
-        self._clear_status_files(stage_name)
-        rejected_file = self.approvals_dir / f"{stage_name}.rejected"
         content = [
             f"stage: {stage_name}",
             "status: rejected",
@@ -197,13 +203,11 @@ class PipelineApproval:
         ]
         if notes:
             content.append(f"notes: {notes}")
-        atomic_write_text(rejected_file, "\n".join(content) + "\n")
+        self._replace_status(stage_name, "rejected", "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' rejected by {reviewer}")
 
     def skip(self, stage_name: str, reviewer: str = "human", notes: str = "") -> None:
         """Mark a stage as explicitly skipped."""
-        self._clear_status_files(stage_name)
-        skipped_file = self.approvals_dir / f"{stage_name}.skipped"
         content = [
             f"stage: {stage_name}",
             "status: skipped",
@@ -212,18 +216,32 @@ class PipelineApproval:
         ]
         if notes:
             content.append(f"notes: {notes}")
-        atomic_write_text(skipped_file, "\n".join(content) + "\n")
+        self._replace_status(stage_name, "skipped", "\n".join(content) + "\n")
         logger.info(f"[approval] Stage '{stage_name}' skipped by {reviewer}")
 
     def _clear_status_files(self, stage_name: str) -> None:
         """Remove all status files for a stage."""
+        self._validate_stage_name(stage_name)
+        with file_lock(self.approvals_dir / f".{stage_name}.status"):
+            self._clear_status_files_unlocked(stage_name)
+
+    def _clear_status_files_unlocked(self, stage_name: str, *, keep: str = "") -> None:
         for suffix in (".pending", ".approved", ".rejected", ".skipped"):
+            if suffix == f".{keep}":
+                continue
             f = self.approvals_dir / f"{stage_name}{suffix}"
             if f.exists():
                 try:
                     f.unlink()
                 except OSError as exc:
                     logger.warning(f"[approval] Could not remove {f}: {exc}")
+
+    def _replace_status(self, stage_name: str, status: str, content: str) -> None:
+        self._validate_stage_name(stage_name)
+        target = self._status_path(stage_name, status)
+        with file_lock(self.approvals_dir / f".{stage_name}.status"):
+            atomic_write_text(target, content, lock=False)
+            self._clear_status_files_unlocked(stage_name, keep=status)
 
     # ── Interactive prompt ─────────────────────────────────────────
 

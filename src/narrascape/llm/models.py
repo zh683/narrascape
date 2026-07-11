@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, cast
 
 logger = logging.getLogger("narrascape.llm.models")
@@ -46,6 +47,11 @@ class LLMConfig:
     retry_delay: float = 2.0
     system_prompt: str | None = None
     json_mode: bool = False  # Force JSON output if provider supports it
+    log_enabled: bool = True
+    log_max_entries: int = 100
+    log_max_text_chars: int = 2000
+    log_include_parsed_output: bool = False
+    log_persist_path: Path | None = None
 
     def copy(self, **overrides: Any) -> LLMConfig:
         """Create a copy with overrides."""
@@ -73,6 +79,13 @@ class LLMConfig:
             retry_delay=overrides.get("retry_delay", self.retry_delay),
             system_prompt=overrides.get("system_prompt", self.system_prompt),
             json_mode=overrides.get("json_mode", self.json_mode),
+            log_enabled=overrides.get("log_enabled", self.log_enabled),
+            log_max_entries=overrides.get("log_max_entries", self.log_max_entries),
+            log_max_text_chars=overrides.get("log_max_text_chars", self.log_max_text_chars),
+            log_include_parsed_output=overrides.get(
+                "log_include_parsed_output", self.log_include_parsed_output
+            ),
+            log_persist_path=overrides.get("log_persist_path", self.log_persist_path),
         )
 
 
@@ -319,7 +332,7 @@ class LLMCallLog:
             "timestamp": self.timestamp,
             "template_name": self.template_name,
             "messages": self.messages,
-            "response": self.response[:500] if len(self.response) > 500 else self.response,
+            "response": self.response,
             "parsed_output": self.parsed_output,
             "success": self.success,
             "error": self.error,

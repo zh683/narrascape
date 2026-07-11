@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
+from narrascape.artifacts import load_artifact_file
 from narrascape.cache import BuildCache
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
@@ -14,6 +16,7 @@ from narrascape.config import (
     load_script,
 )
 from narrascape.pipeline_approval import PipelineApproval
+from narrascape.stage_contracts import stage_input_patterns, stage_output_patterns
 from narrascape.stages.animatic import AnimaticStage
 from narrascape.stages.assistant_handoff import AssistantHandoffStage
 from narrascape.stages.audio import AudioRemixStage, AudioStage
@@ -52,8 +55,8 @@ from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
 from narrascape.stages.write import WriteStage
 from narrascape.utils.safe_io import (
     atomic_write_json,
+    file_lock,
     load_json_mapping,
-    load_yaml_mapping,
     update_json_mapping,
 )
 
@@ -209,7 +212,13 @@ class PipelineState:
     def _load(self) -> dict[str, Any]:
         return load_json_mapping(
             self.state_path,
-            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+            default={
+                "version": "2.0",
+                "stages": {},
+                "segments": {},
+                "stage_outputs": {},
+                "stage_fingerprints": {},
+            },
         )
 
     def save(self) -> None:
@@ -223,12 +232,19 @@ class PipelineState:
             data.setdefault("version", "2.0")
             data.setdefault("segments", {})
             data.setdefault("stage_outputs", {})
+            data.setdefault("stage_fingerprints", {})
             data.setdefault("stages", {})[name] = status
 
         self.data = update_json_mapping(
             self.state_path,
             update,
-            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+            default={
+                "version": "2.0",
+                "stages": {},
+                "segments": {},
+                "stage_outputs": {},
+                "stage_fingerprints": {},
+            },
         )
 
     def set_stage_outputs(self, name: str, outputs: list[str]) -> None:
@@ -236,12 +252,19 @@ class PipelineState:
             data.setdefault("version", "2.0")
             data.setdefault("stages", {})
             data.setdefault("segments", {})
+            data.setdefault("stage_fingerprints", {})
             data.setdefault("stage_outputs", {})[name] = outputs
 
         self.data = update_json_mapping(
             self.state_path,
             update,
-            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+            default={
+                "version": "2.0",
+                "stages": {},
+                "segments": {},
+                "stage_outputs": {},
+                "stage_fingerprints": {},
+            },
         )
 
     def clear_stage_outputs(self, name: str) -> None:
@@ -249,12 +272,19 @@ class PipelineState:
             data.setdefault("version", "2.0")
             data.setdefault("stages", {})
             data.setdefault("segments", {})
+            data.setdefault("stage_fingerprints", {})
             data.setdefault("stage_outputs", {}).pop(name, None)
 
         self.data = update_json_mapping(
             self.state_path,
             update,
-            default={"version": "2.0", "stages": {}, "segments": {}, "stage_outputs": {}},
+            default={
+                "version": "2.0",
+                "stages": {},
+                "segments": {},
+                "stage_outputs": {},
+                "stage_fingerprints": {},
+            },
         )
 
     def get_stage_outputs(self, name: str) -> list[str]:
@@ -263,6 +293,31 @@ class PipelineState:
 
     def is_completed(self, name: str) -> bool:
         return self.get_stage_status(name) == "completed"
+
+    def get_stage_fingerprint(self, name: str) -> str:
+        return str(self.data.get("stage_fingerprints", {}).get(name, ""))
+
+    def complete_stage(self, name: str, outputs: list[str], fingerprint: str) -> None:
+        """Commit completion state, output contract, and input fingerprint atomically."""
+
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", "2.0")
+            data.setdefault("segments", {})
+            data.setdefault("stages", {})[name] = "completed"
+            data.setdefault("stage_outputs", {})[name] = outputs
+            data.setdefault("stage_fingerprints", {})[name] = fingerprint
+
+        self.data = update_json_mapping(
+            self.state_path,
+            update,
+            default={
+                "version": "2.0",
+                "stages": {},
+                "segments": {},
+                "stage_outputs": {},
+                "stage_fingerprints": {},
+            },
+        )
 
 
 # ═══════════════════════════════════════════
@@ -284,6 +339,7 @@ class Pipeline:
         llm_client: Any = None,
         image_api_key: str | None = None,
         minimax_api_key: str | None = None,
+        run_lock_timeout: float = 0.1,
     ):
         self.config = config
         self.dry_run = dry_run
@@ -299,11 +355,16 @@ class Pipeline:
             )
         self.image_api_key = image_api_key
         self.minimax_api_key = minimax_api_key
+        self.run_lock_timeout = run_lock_timeout
         # Script may not exist yet (research/write stages create it)
         self.script = self._load_script()
         self.cache = BuildCache(config.pipeline_dir / ".cache")
         self.state = PipelineState(config.pipeline_dir / "state.json")
         self.approval = PipelineApproval(config.pipeline_dir)
+
+    @property
+    def run_lock_path(self) -> Path:
+        return self.config.project_dir / ".narrascape" / f"{self.config.project.name}.pipeline-run"
 
     def _load_script(self) -> Script:
         """Load script if it exists, otherwise return empty placeholder."""
@@ -433,6 +494,10 @@ class Pipeline:
         Returns:
             Dictionary of stage name -> result
         """
+        with file_lock(self.run_lock_path, timeout=self.run_lock_timeout, stale_after=6 * 60 * 60):
+            return self._run_locked(stages)
+
+    def _run_locked(self, stages: list[str] | None = None) -> dict[str, StageResult]:
         default_run = stages is None
         if stages is None:
             stages = self._default_stages()
@@ -522,6 +587,7 @@ class Pipeline:
 
             # ── Check approval gate ──
             approval_status = self.approval.get_status(stage_name)
+            stage_fingerprint = self._stage_fingerprint(stage)
             if approval_status == "rejected":
                 logger.error(
                     f"[{stage_name}] Previously rejected. Fix and retry, or run: narrascape approve -p . -s {stage_name}"
@@ -540,7 +606,30 @@ class Pipeline:
                 and self.state.is_completed(stage_name)
                 and approval_status in ("approved", "skipped")
             ):
-                if not self._completed_outputs_present(stage_name, stage):
+                strict_ok, strict_reason = self._strict_director_check(stage_name)
+                if not strict_ok:
+                    result = StageResult(
+                        stage_name,
+                        False,
+                        message=strict_reason,
+                        metadata={
+                            "strict_director": True,
+                            "strict_director_reason": strict_reason,
+                            "cached_artifact": True,
+                        },
+                    )
+                    results[stage_name] = result
+                    self.state.set_stage_status(stage_name, "failed")
+                    logger.error(f"[{stage_name}] Failed: {result.message}")
+                    self._mark_remaining_pending(execution_order, stage_name)
+                    break
+                if self.state.get_stage_fingerprint(stage_name) != stage_fingerprint:
+                    logger.warning(
+                        f"[{stage_name}] Completed state ignored because inputs or config changed"
+                    )
+                    self.state.set_stage_status(stage_name, "pending")
+                    self.approval._clear_status_files(stage_name)
+                elif not self._completed_outputs_present(stage_name, stage):
                     logger.warning(
                         f"[{stage_name}] Completed state ignored because recorded outputs are missing"
                     )
@@ -550,23 +639,6 @@ class Pipeline:
                     logger.info(
                         f"[{stage_name}] Already completed and approved (skip with --force to rebuild)"
                     )
-                    strict_ok, strict_reason = self._strict_director_check(stage_name)
-                    if not strict_ok:
-                        result = StageResult(
-                            stage_name,
-                            False,
-                            message=strict_reason,
-                            metadata={
-                                "strict_director": True,
-                                "strict_director_reason": strict_reason,
-                                "cached_artifact": True,
-                            },
-                        )
-                        results[stage_name] = result
-                        self.state.set_stage_status(stage_name, "failed")
-                        logger.error(f"[{stage_name}] Failed: {result.message}")
-                        self._mark_remaining_pending(execution_order, stage_name)
-                        break
                     results[stage_name] = StageResult(
                         stage_name, True, message="skipped (cached + approved)"
                     )
@@ -627,8 +699,11 @@ class Pipeline:
             results[stage_name] = result
 
             if result.success:
-                self.state.set_stage_status(stage_name, "completed")
-                self.state.set_stage_outputs(stage_name, self._recordable_outputs(result))
+                self.state.complete_stage(
+                    stage_name,
+                    self._recordable_outputs(result),
+                    self._stage_fingerprint(stage),
+                )
                 logger.info(f"[{stage_name}] Completed in {result.duration_seconds:.1f}s")
                 if stage_name in ("write", "humanize") and self.config.script_path.exists():
                     self.script = self._load_script()
@@ -638,6 +713,7 @@ class Pipeline:
                 if self.interactive and self.console:
                     # Interactive mode: pause for user approval
                     # Use a loop to handle retry multiple times
+                    retry_failed = False
                     while True:
                         action = self.approval.prompt_interactive(stage_name, result, self.console)
                         if action == "rejected":
@@ -647,7 +723,7 @@ class Pipeline:
                         elif action == "retry":
                             # Remove approval files and retry this stage
                             self.approval._clear_status_files(stage_name)
-                            self.state.set_stage_status(stage_name, "pending")
+                            self.state.set_stage_status(stage_name, "running")
                             # Retry: create a new stage instance and re-run
                             logger.info(f"[{stage_name}] Retrying...")
                             stage = self._create_stage(stage_cls)
@@ -664,10 +740,32 @@ class Pipeline:
                                     duration_seconds=time.monotonic() - retry_start,
                                 )
                             results[stage_name] = result
+                            if result.success:
+                                strict_ok, strict_reason = self._strict_director_check(stage_name)
+                                if not strict_ok:
+                                    result = StageResult(
+                                        stage_name,
+                                        False,
+                                        outputs=result.outputs,
+                                        message=strict_reason,
+                                        duration_seconds=result.duration_seconds,
+                                        metadata={
+                                            **result.metadata,
+                                            "strict_director": True,
+                                            "strict_director_reason": strict_reason,
+                                        },
+                                    )
+                                    results[stage_name] = result
                             if not result.success:
                                 self.state.set_stage_status(stage_name, "failed")
+                                self._mark_remaining_pending(execution_order, stage_name)
+                                retry_failed = True
                                 break  # Retry failed, stop
-                            self.state.set_stage_status(stage_name, "completed")
+                            self.state.complete_stage(
+                                stage_name,
+                                self._recordable_outputs(result),
+                                self._stage_fingerprint(stage),
+                            )
                             logger.info(
                                 f"[{stage_name}] Retry completed in {result.duration_seconds:.1f}s"
                             )
@@ -676,6 +774,8 @@ class Pipeline:
                     if action == "rejected":
                         self.state.set_stage_status(stage_name, "pending")
                         break  # Stop pipeline
+                    if retry_failed:
+                        break
                     # If action is approved/skipped, continue to next stage
                 elif not self.auto_approve:
                     # Non-interactive, no auto-approve: create review request and stop
@@ -696,6 +796,57 @@ class Pipeline:
                     break
 
         return results
+
+    def _stage_fingerprint(self, stage: Stage) -> str:
+        """Fingerprint configuration, script, stage code, and dependency outputs."""
+        digest = hashlib.sha256()
+        digest.update(stage.name.encode("utf-8"))
+        digest.update(self.config.model_dump_json().encode("utf-8"))
+        self._update_path_fingerprint(digest, self.config.script_path)
+
+        stage_file = Path(type(stage).__module__.replace(".", "/") + ".py")
+        source_path = Path(__file__).resolve().parents[1] / stage_file
+        self._update_path_fingerprint(digest, source_path)
+
+        for dependency in sorted(stage.depends_on):
+            digest.update(dependency.encode("utf-8"))
+            for output in sorted(self.state.get_stage_outputs(dependency)):
+                self._update_path_fingerprint(digest, Path(output))
+        for input_path in self._expected_stage_inputs(stage):
+            self._update_path_fingerprint(digest, input_path)
+        return digest.hexdigest()
+
+    def _update_path_fingerprint(self, digest: Any, path: Path) -> None:
+        resolved = Path(path)
+        digest.update(str(resolved).encode("utf-8"))
+        if not resolved.exists():
+            digest.update(b"missing")
+            return
+        if resolved.is_dir():
+            for child in sorted(item for item in resolved.rglob("*") if item.is_file()):
+                self._update_path_fingerprint(digest, child)
+            return
+        size = resolved.stat().st_size
+        digest.update(str(size).encode("ascii"))
+        with resolved.open("rb") as fh:
+            if size <= 8 * 1024 * 1024:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            else:
+                digest.update(fh.read(1024 * 1024))
+                fh.seek(max(0, size - 1024 * 1024))
+                digest.update(fh.read(1024 * 1024))
+
+    def _expected_stage_inputs(self, stage: Stage) -> list[Path]:
+        result: list[Path] = []
+        patterns = [*(getattr(stage, "inputs", []) or []), *stage_input_patterns(stage.name)]
+        for item in patterns:
+            text = str(item).format(name=self.config.project.name)
+            path = Path(text)
+            if not path.is_absolute():
+                path = self.config.project_dir / path
+            result.append(path)
+        return result
 
     def _can_skip_optional_stage(self, stage_name: str, reason: str) -> bool:
         if self.config.pipeline.video_generation == "required":
@@ -723,7 +874,7 @@ class Pipeline:
                 f"{stage_name}: missing director artifact {path.as_posix()}"
             )
         try:
-            artifact = load_yaml_mapping(path)
+            artifact = load_artifact_file(path)
         except Exception as exc:
             return False, (
                 "Strict director mode rejected "
@@ -780,7 +931,7 @@ class Pipeline:
             return []
 
         try:
-            data = load_yaml_mapping(path)
+            data = load_artifact_file(path)
         except Exception as exc:
             logger.warning(f"Could not read film_supervisor.yaml: {exc}")
             return []
@@ -824,11 +975,12 @@ class Pipeline:
         expected = self._expected_stage_outputs(stage)
         if expected:
             return all(path.exists() for path in expected)
-        return True
+        return False
 
     def _expected_stage_outputs(self, stage: Stage) -> list[Path]:
         result: list[Path] = []
-        for item in getattr(stage, "outputs", []) or []:
+        patterns = [*(getattr(stage, "outputs", []) or []), *stage_output_patterns(stage.name)]
+        for item in patterns:
             text = str(item)
             if not text or text.endswith("/"):
                 continue
@@ -890,6 +1042,27 @@ class Pipeline:
 
     def clean(self, stages: list[str] | None = None) -> None:
         """Remove intermediate artifacts for given stages."""
+        with file_lock(self.run_lock_path, timeout=self.run_lock_timeout, stale_after=6 * 60 * 60):
+            self._clean_locked(stages)
+
+    def clean_all(self) -> None:
+        """Remove all pipeline runtime state while holding the project execution lock."""
+        import shutil
+
+        with file_lock(self.run_lock_path, timeout=self.run_lock_timeout, stale_after=6 * 60 * 60):
+            if self.config.pipeline_dir.exists():
+                shutil.rmtree(self.config.pipeline_dir)
+
+    def clean_cache(self) -> None:
+        """Remove the build cache while holding the project execution lock."""
+        import shutil
+
+        with file_lock(self.run_lock_path, timeout=self.run_lock_timeout, stale_after=6 * 60 * 60):
+            cache_dir = self.config.pipeline_dir / ".cache"
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+
+    def _clean_locked(self, stages: list[str] | None = None) -> None:
         stage_map = get_stage_map()
         dirs_to_clean = []
         if stages is None or "kenburns" in stages:

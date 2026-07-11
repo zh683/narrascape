@@ -118,6 +118,46 @@ class TestBudgetTracker:
             assert "CAP exceeded" in msg
             assert json.loads(state_path.read_text(encoding="utf-8"))["spent"] == 0.7
 
+    def test_reserve_prevents_concurrent_cap_overrun(self, tmp_path):
+        state_path = tmp_path / "budget_state.json"
+        config = BudgetConfig(total_usd=1.0, mode="cap")
+        first = BudgetTracker(config, state_path)
+        second = BudgetTracker(config, state_path)
+
+        allowed, _ = first.reserve("video:1", 0.7)
+        blocked, message = second.reserve("video:2", 0.7)
+
+        assert allowed is True
+        assert blocked is False
+        assert "reserved" in message.lower() or "CAP exceeded" in message
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["spent"] == 0.0
+        assert state["reservations"] == {"video:1": 0.7}
+
+    def test_commit_reservation_moves_amount_to_spent(self, tmp_path):
+        state_path = tmp_path / "budget_state.json"
+        budget = BudgetTracker(BudgetConfig(total_usd=1.0, mode="cap"), state_path)
+        assert budget.reserve("video:1", 0.4)[0] is True
+
+        committed, _ = budget.commit_reservation("video:1")
+
+        assert committed is True
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["spent"] == 0.4
+        assert state["reservations"] == {}
+
+    def test_existing_reservation_blocks_automatic_duplicate_call(self, tmp_path):
+        state_path = tmp_path / "budget_state.json"
+        budget = BudgetTracker(BudgetConfig(total_usd=1.0, mode="cap"), state_path)
+        assert budget.reserve("video:1", 0.4)[0] is True
+
+        allowed, message = BudgetTracker(
+            BudgetConfig(total_usd=1.0, mode="cap"), state_path
+        ).reserve("video:1", 0.4)
+
+        assert allowed is False
+        assert "pending" in message.lower()
+
     def test_get_cost_estimate_custom(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "budget_state.json"

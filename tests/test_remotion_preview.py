@@ -129,6 +129,30 @@ def test_remotion_preview_generates_handoff_project_from_film_timeline(tmp_path)
     ).read_text(encoding="utf-8")
 
 
+def test_remotion_preview_copies_assets_with_atomic_copy(tmp_path, monkeypatch):
+    from narrascape.stages.remotion_preview import RemotionPreviewStage
+
+    config = _config(tmp_path)
+    copies: list[tuple[Path, Path]] = []
+
+    def fake_atomic_copy_file(source, path):
+        copies.append((Path(source), Path(path)))
+        Path(path).write_bytes(Path(source).read_bytes())
+
+    monkeypatch.setattr(
+        "narrascape.stages.remotion_preview.atomic_copy_file", fake_atomic_copy_file
+    )
+
+    result = RemotionPreviewStage().run(_context(config))
+
+    assert result.success
+    assert copies
+    assert copies[0][0] == config.project_dir / "assets" / "videos" / "vid_01.mp4"
+    assert copies[0][1] == (
+        config.pipeline_dir / "remotion_preview" / "public" / "assets" / "v_001.mp4"
+    )
+
+
 def test_remotion_preview_reports_missing_assets_without_silent_success(tmp_path):
     from narrascape.stages.remotion_preview import RemotionPreviewStage
 

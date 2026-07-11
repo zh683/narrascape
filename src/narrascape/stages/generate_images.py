@@ -10,7 +10,6 @@ import base64
 import binascii
 import json
 import logging
-import re
 import time
 import urllib.error
 import urllib.request
@@ -32,8 +31,8 @@ from narrascape.providers import (
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
-from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import (
+    atomic_write_bytes,
     atomic_write_json,
     download_to_path,
     ensure_min_free_space,
@@ -189,19 +188,28 @@ class GenerateImagesStage(Stage):
                 logger.info(
                     f"[Batch {batch_start // self.sequential_batch + 1}] {', '.join(names)} (size={size})"
                 )
+                reservations = []
+                per_image = budget_tracker.get_cost_estimate("image", 1)
+                for name in names:
+                    reservation_id = f"generate_images:{provider_name}:{name}"
+                    reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_image)
+                    if not reserved:
+                        return StageResult(self.name, False, message=reserve_msg)
+                    reservations.append(reservation_id)
                 results = self._generate_sequential(
                     prompts_text, names, size, ref_image_b64, images_dir
                 )
-                for r in results:
+                for name, reservation_id, r in zip(names, reservations, results, strict=False):
                     if r:
                         ok_count += 1
-                        # Record actual cost per successful generation in batch
-                        per_image = budget_tracker.get_cost_estimate("image", 1)
-                        spend_ok, spend_msg = budget_tracker.try_spend(per_image)
-                        if not spend_ok:
-                            return StageResult(self.name, False, message=spend_msg)
+                        done.add(name)
+                        committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                        if not committed:
+                            return StageResult(self.name, False, message=commit_msg)
                     else:
                         fail_count += 1
+                state["done"] = sorted(done)
+                atomic_write_json(state_path, state)
                 if batch_start + self.sequential_batch < len(targets):
                     time.sleep(2)
         else:
@@ -243,6 +251,11 @@ class GenerateImagesStage(Stage):
                 logger.info(
                     f"[{i + 1}/{len(targets)}] {pid}: {prompt_text[:70]}... (size={size}, model={seedream_model})"
                 )
+                per_image = budget_tracker.get_cost_estimate("image", 1)
+                reservation_id = f"generate_images:{provider_name}:{pid}"
+                reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_image)
+                if not reserved:
+                    return StageResult(self.name, False, message=reserve_msg)
                 if self._generate_one(
                     prompt_text,
                     pid,
@@ -258,11 +271,9 @@ class GenerateImagesStage(Stage):
                     done.add(pid)
                     state["done"] = list(done)
                     atomic_write_json(state_path, state)
-                    # Record actual cost per successful generation
-                    per_image = budget_tracker.get_cost_estimate("image", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_image)
-                    if not spend_ok:
-                        return StageResult(self.name, False, message=spend_msg)
+                    committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                    if not committed:
+                        return StageResult(self.name, False, message=commit_msg)
                 else:
                     fail_count += 1
                 if i < len(targets) - 1:
@@ -280,6 +291,11 @@ class GenerateImagesStage(Stage):
         return StageResult(
             self.name,
             fail_count == 0,
+            outputs=[
+                images_dir / f"{target.id}.png"
+                for target in targets
+                if (images_dir / f"{target.id}.png").exists()
+            ],
             message=f"{ok_count} OK, {fail_count} failed",
             metadata={
                 "provider_selection": provider_meta,
@@ -476,47 +492,10 @@ class GenerateImagesStage(Stage):
         return True
 
     def _post_image_request(self, req: urllib.request.Request, *, provider: str) -> dict[str, Any]:
-        if provider == "agnes":
-            return self._json_object(
-                retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
-                    max_retries=4,
-                    base_delay=65.0,
-                    max_delay=75.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                    on_retry=self._log_agnes_retry,
-                )
-            )
+        _ = provider
         return self._json_object(
-            retry_with_backoff(
-                lambda: json.loads(urllib.request.urlopen(req, timeout=180).read().decode()),
-                max_retries=3,
-                base_delay=2.0,
-                retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-            )
+            json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
         )
-
-    def _log_agnes_retry(self, exc: Exception, attempt: int, delay: float) -> None:
-        retry_delay = delay
-        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
-            retry_delay = max(delay, self._retry_after_from_http_error(exc))
-        logger.warning(f"Agnes retry {attempt} after {retry_delay:.1f}s: {exc}")
-
-    def _retry_after_from_http_error(self, exc: urllib.error.HTTPError) -> float:
-        header = exc.headers.get("Retry-After") if exc.headers else None
-        if header:
-            try:
-                return float(header)
-            except ValueError:
-                pass
-        try:
-            body = exc.read().decode(errors="ignore")
-        except Exception:
-            body = ""
-        minute_match = re.search(r"(\d+)\s+minute", body, flags=re.IGNORECASE)
-        if minute_match:
-            return max(65.0, float(minute_match.group(1)) * 65.0)
-        return 65.0
 
     def _build_image_payload(
         self,
@@ -602,7 +581,7 @@ class GenerateImagesStage(Stage):
     def _write_b64_image(self, value: str, path: Path) -> None:
         raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
         try:
-            path.write_bytes(base64.b64decode(raw))
+            atomic_write_bytes(path, base64.b64decode(raw))
         except (binascii.Error, ValueError) as exc:
             raise RuntimeError("invalid base64 image response") from exc
 
@@ -645,12 +624,7 @@ class GenerateImagesStage(Stage):
 
         try:
             r = self._json_object(
-                retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=300).read().decode()),
-                    max_retries=3,
-                    base_delay=2.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                )
+                json.loads(urllib.request.urlopen(req, timeout=300).read().decode())
             )
         except Exception as e:
             logger.error(f"HTTP/API error: {e}")

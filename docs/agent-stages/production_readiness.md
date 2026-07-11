@@ -18,13 +18,12 @@ sure the project is not spending video-generation attempts on weak preparation.
 
 - `pipeline/<project>/production_readiness.yaml`
 
-## Default Checks
+## Procedure
 
-- Reference plates are `ready`.
-- Storyboard sheet is `ready`.
-- Animatic is `ready`.
-- In `pipeline.video_generation: required`, any blocked gate fails the stage.
-- In `pipeline.video_generation: auto`, blocked gates are recorded without
+1. Require reference plates, storyboard sheet, and animatic to be `ready`.
+2. Apply the additional production quality gates below when configured.
+3. In `pipeline.video_generation: required`, fail the stage on any blocked gate.
+4. In `pipeline.video_generation: auto`, record blocked gates without
   pretending generated video is production-ready.
 
 ## Production Quality Gates
@@ -46,3 +45,9 @@ When `pipeline.production_quality_gates: true`, the stage also checks:
 A failure here means the project should go back to script, visual pre-production,
 storyboard, or director-contract work before calling image/video providers again.
 It is not a rendering failure; it is a preparation failure.
+
+## Do Not
+
+- Do not call a video provider to compensate for incomplete preparation.
+- Do not downgrade a required-video blocker into a warning.
+- Do not mark deterministic fallback director artifacts as production-ready.

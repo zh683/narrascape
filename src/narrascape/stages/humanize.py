@@ -10,9 +10,10 @@ from typing import Any
 
 import yaml
 
+from narrascape.artifacts import write_artifact
 from narrascape.humanizer import HumanizerEngine
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_text, atomic_write_yaml
+from narrascape.utils.safe_io import atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.humanize")
 
@@ -85,7 +86,7 @@ class HumanizeStage(Stage):
         if not self.score_only:
             backup_path = script_path.with_suffix(".yaml.backup")
             atomic_write_text(backup_path, text)
-            atomic_write_yaml(script_path, data)
+            write_artifact("script", script_path, data)
             logger.info(f"[humanize] Saved backup: {backup_path}")
 
         from rich.console import Console

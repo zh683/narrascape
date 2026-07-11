@@ -37,6 +37,7 @@ from narrascape.stages.remotion_preview import RemotionPreviewStage
 from narrascape.stages.research import ResearchStage
 from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.write import WriteStage
+from narrascape.utils.safe_io import file_lock
 
 
 class TestDependencyResolution:
@@ -231,6 +232,25 @@ class TestDependencyResolution:
 
 
 class TestPipelineStageFactory:
+    def test_every_stage_has_a_durable_output_contract(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="stage-contract-test",
+                title="Stage Contract Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        pipeline = Pipeline(config)
+
+        missing = [
+            stage_name
+            for stage_name, stage_cls in get_stage_map().items()
+            if not pipeline._expected_stage_outputs(stage_cls())
+        ]
+
+        assert missing == []
+
     def test_get_stage_map_uses_class_level_stage_names_without_instantiating(self, monkeypatch):
         import narrascape.pipeline as pipeline_module
 
@@ -949,6 +969,177 @@ class TestPipelineStageFactory:
 
         assert result["fake"].success is True
         assert calls == ["fake", "fake"]
+
+    def test_completed_stage_reruns_when_script_fingerprint_changes(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append(context.config.script_path.read_text(encoding="utf-8"))
+                output = context.config.pipeline_dir / "fake.txt"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("ok", encoding="utf-8")
+                return StageResult("fake", True, outputs=[output], message="ok")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="fingerprint-test",
+                title="Fingerprint Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        script_path = tmp_path / "scripts" / "script.yaml"
+        script_path.parent.mkdir(parents=True)
+        script_path.write_text("segments:\n- id: 1\n  text: First.\n", encoding="utf-8")
+        monkeypatch.setattr("narrascape.pipeline.STAGE_MAP", {"fake": FakeStage})
+
+        Pipeline(config, auto_approve=True).run(stages=["fake"])
+        Pipeline(config, auto_approve=True).run(stages=["fake"])
+        script_path.write_text("segments:\n- id: 1\n  text: Changed.\n", encoding="utf-8")
+        Pipeline(config, auto_approve=True).run(stages=["fake"])
+
+        assert len(calls) == 2
+
+    def test_stage_without_recorded_or_declared_outputs_is_not_cached(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("run")
+                return StageResult("fake", True, message="no durable output")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="output-contract-test",
+                title="Output Contract Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        script_path = tmp_path / "scripts" / "script.yaml"
+        script_path.parent.mkdir(parents=True)
+        script_path.write_text("segments:\n- id: 1\n  text: Test.\n", encoding="utf-8")
+        monkeypatch.setattr("narrascape.pipeline.STAGE_MAP", {"fake": FakeStage})
+
+        Pipeline(config, auto_approve=True).run(stages=["fake"])
+        Pipeline(config, auto_approve=True).run(stages=["fake"])
+
+        assert calls == ["run", "run"]
+
+    def test_project_run_lock_blocks_concurrent_pipeline(self, tmp_path, monkeypatch):
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                return StageResult("fake", True, outputs=[context.config.script_path])
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="run-lock-test",
+                title="Run Lock Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        script_path = tmp_path / "scripts" / "script.yaml"
+        script_path.parent.mkdir(parents=True)
+        script_path.write_text("segments:\n- id: 1\n  text: Test.\n", encoding="utf-8")
+        monkeypatch.setattr("narrascape.pipeline.STAGE_MAP", {"fake": FakeStage})
+        pipeline = Pipeline(config, auto_approve=True)
+        lock_target = pipeline.run_lock_path
+
+        with file_lock(lock_target), pytest.raises(TimeoutError, match="pipeline-run"):
+            pipeline.run(stages=["fake"])
+
+    def test_project_run_lock_blocks_clean_during_pipeline(self, tmp_path):
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="clean-lock-test",
+                title="Clean Lock Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        pipeline = Pipeline(config, run_lock_timeout=0.1)
+
+        with file_lock(pipeline.run_lock_path), pytest.raises(TimeoutError, match="pipeline-run"):
+            pipeline.clean(["qa"])
+
+    def test_interactive_retry_failure_stops_before_later_stage(self, tmp_path, monkeypatch):
+        first_calls = []
+        later_calls = []
+
+        class FirstStage:
+            name = "first"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                first_calls.append("run")
+                if len(first_calls) == 1:
+                    output = context.config.pipeline_dir / "first.txt"
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text("first", encoding="utf-8")
+                    return StageResult("first", True, outputs=[output])
+                return StageResult("first", False, message="retry failed")
+
+        class LaterStage:
+            name = "later"
+            depends_on = ["first"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                later_calls.append("run")
+                return StageResult("later", True, outputs=[context.config.script_path])
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="interactive-retry-test",
+                title="Interactive Retry Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        script_path = tmp_path / "scripts" / "script.yaml"
+        script_path.parent.mkdir(parents=True)
+        script_path.write_text("segments:\n- id: 1\n  text: Test.\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP", {"first": FirstStage, "later": LaterStage}
+        )
+        pipeline = Pipeline(config, interactive=True, console=object())
+        actions = iter(["retry", "approved"])
+        monkeypatch.setattr(
+            pipeline.approval,
+            "prompt_interactive",
+            lambda stage_name, result, console: next(actions),
+        )
+
+        results = pipeline.run(stages=["later"])
+
+        assert results["first"].success is False
+        assert later_calls == []
+        assert pipeline.state.get_stage_status("first") == "failed"
 
     def test_pipeline_records_nested_output_paths(self, tmp_path):
         config = NarrascapeConfig(

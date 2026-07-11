@@ -16,6 +16,18 @@ def test_atomic_json_write_and_load_mapping(tmp_path):
     assert not (tmp_path / "state.json.lock").exists()
 
 
+def test_atomic_yaml_write_preserves_unicode(tmp_path):
+    from narrascape.utils.safe_io import atomic_write_yaml
+
+    path = tmp_path / "config.yaml"
+
+    atomic_write_yaml(path, {"project": {"title": "罪与罚"}})
+
+    text = path.read_text(encoding="utf-8")
+    assert "罪与罚" in text
+    assert "\\u7f6a" not in text
+
+
 def test_atomic_json_write_retries_transient_replace_permission_error(tmp_path, monkeypatch):
     import os
 
@@ -38,6 +50,75 @@ def test_atomic_json_write_retries_transient_replace_permission_error(tmp_path, 
 
     assert attempts == 2
     assert load_json_mapping(path)["done"] == ["b"]
+
+
+def test_atomic_copy_file_overwrites_atomically_and_cleans_temp(tmp_path):
+    from narrascape.utils.safe_io import atomic_copy_file
+
+    source = tmp_path / "source.mp4"
+    target = tmp_path / "target.mp4"
+    source.write_bytes(b"new-video")
+    target.write_bytes(b"old-video")
+
+    atomic_copy_file(source, target)
+
+    assert target.read_bytes() == b"new-video"
+    assert not list(tmp_path.glob("*.copy"))
+    assert not list(tmp_path.glob(".*.copy"))
+    assert not (tmp_path / "target.mp4.lock").exists()
+
+
+def test_atomic_copy_file_retries_transient_replace_permission_error(tmp_path, monkeypatch):
+    import os
+
+    from narrascape.utils.safe_io import atomic_copy_file
+
+    source = tmp_path / "source.mp3"
+    target = tmp_path / "target.mp3"
+    source.write_bytes(b"audio")
+    attempts = 0
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("temporarily locked")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+
+    atomic_copy_file(source, target)
+
+    assert attempts == 2
+    assert target.read_bytes() == b"audio"
+
+
+def test_atomic_promote_file_retries_and_removes_source(tmp_path, monkeypatch):
+    import os
+
+    from narrascape.utils.safe_io import atomic_promote_file
+
+    temp_path = tmp_path / ".storyboard.png.tmp"
+    target = tmp_path / "storyboard.png"
+    temp_path.write_bytes(b"png")
+    attempts = 0
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("temporarily locked")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+
+    atomic_promote_file(temp_path, target)
+
+    assert attempts == 2
+    assert target.read_bytes() == b"png"
+    assert not temp_path.exists()
 
 
 def test_json_loader_treats_empty_file_as_default_mapping(tmp_path):

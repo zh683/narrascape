@@ -4,7 +4,76 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from narrascape.pipeline import PipelineState, get_stage_map
+from narrascape.pipeline_approval import PipelineApproval
 from narrascape.utils.safe_io import ArtifactLoadError, load_yaml_mapping
+
+
+def load_stage_dashboard(project_dir: Path, pipeline_dir: Path) -> dict[str, Any]:
+    """Load canonical stage status data for product dashboards."""
+
+    stage_map = get_stage_map()
+    state = PipelineState(pipeline_dir / "state.json")
+    approval = PipelineApproval(pipeline_dir)
+    approvals = approval.list_all()
+    stages: list[dict[str, Any]] = []
+    counts = {
+        "completed": 0,
+        "running": 0,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+    }
+
+    for index, (stage_name, stage_cls) in enumerate(stage_map.items(), 1):
+        stage = stage_cls()
+        status = state.get_stage_status(stage_name)
+        if status not in counts:
+            counts[status] = 0
+        counts[status] += 1
+        recorded_outputs = state.get_stage_outputs(stage_name)
+        expected_outputs = _expected_stage_outputs(project_dir, pipeline_dir.name, stage.outputs)
+        output_paths = recorded_outputs or [path.as_posix() for path in expected_outputs]
+        output_files = _output_file_rows(output_paths)
+        output_size = sum(int(row["size_bytes"]) for row in output_files)
+        output_complete = bool(output_paths) and all(
+            bool(row["exists"]) for row in _output_rows(output_paths)
+        )
+        stages.append(
+            {
+                "index": index,
+                "name": stage_name,
+                "label": _stage_label(stage_name),
+                "status": status,
+                "done": status == "completed",
+                "approval": approvals.get(stage_name, "unknown"),
+                "depends_on": list(stage.depends_on),
+                "outputs": output_paths,
+                "output_files": output_files,
+                "output_count": len(output_files),
+                "output_size": output_size,
+                "output_complete": output_complete,
+            }
+        )
+
+    completed = counts.get("completed", 0)
+    total = len(stages)
+    current = next(
+        (stage for stage in stages if stage["status"] in {"running", "failed"}),
+        next((stage for stage in stages if stage["status"] == "pending"), None),
+    )
+    return {
+        "project_dir": project_dir.as_posix(),
+        "pipeline_dir": pipeline_dir.as_posix(),
+        "state_file": (pipeline_dir / "state.json").as_posix(),
+        "total": total,
+        "completed": completed,
+        "progress": int(completed / total * 100) if total else 0,
+        "counts": counts,
+        "stages": stages,
+        "stage_by_name": {stage["name"]: stage for stage in stages},
+        "current_stage": current,
+    }
 
 
 def load_timeline_dashboard(project_dir: Path, pipeline_dir: Path) -> dict[str, Any]:
@@ -171,3 +240,83 @@ def _load_yaml_or_empty(path: Path) -> dict[str, Any]:
 def _action_counts(actions: list[dict[str, Any]]) -> dict[str, int]:
     counts = Counter(str(item.get("action") or "unknown") for item in actions)
     return dict(counts)
+
+
+def _stage_label(stage_name: str) -> str:
+    return stage_name.replace("_", " ").title()
+
+
+def _expected_stage_outputs(project_dir: Path, project_name: str, outputs: Any) -> list[Path]:
+    result: list[Path] = []
+    for item in _flatten_output_values(outputs):
+        text = str(item)
+        if not text or text.endswith("/"):
+            continue
+        text = text.format(name=project_name)
+        path = Path(text)
+        if not path.is_absolute():
+            path = project_dir / path
+        result.append(path)
+    return result
+
+
+def _flatten_output_values(value: Any) -> list[str | Path]:
+    if value is None:
+        return []
+    if isinstance(value, (str, Path)):
+        return [value]
+    if isinstance(value, dict):
+        flattened: list[str | Path] = []
+        for item in value.values():
+            flattened.extend(_flatten_output_values(item))
+        return flattened
+    if isinstance(value, (list, tuple, set)):
+        flattened = []
+        for item in value:
+            flattened.extend(_flatten_output_values(item))
+        return flattened
+    return []
+
+
+def _output_rows(paths: list[str]) -> list[dict[str, Any]]:
+    rows = []
+    for item in paths:
+        path = Path(item)
+        rows.append(
+            {
+                "path": path.as_posix(),
+                "name": path.name,
+                "exists": path.exists(),
+                "is_dir": path.is_dir(),
+                "size_bytes": _path_size(path) if path.is_file() else 0,
+            }
+        )
+    return rows
+
+
+def _output_file_rows(paths: list[str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in _output_rows(paths):
+        path = Path(str(row["path"]))
+        if path.is_file():
+            rows.append(row)
+        elif path.is_dir():
+            for child in sorted(path.rglob("*")):
+                if child.is_file():
+                    rows.append(
+                        {
+                            "path": child.as_posix(),
+                            "name": child.name,
+                            "exists": True,
+                            "is_dir": False,
+                            "size_bytes": _path_size(child),
+                        }
+                    )
+    return rows
+
+
+def _path_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0

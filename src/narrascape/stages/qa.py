@@ -10,7 +10,7 @@ from PIL import Image, ImageStat
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_media_info, run_ffmpeg_raw, validate_video
-from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
+from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class QAStage(Stage):
@@ -362,7 +362,7 @@ class QAStage(Stage):
                 "pacing_risk_segments": [],
             }
         try:
-            timeline = load_yaml_mapping(timeline_path)
+            timeline = self._load_yaml(timeline_path)
         except Exception:
             return {
                 "shot_coverage_ratio": None,

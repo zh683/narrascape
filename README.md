@@ -170,7 +170,8 @@ For production builds, use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`.
 
 ```bash
 narrascape init my-video
-narrascape dashboard -p my-video
+narrascape workbench -p my-video --port 8765
+narrascape dashboard -p my-video --port 8501
 narrascape research -p my-video --topic "Notre Dame"
 narrascape write -p my-video
 narrascape humanize -p my-video
@@ -186,12 +187,19 @@ narrascape reject -p my-video -s design --notes "revise faces"
 narrascape clean -p my-video --all
 ```
 
+`workbench` 启动 React/Vite 原生制作控制面，可直接运行阶段、审批、查看时间线、
+取消或恢复持久作业。`dashboard` 保留为 Streamlit 诊断台，用于检查底层状态和产物。
+
 Dashboard dependencies are optional:
 
 ```bash
 pip install -e ".[dashboard]"
-narrascape dashboard
+narrascape dashboard -p my-video --port 8501
 ```
+
+The dashboard includes an artifact-first Workbench page for production takeover:
+current stage, supervisor queue, director/review artifacts, rework loop status,
+and the exact `narrascape build` commands to continue the next stage.
 
 ## Provider Matrix
 

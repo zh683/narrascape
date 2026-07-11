@@ -11,10 +11,13 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from narrascape.llm.log_policy import sanitize_text, sanitize_value
 from narrascape.llm.models import LLMCallLog, LLMConfig, LLMResponse, Message, PromptTemplate
-from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.retry import is_retryable_provider_error, retry_with_backoff
+from narrascape.utils.safe_io import atomic_write_json, file_lock
 
 if TYPE_CHECKING:
     from narrascape.llm.bridge import BridgeLLMClient
@@ -209,7 +212,7 @@ class LLMClient:
             _call,
             max_retries=config.max_retries,
             base_delay=config.retry_delay,
-            retryable_exceptions=(Exception,),
+            retry_if=is_retryable_provider_error,
             on_retry=lambda e, attempt, delay: logger.warning(
                 f"LLM retry {attempt}/{config.max_retries} after {delay:.1f}s: {e}"
             ),
@@ -534,19 +537,81 @@ class LLMClient:
         model: str = "",
         usage: dict[str, int] | None = None,
     ) -> None:
-        """Log an LLM call for debugging."""
+        """Retain a bounded, redacted LLM diagnostic record."""
         from datetime import datetime
 
+        if not self.config.log_enabled:
+            return
+        max_chars = max(32, self.config.log_max_text_chars)
+        max_entries = max(1, self.config.log_max_entries)
+        secrets = (self.config.api_key or "",)
+
+        def safe_text(value: str) -> str:
+            return sanitize_text(value, max_chars=max_chars, secrets=secrets)
+
+        safe_messages = [
+            {key: safe_text(value) for key, value in message.to_dict().items()}
+            for message in messages[:20]
+        ]
+        if len(messages) > 20:
+            safe_messages.append(
+                {
+                    "role": "system",
+                    "content": f"[{len(messages) - 20} additional messages omitted]",
+                }
+            )
+        if self.config.log_include_parsed_output:
+            safe_parsed_output = sanitize_value(
+                parsed_output,
+                max_chars=max_chars,
+                secrets=secrets,
+            )
+        else:
+            safe_parsed_output = {
+                "omitted": True,
+                "type": type(parsed_output).__name__,
+            }
         log = LLMCallLog(
             timestamp=datetime.now().isoformat(),
-            template_name=template_name,
-            messages=[m.to_dict() for m in messages],
-            response=response,
-            parsed_output=parsed_output,
+            template_name=safe_text(template_name),
+            messages=safe_messages,
+            response=safe_text(response),
+            parsed_output=safe_parsed_output,
             success=success,
-            error=error,
+            error=safe_text(error) if error else None,
             latency_ms=latency_ms,
-            model=model,
+            model=safe_text(model),
             usage=usage or {},
         )
         self._logs.append(log)
+        del self._logs[:-max_entries]
+        if self.config.log_persist_path is not None:
+            self._persist_log(Path(self.config.log_persist_path), log, max_entries, max_chars)
+
+    def _persist_log(
+        self,
+        path: Path,
+        log: LLMCallLog,
+        max_entries: int,
+        max_chars: int,
+    ) -> None:
+        """Append to the bounded JSON log using the shared atomic IO path."""
+
+        secrets = (self.config.api_key or "",)
+        try:
+            with file_lock(path):
+                records: list[Any] = []
+                if path.exists():
+                    loaded = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, list):
+                        records = loaded
+                records.append(log.to_dict())
+                safe_records = sanitize_value(
+                    records[-max_entries:],
+                    max_chars=max_chars,
+                    secrets=secrets,
+                    max_items=max_entries,
+                )
+                atomic_write_json(path, safe_records, lock=False)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Could not persist LLM diagnostic log %s: %s", path, exc)

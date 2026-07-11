@@ -39,6 +39,8 @@ from narrascape.api_keys import APIKeys
 from narrascape.config import DEFAULT_VISUAL_STYLE, NarrascapeConfig, Script, load_script
 from narrascape.prompt_safety import sanitize_prompt_for_provider
 from narrascape.providers import select_provider
+from narrascape.providers.image_adapter import ReferenceImageProviderAdapter
+from narrascape.providers.runtime import BudgetReservationCoordinator
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_images import GenerateImagesStage
 from narrascape.stages.pre_production_services import (
@@ -525,6 +527,25 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
         if provider == "agnes":
             time.sleep(65.0)
 
+    def _generate_reference_image(
+        self,
+        image_generator: GenerateImagesStage,
+        config: NarrascapeConfig,
+        image_provider: str,
+        **kwargs: Any,
+    ) -> bool:
+        from narrascape.utils.budget import BudgetTracker
+
+        tracker = BudgetTracker(config.budget, config.pipeline_dir / "budget_state.json")
+        estimated = tracker.get_cost_estimate("image", 1)
+        adapter = ReferenceImageProviderAdapter(
+            generator=image_generator,
+            provider=image_provider,
+            coordinator=BudgetReservationCoordinator(tracker),
+            estimated_cost=estimated,
+        )
+        return adapter.generate(**kwargs)
+
     def _generate_style_anchor(
         self, refs_dir: Path, config: NarrascapeConfig, image_provider: str
     ) -> tuple[str | None, str]:
@@ -577,7 +598,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
 
         # Seedream 5.0: no reference for the anchor itself, but use seed for consistency
         # Use a fixed seed for reproducibility if possible (seedream 5.0 supports seed)
-        anchor_ok = img_gen._generate_one(
+        anchor_ok = self._generate_reference_image(
+            img_gen,
+            config,
+            image_provider,
             prompt=style_anchor_prompt,
             out_name=anchor_name,
             size="1920x1920",
@@ -662,7 +686,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             # CRITICAL: Pass style_anchor as reference image
             # When using multiple refs, order matters: [style_anchor, character_ref]
             ref_for_character = style_anchor_path if style_anchor_path else None
-            anchor_ok = img_gen._generate_one(
+            anchor_ok = self._generate_reference_image(
+                img_gen,
+                config,
+                image_provider,
                 prompt=anchor_prompt,
                 out_name=anchor_name,
                 size="1920x1920",
@@ -722,7 +749,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     "Maintain the exact same face, hairstyle, clothing, body proportions, and posture language. "
                     f"{provider_style}. Clean pale gray background, consistent rendering quality, no text, no watermark."
                 )
-                turn_ok = img_gen._generate_one(
+                turn_ok = self._generate_reference_image(
+                    img_gen,
+                    config,
+                    image_provider,
                     prompt=turn_prompt,
                     out_name=turn_name,
                     size="1920x1920",
@@ -777,7 +807,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
                     f"{provider_style}. Clean pale gray background, detailed but restrained facial emotion, "
                     "consistent rendering quality, no text, no watermark."
                 )
-                expr_ok = img_gen._generate_one(
+                expr_ok = self._generate_reference_image(
+                    img_gen,
+                    config,
+                    image_provider,
                     prompt=expr_prompt,
                     out_name=expr_name,
                     size="1920x1920",
@@ -868,7 +901,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             logger.info(f"  Mood exists: {mood_path}")
             mood_ok = True
         else:
-            mood_ok = img_gen._generate_one(
+            mood_ok = self._generate_reference_image(
+                img_gen,
+                config,
+                image_provider,
                 prompt=mood_prompt,
                 out_name=mood_name,
                 size="2560x1440",
@@ -909,7 +945,10 @@ Limit to max {self.max_characters} most important characters and {self.max_scene
             landmark_path = refs_dir / f"{landmark_name}.png"
 
             if not landmark_path.exists():
-                landmark_ok = img_gen._generate_one(
+                landmark_ok = self._generate_reference_image(
+                    img_gen,
+                    config,
+                    image_provider,
                     prompt=landmark_prompt,
                     out_name=landmark_name,
                     size="2560x1440",

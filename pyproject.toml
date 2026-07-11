@@ -54,9 +54,15 @@ dev = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
     "streamlit>=1.36",
+    "fastapi>=0.115",
+    "httpx>=0.27",
 ]
 dashboard = [
     "streamlit>=1.36",
+]
+workbench = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
@@ -159,6 +165,7 @@ source = ["src/narrascape"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 60
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

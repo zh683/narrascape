@@ -12,8 +12,8 @@ from narrascape.agent.models import (
     EnvironmentReference,
     EnvironmentReferenceImage,
 )
+from narrascape.artifacts import write_artifact
 from narrascape.config import Script
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class PreProductionNotesExtractor:
@@ -342,4 +342,4 @@ class PreProductionReportWriter:
     """Persists pre-production reports with artifact-safe writes."""
 
     def write(self, path: Path, report: dict[str, Any]) -> None:
-        atomic_write_yaml(path, report)
+        write_artifact("pre_production", path, report)

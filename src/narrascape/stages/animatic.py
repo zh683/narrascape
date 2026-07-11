@@ -10,7 +10,6 @@ from narrascape.utils.safe_io import (
     atomic_write_text,
     atomic_write_yaml,
     load_json_mapping,
-    load_yaml_mapping,
 )
 
 
@@ -31,8 +30,8 @@ class AnimaticStage(Stage):
 
     def run(self, context: StageContext) -> StageResult:
         config = context.config
-        reference_plates = load_yaml_mapping(config.pipeline_dir / "reference_plates.yaml")
-        pre_production = load_yaml_mapping(config.pipeline_dir / "pre_production.yaml")
+        reference_plates = self._load_yaml(config.pipeline_dir / "reference_plates.yaml")
+        pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")
         timing = load_json_mapping(config.pipeline_dir / "timing.json")
 
         plates_by_segment = self._plates_by_segment(reference_plates)

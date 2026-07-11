@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from narrascape.artifacts import write_artifact
 from narrascape.humanizer import HumanizerEngine
 from narrascape.research import ResearchEngine, load_research_report
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -100,7 +101,7 @@ class WriteStage(Stage):
             backup_path = scripts_dir / f"script.yaml.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
             atomic_write_text(backup_path, script_path.read_text(encoding="utf-8"))
         script_data = {"segments": [seg.model_dump() for seg in script.segments]}
-        atomic_write_yaml(script_path, script_data)
+        write_artifact("script", script_path, script_data)
         logger.info(f"[write] Humanized script saved: {script_path}")
 
         # Step 6: Create approval marker

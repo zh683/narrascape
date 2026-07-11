@@ -17,14 +17,10 @@ from __future__ import annotations
 
 import base64
 import binascii
-import json
 import logging
 import math
-import re
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -39,6 +35,12 @@ from narrascape.providers import (
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.runtime import (
+    BudgetReservationCoordinator,
+    BudgetReservationError,
+    ProviderTaskRepository,
+)
+from narrascape.providers.video_adapters import AgnesVideoAdapter, SeedanceVideoAdapter
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_video_services import (
     VideoGenerationPlanner,
@@ -48,7 +50,6 @@ from narrascape.stages.generate_video_services import (
 )
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import validate_video
-from narrascape.utils.retry import retry_with_backoff
 from narrascape.utils.safe_io import (
     atomic_write_json,
     download_to_path,
@@ -102,6 +103,8 @@ class GenerateVideoStage(Stage):
         uploader_backend: str = "base64",
         max_poll_errors: int = 3,
         agnes_model: str = "agnes-video-v2.0",
+        seedance_adapter: SeedanceVideoAdapter | None = None,
+        agnes_adapter: AgnesVideoAdapter | None = None,
     ):
         self.api_key = api_key
         self.model = model
@@ -130,6 +133,10 @@ class GenerateVideoStage(Stage):
         self.prompt_builder = VideoPromptBuilder()
         self.prompt_quality_reporter = VideoPromptQualityReporter(self.prompt_builder)
         self.reference_resolver = VideoReferenceResolver(self.uploader)
+        self._task_map: dict[str, Any] = {}
+        self._persist_task_map: Callable[[], None] | None = None
+        self.seedance_adapter = seedance_adapter
+        self.agnes_adapter = agnes_adapter
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -226,6 +233,7 @@ class GenerateVideoStage(Stage):
         from narrascape.utils.budget import BudgetTracker
 
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
+        budget_reservations = BudgetReservationCoordinator(budget_tracker)
         take_count = self._takes_per_shot()
         total_jobs = len(segments) * take_count
         est_cost = budget_tracker.get_cost_estimate("video", total_jobs)
@@ -246,6 +254,16 @@ class GenerateVideoStage(Stage):
         done = set(state.get("done", []))
         # 持久化任务 ID 映射，用于断点续传
         task_map = state.get("task_map", {})
+        if not isinstance(task_map, dict):
+            task_map = {}
+            state["task_map"] = task_map
+
+        def persist_task_map() -> None:
+            state["task_map"] = task_map
+            atomic_write_json(state_path, state)
+
+        self._task_map = task_map
+        self._persist_task_map = persist_task_map
 
         logger.info(
             f"{selection.tool.name} {self._active_model(provider_name)}: "
@@ -322,6 +340,18 @@ class GenerateVideoStage(Stage):
                         f"  [{job_index}/{total_jobs}] {out_name} take {take_number}/{take_count}"
                     )
 
+                per_video = budget_tracker.get_cost_estimate("video", 1)
+                reservation_id = f"generate_video:{provider_name}:{out_name}"
+                existing_task = task_map.get(out_name, {})
+                try:
+                    budget_reservations.reserve(
+                        reservation_id,
+                        per_video,
+                        task=existing_task if isinstance(existing_task, dict) else {},
+                    )
+                except BudgetReservationError as exc:
+                    return StageResult(self.name, False, message=str(exc))
+
                 result = self._generate_one(
                     video_prompt,
                     out_name,
@@ -339,10 +369,10 @@ class GenerateVideoStage(Stage):
                     done.add(out_name)
                     state["done"] = sorted(done)
                     atomic_write_json(state_path, state)
-                    per_video = budget_tracker.get_cost_estimate("video", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_video)
-                    if not spend_ok:
-                        return StageResult(self.name, False, message=spend_msg)
+                    try:
+                        budget_reservations.commit(reservation_id)
+                    except BudgetReservationError as exc:
+                        return StageResult(self.name, False, message=str(exc))
                 else:
                     fail_count += 1
                 if job_index < total_jobs:
@@ -357,9 +387,18 @@ class GenerateVideoStage(Stage):
                 selection.tool.name,
                 f"{fail_count}/{len(segments)} video generations failed",
             )
+        generated_outputs = [
+            videos_dir / f"{out_name}.mp4"
+            for seg in segments
+            for out_name in self._output_names_for_segment(
+                f"vid_{seg['segment_id']:02d}", take_count
+            )
+            if (videos_dir / f"{out_name}.mp4").exists()
+        ]
         return StageResult(
             self.name,
             fail_count == 0,
+            outputs=generated_outputs,
             message=f"{ok_count} OK, {fail_count} failed",
             metadata={
                 "provider_selection": provider_meta,
@@ -377,7 +416,7 @@ class GenerateVideoStage(Stage):
         return load_json_mapping(path, default={"done": [], "errors": [], "task_map": {}})
 
     def _load_design_report(self, path: Path) -> dict[str, Any]:
-        return load_yaml_mapping(path)
+        return self._load_yaml(path)
 
     def _json_object(self, value: Any) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
@@ -391,7 +430,7 @@ class GenerateVideoStage(Stage):
             return None
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        return load_yaml_mapping(path)
+        return super()._load_yaml(path)
 
     def _segment_ids_from_queue(self, path: Path) -> set[int]:
         if not path.exists():
@@ -466,6 +505,31 @@ class GenerateVideoStage(Stage):
             return APIKeys.agnes()
         return APIKeys.ark()
 
+    def _current_seedance_adapter(self) -> SeedanceVideoAdapter:
+        if self.seedance_adapter is None:
+            self.seedance_adapter = SeedanceVideoAdapter(
+                api_key=lambda: self._api_key_for_provider("seedance"),
+                base_url=self.BASE_URL,
+                poll_interval=self.poll_interval,
+                max_poll_time=self.max_poll_time,
+                max_poll_errors=self.max_poll_errors,
+            )
+        return self.seedance_adapter
+
+    def _current_agnes_adapter(self) -> AgnesVideoAdapter:
+        if self.agnes_adapter is None:
+            self.agnes_adapter = AgnesVideoAdapter(
+                api_key=lambda: self._api_key_for_provider("agnes"),
+                model=lambda: self.agnes_model,
+                create_url=self.AGNES_CREATE_URL,
+                result_url=self.AGNES_RESULT_URL,
+                create_timeout=self.AGNES_CREATE_TIMEOUT,
+                poll_interval=self.poll_interval,
+                max_poll_time=self.max_poll_time,
+                max_poll_errors=self.max_poll_errors,
+            )
+        return self.agnes_adapter
+
     def _apply_video_config(self, config: Any, provider: str) -> None:
         self._current_video_planner().apply_config(config, provider)
         self._sync_video_settings_from_planner()
@@ -511,7 +575,7 @@ class GenerateVideoStage(Stage):
     def _load_director_contract(self, path: Path) -> dict[int, dict[str, Any]]:
         if not path.exists():
             return {}
-        data = load_yaml_mapping(path)
+        data = self._load_yaml(path)
         result: dict[int, dict[str, Any]] = {}
         for shot in data.get("shots", []) or []:
             if not isinstance(shot, dict):
@@ -525,7 +589,7 @@ class GenerateVideoStage(Stage):
     def _load_reference_plates(self, path: Path) -> dict[int, dict[str, Any]]:
         if not path.exists():
             return {}
-        data = load_yaml_mapping(path)
+        data = self._load_yaml(path)
         result: dict[int, dict[str, Any]] = {}
         for plate in data.get("plates", []) or []:
             if not isinstance(plate, dict):
@@ -716,101 +780,11 @@ class GenerateVideoStage(Stage):
         if last_frame:
             payload["return_last_frame"] = True
 
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        create_url = f"{self.BASE_URL}/tasks"
-        api_key = self._api_key_for_provider("seedance")
-        if not api_key:
-            logger.error("Seedance video provider selected but API key is not configured")
-            return None
-        req = urllib.request.Request(create_url, data=data, method="POST")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        req.add_header("Content-Type", "application/json")
-
-        try:
-            r = self._json_object(
-                retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=60).read().decode()),
-                    max_retries=3,
-                    base_delay=2.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                )
-            )
-        except Exception as e:
-            logger.error(f"Task creation failed: {e}")
-            return None
-
-        task_id = r.get("id")
-        if not task_id:
-            logger.error(f"No task ID in response: {json.dumps(r, ensure_ascii=False)[:200]}")
-            return None
-
-        logger.info(f"  Task created: {task_id}")
-        return str(task_id)
+        return self._current_seedance_adapter().create_task(payload)
 
     def _poll_task(self, task_id: str) -> str | None:
         """Poll task until completion. Returns video URL or None."""
-        poll_url = f"{self.BASE_URL}/tasks/{task_id}"
-        start_time = time.time()
-        attempts = 0
-        consecutive_errors = 0
-
-        while time.time() - start_time < self.max_poll_time:
-            attempts += 1
-            api_key = self._api_key_for_provider("seedance")
-            if not api_key:
-                logger.error("Seedance video provider selected but API key is not configured")
-                return None
-            req = urllib.request.Request(poll_url, method="GET")
-            req.add_header("Authorization", f"Bearer {api_key}")
-
-            try:
-                r = self._json_object(
-                    json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
-                )
-            except Exception as e:
-                consecutive_errors += 1
-                logger.warning(f"  Poll error (attempt {attempts}): {e}")
-                if consecutive_errors >= self.max_poll_errors:
-                    logger.error(f"  Polling aborted after {consecutive_errors} consecutive errors")
-                    return None
-                time.sleep(self.poll_interval)
-                continue
-            consecutive_errors = 0
-
-            status = r.get("status", "unknown")
-            logger.info(f"  Poll {attempts}: status={status}")
-
-            if status == "succeeded":
-                # 提取视频 URL
-                content = r.get("content", {})
-                if isinstance(content, dict):
-                    video_url = content.get("video_url")
-                    if video_url:
-                        return str(video_url)
-                # 兼容其他可能的位置
-                video_url = r.get("video_url") or r.get("url")
-                if video_url:
-                    return str(video_url)
-                logger.error(
-                    f"  No video_url in succeeded response: {json.dumps(r, ensure_ascii=False)[:200]}"
-                )
-                return None
-
-            elif status in ("failed", "expired"):
-                error = r.get("error", "unknown error")
-                logger.error(f"  Task {status}: {error}")
-                return None
-
-            elif status in ("queued", "running"):
-                time.sleep(self.poll_interval)
-                continue
-
-            else:
-                logger.warning(f"  Unknown status: {status}")
-                time.sleep(self.poll_interval)
-
-        logger.error(f"  Polling timeout after {self.max_poll_time}s")
-        return None
+        return self._current_seedance_adapter().poll(task_id)
 
     def _create_agnes_task(
         self,
@@ -831,66 +805,7 @@ class GenerateVideoStage(Stage):
             reference_images=reference_images or [],
             negative_prompt=negative_prompt,
         )
-        api_key = self._api_key_for_provider("agnes")
-        if not api_key:
-            logger.error("Agnes video provider selected but API key is not configured")
-            return None, None
-
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        req = urllib.request.Request(self.AGNES_CREATE_URL, data=data, method="POST")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        req.add_header("Content-Type", "application/json")
-
-        try:
-            response = retry_with_backoff(
-                lambda: json.loads(
-                    urllib.request.urlopen(req, timeout=self.AGNES_CREATE_TIMEOUT).read().decode()
-                ),
-                max_retries=4,
-                base_delay=65.0,
-                max_delay=75.0,
-                retryable_exceptions=(
-                    TimeoutError,
-                    urllib.error.URLError,
-                    urllib.error.HTTPError,
-                ),
-                on_retry=self._log_agnes_retry,
-            )
-        except Exception as exc:
-            logger.error(f"Agnes task creation failed: {exc}")
-            return None, None
-
-        task_id = response.get("task_id") or response.get("id")
-        video_id = response.get("video_id")
-        if not task_id and not video_id:
-            logger.error(
-                f"No Agnes task_id/video_id in response: {json.dumps(response, ensure_ascii=False)[:200]}"
-            )
-            return None, None
-        logger.info(f"  Agnes task created: task_id={task_id}, video_id={video_id}")
-        return task_id, video_id
-
-    def _log_agnes_retry(self, exc: Exception, attempt: int, delay: float) -> None:
-        retry_delay = delay
-        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
-            retry_delay = max(delay, self._retry_after_from_http_error(exc))
-        logger.warning(f"Agnes retry {attempt} after {retry_delay:.1f}s: {exc}")
-
-    def _retry_after_from_http_error(self, exc: urllib.error.HTTPError) -> float:
-        header = exc.headers.get("Retry-After") if exc.headers else None
-        if header:
-            try:
-                return float(header)
-            except ValueError:
-                pass
-        try:
-            body = exc.read().decode(errors="ignore")
-        except Exception:
-            body = ""
-        minute_match = re.search(r"(\d+)\s+minute", body, flags=re.IGNORECASE)
-        if minute_match:
-            return max(65.0, float(minute_match.group(1)) * 65.0)
-        return 65.0
+        return self._current_agnes_adapter().create_task(payload)
 
     def _build_agnes_payload(
         self,
@@ -1051,58 +966,7 @@ class GenerateVideoStage(Stage):
     def _poll_agnes_task(
         self, task_id: str | None = None, video_id: str | None = None
     ) -> str | None:
-        api_key = self._api_key_for_provider("agnes")
-        if not api_key:
-            logger.error("Agnes video provider selected but API key is not configured")
-            return None
-        start_time = time.time()
-        attempts = 0
-        consecutive_errors = 0
-        while time.time() - start_time < self.max_poll_time:
-            attempts += 1
-            if video_id:
-                query = urllib.parse.urlencode(
-                    {"video_id": video_id, "model_name": self.agnes_model}
-                )
-                poll_url = f"{self.AGNES_RESULT_URL}?{query}"
-            elif task_id:
-                poll_url = f"{self.AGNES_CREATE_URL}/{task_id}"
-            else:
-                return None
-
-            req = urllib.request.Request(poll_url, method="GET")
-            req.add_header("Authorization", f"Bearer {api_key}")
-            try:
-                response = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
-            except Exception as exc:
-                consecutive_errors += 1
-                logger.warning(f"  Agnes poll error (attempt {attempts}): {exc}")
-                if consecutive_errors >= self.max_poll_errors:
-                    logger.error(
-                        f"  Agnes polling aborted after {consecutive_errors} consecutive errors"
-                    )
-                    return None
-                time.sleep(self.poll_interval)
-                continue
-            consecutive_errors = 0
-
-            status = str(response.get("status", "unknown")).lower()
-            logger.info(f"  Agnes poll {attempts}: status={status}")
-            if status in {"completed", "succeeded", "success"}:
-                video_url = self._extract_agnes_video_url(response)
-                if video_url:
-                    return video_url
-                logger.error(
-                    f"  No Agnes video URL in completed response: {json.dumps(response, ensure_ascii=False)[:200]}"
-                )
-                return None
-            if status in {"failed", "error", "expired"}:
-                logger.error(f"  Agnes task {status}: {response.get('error', 'unknown error')}")
-                return None
-            time.sleep(self.poll_interval)
-
-        logger.error(f"  Agnes polling timeout after {self.max_poll_time}s")
-        return None
+        return self._current_agnes_adapter().poll(task_id=task_id, video_id=video_id)
 
     def _extract_agnes_video_url(self, response: dict[str, Any]) -> str | None:
         video_url = (
@@ -1129,37 +993,66 @@ class GenerateVideoStage(Stage):
         reference_images: list[str] | None = None,
         provider: str = "seedance",
         negative_prompt: str = "",
+        task_map: dict[str, Any] | None = None,
+        persist_task_map: Callable[[], None] | None = None,
     ) -> bool:
         out_mp4 = videos_dir / f"{out_name}.mp4"
         if out_mp4.exists():
             return True
 
-        if provider == "agnes":
-            task_id, video_id = self._create_agnes_task(
-                prompt,
-                model,
-                resolution,
-                first_frame,
-                last_frame,
-                reference_images=reference_images,
-                negative_prompt=negative_prompt,
+        task_map = task_map if task_map is not None else self._task_map
+        persist_task_map = (
+            persist_task_map if persist_task_map is not None else self._persist_task_map
+        )
+        task_repository = ProviderTaskRepository(task_map, persist_task_map)
+        task_entry = task_repository.get(out_name, provider=provider)
+        if (
+            task_entry.get("status") == "submitting"
+            and not task_entry.get("task_id")
+            and not task_entry.get("video_id")
+        ):
+            logger.error(
+                f"Provider submission for {out_name} has an unknown outcome; "
+                "inspect the provider and video_gen_state.json before retrying"
             )
+            return False
+
+        if provider == "agnes":
+            task_id = task_entry.get("task_id")
+            video_id = task_entry.get("video_id")
+            if not task_id and not video_id:
+                task_repository.mark_submitting(out_name, provider)
+                task_id, video_id = self._create_agnes_task(
+                    prompt,
+                    model,
+                    resolution,
+                    first_frame,
+                    last_frame,
+                    reference_images=reference_images,
+                    negative_prompt=negative_prompt,
+                )
             if not task_id and not video_id:
                 return False
+            task_repository.mark_submitted(out_name, provider, task_id=task_id, video_id=video_id)
             video_url = self._poll_agnes_task(task_id=task_id, video_id=video_id)
         else:
-            task_id = self._create_task(
-                prompt,
-                model,
-                resolution,
-                first_frame,
-                last_frame,
-                reference_images=reference_images,
-            )
+            task_id = task_entry.get("task_id")
+            if not task_id:
+                task_repository.mark_submitting(out_name, provider)
+                task_id = self._create_task(
+                    prompt,
+                    model,
+                    resolution,
+                    first_frame,
+                    last_frame,
+                    reference_images=reference_images,
+                )
             if not task_id:
                 return False
+            task_repository.mark_submitted(out_name, provider, task_id=task_id)
             video_url = self._poll_task(task_id)
         if not video_url:
+            task_repository.mark_status(out_name, "polling_failed")
             return False
 
         try:
@@ -1176,7 +1069,9 @@ class GenerateVideoStage(Stage):
                 raise RuntimeError("downloaded video failed ffprobe validation")
         except Exception as e:
             logger.error(f"Download failed: {e}")
+            task_repository.mark_status(out_name, "download_failed")
             return False
 
+        task_repository.mark_status(out_name, "completed", output=out_mp4.as_posix())
         logger.info(f"OK {out_mp4.stat().st_size / 1024 / 1024:.1f}MB")
         return True

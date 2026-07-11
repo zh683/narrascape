@@ -8,7 +8,6 @@ from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import (
     atomic_write_yaml,
-    load_yaml_mapping,
     update_json_mapping,
 )
 
@@ -233,4 +232,4 @@ class ReworkExecuteStage(Stage):
         return result
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        return load_yaml_mapping(path)
+        return super()._load_yaml(path)

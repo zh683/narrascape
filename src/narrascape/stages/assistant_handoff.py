@@ -16,7 +16,6 @@ from narrascape.utils.safe_io import (
     atomic_write_text,
     atomic_write_yaml,
     load_json_mapping,
-    load_yaml_mapping,
 )
 
 
@@ -313,6 +312,4 @@ class AssistantHandoffStage(Stage):
         return "\n".join(lines)
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return load_yaml_mapping(path, default={})
+        return super()._load_yaml(path)
