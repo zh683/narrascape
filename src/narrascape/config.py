@@ -273,6 +273,15 @@ class VideoConfig(BaseModel):
         le=8,
         description="Generated-video candidates per shot. Values above 1 create multi-take clips for take_select.",
     )
+    max_poll_time: float = Field(
+        900.0,
+        gt=0,
+        description=(
+            "Maximum seconds to poll a single video generation task before giving up. "
+            "720p jobs regularly exceed 5 minutes; on timeout the paid task stays "
+            "recorded in video_tasks.json and is resumed on the next run."
+        ),
+    )
 
 
 # ───────────────────────────────────────────

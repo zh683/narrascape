@@ -147,7 +147,14 @@ video:
   duration: 5
   frame_rate: 24
   takes: 1
+  max_poll_time: 900
 ```
+
+`max_poll_time` is the per-task polling budget in seconds (default `900`).
+720p jobs regularly exceed five minutes. When polling times out, the paid
+task is kept in `pipeline/<name>/video_tasks.json` and the next
+`generate_video` run resumes polling that task instead of creating — and
+paying for — a duplicate.
 
 Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
 shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.

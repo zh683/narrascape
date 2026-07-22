@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +14,7 @@ from narrascape.artifacts import validate_artifact
 from narrascape.prompt_compiler import provider_negative_prompt, provider_prompt
 from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
-from narrascape.utils.safe_io import atomic_write_yaml
+from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, update_json_mapping
 
 
 def _to_int(value: Any) -> int | None:
@@ -382,3 +385,172 @@ class VideoReferenceResolver:
         if image_path.exists():
             return str(self.uploader.upload(image_path))
         return None
+
+
+# ───────────────────────────────────────────
+# Paid video task ledger
+# ───────────────────────────────────────────
+
+VIDEO_TASK_LEDGER_VERSION = "1.0"
+
+# Ledger statuses that mean "the provider may still be working on this paid
+# task" — such records must be resumed instead of creating a new paid task.
+RESUMABLE_TASK_STATUSES = frozenset({"submitted", "polling"})
+
+_LEDGER_HISTORY_LIMIT = 5
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def video_task_prompt_hash(*, provider: str, model: str, resolution: str, prompt: str) -> str:
+    """Hash the parameters that define a paid video generation task.
+
+    Two invocations with the same hash are considered parameter-equivalent:
+    resuming the recorded task yields the requested output. Any prompt,
+    model, resolution, or provider change produces a different hash and
+    therefore a new task.
+    """
+    payload = json.dumps(
+        {
+            "provider": provider,
+            "model": model,
+            "resolution": resolution,
+            "prompt": prompt,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _take_number_from_out_name(out_name: str) -> int:
+    match = re.search(r"_take_(\d+)$", out_name)
+    return int(match.group(1)) if match else 1
+
+
+class VideoTaskLedger:
+    """Crash-safe ledger of paid video generation tasks.
+
+    Persisted to pipeline/{name}/video_tasks.json. A record is written the
+    moment a task_id is obtained from the provider, so a crashed or timed-out
+    process can resume polling the already-paid task on the next run instead
+    of creating (and paying for) a duplicate. All writes go through the
+    file-locked atomic JSON update helpers in utils.safe_io.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def _default(self) -> dict[str, Any]:
+        return {"version": VIDEO_TASK_LEDGER_VERSION, "tasks": {}}
+
+    def _load(self) -> dict[str, Any]:
+        return load_json_mapping(self.path, default=self._default())
+
+    def get(self, out_name: str) -> dict[str, Any] | None:
+        record = self._load().get("tasks", {}).get(out_name)
+        return dict(record) if isinstance(record, dict) else None
+
+    def find_resumable(self, out_name: str, prompt_hash: str) -> dict[str, Any] | None:
+        """Return an unfinished, parameter-equivalent record, if any."""
+        record = self.get(out_name)
+        if not record:
+            return None
+        if record.get("status") not in RESUMABLE_TASK_STATUSES:
+            return None
+        if record.get("prompt_hash") != prompt_hash:
+            return None
+        if not (record.get("task_id") or record.get("video_id")):
+            return None
+        return record
+
+    def find_reusable_download(self, out_name: str, prompt_hash: str) -> dict[str, Any] | None:
+        """Return a succeeded record whose video URL can be re-downloaded."""
+        record = self.get(out_name)
+        if not record:
+            return None
+        if record.get("status") != "succeeded":
+            return None
+        if record.get("prompt_hash") != prompt_hash:
+            return None
+        if not record.get("video_url"):
+            return None
+        return record
+
+    def record_created(
+        self,
+        out_name: str,
+        *,
+        task_id: str | None,
+        provider: str,
+        prompt_hash: str,
+        model: str,
+        resolution: str,
+        output_path: str,
+        video_id: str | None = None,
+        cost_estimate: float | None = None,
+    ) -> None:
+        """Persist a freshly created paid task (called right after creation).
+
+        If an unfinished record with a different prompt hash exists for the
+        same output, it is archived into the entry's history as "superseded"
+        before being replaced.
+        """
+        now = _utc_now_iso()
+
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", VIDEO_TASK_LEDGER_VERSION)
+            tasks = data.setdefault("tasks", {})
+            old = tasks.get(out_name)
+            record: dict[str, Any] = {
+                "task_id": task_id,
+                "video_id": video_id,
+                "provider": provider,
+                "out_name": out_name,
+                "take": _take_number_from_out_name(out_name),
+                "prompt_hash": prompt_hash,
+                "model": model,
+                "resolution": resolution,
+                "status": "submitted",
+                "output_path": output_path,
+                "cost_estimate": cost_estimate,
+                "created_at": now,
+                "updated_at": now,
+            }
+            history: list[dict[str, Any]] = []
+            if isinstance(old, dict):
+                history.extend(item for item in old.get("history", []) if isinstance(item, dict))
+                if (
+                    old.get("status") in RESUMABLE_TASK_STATUSES
+                    and old.get("prompt_hash") != prompt_hash
+                ):
+                    archived = {k: v for k, v in old.items() if k != "history"}
+                    archived["status"] = "superseded"
+                    archived["updated_at"] = now
+                    history.append(archived)
+            if history:
+                record["history"] = history[-_LEDGER_HISTORY_LIMIT:]
+            tasks[out_name] = record
+
+        update_json_mapping(self.path, update, default=self._default())
+
+    def update_status(self, out_name: str, status: str, **fields: Any) -> None:
+        """Update the status (and optional extra fields) of a ledger record."""
+        now = _utc_now_iso()
+
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", VIDEO_TASK_LEDGER_VERSION)
+            tasks = data.setdefault("tasks", {})
+            record = tasks.get(out_name)
+            if not isinstance(record, dict):
+                record = {"out_name": out_name, "created_at": now}
+                tasks[out_name] = record
+            record["status"] = status
+            record["updated_at"] = now
+            for key, value in fields.items():
+                if value is not None:
+                    record[key] = value
+
+        update_json_mapping(self.path, update, default=self._default())

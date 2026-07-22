@@ -1034,3 +1034,109 @@ class TestPipelineStageFactory:
             "source_media_replacement_queue.yaml",
         ):
             assert not (config.pipeline_dir / filename).exists()
+
+    def test_completed_pending_stage_halts_without_rerun(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("fake")
+                output = context.config.pipeline_dir / "fake.txt"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("ok", encoding="utf-8")
+                return StageResult("fake", True, outputs=[output], message="ok")
+
+        class FakeLaterStage:
+            name = "later"
+            depends_on = ["fake"]
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("later")
+                return StageResult("later", True, message="ok")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="pending-halt-test",
+                title="Pending Halt Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "narrascape.pipeline.STAGE_MAP",
+            {"fake": FakeStage, "later": FakeLaterStage},
+        )
+
+        # First build: 'fake' completes and a pending review request is created.
+        results = Pipeline(config).run(stages=["later"])
+        assert calls == ["fake"]
+        assert results["fake"].success is True
+        assert "later" not in results
+
+        # Second build: 'fake' is completed + pending. It must NOT be re-run,
+        # downstream stages must not run, and the build must not fail.
+        results = Pipeline(config).run(stages=["later"])
+
+        assert calls == ["fake"]
+        assert "later" not in results
+        assert all(r.success for r in results.values())
+        assert results["fake"].success is True
+        assert results["fake"].metadata["awaiting_approval"] is True
+        assert "narrascape approve -p . -s fake" in results["fake"].message
+
+    def test_completed_pending_stage_reruns_in_auto_approve_mode(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeStage:
+            name = "fake"
+            depends_on = []
+
+            def can_run(self, context):
+                return True, ""
+
+            def run(self, context):
+                calls.append("fake")
+                output = context.config.pipeline_dir / "fake.txt"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("ok", encoding="utf-8")
+                return StageResult("fake", True, outputs=[output], message="ok")
+
+        config = NarrascapeConfig(
+            project=ProjectConfig(
+                name="pending-auto-approve-test",
+                title="Pending Auto Approve Test",
+                script_file="scripts/script.yaml",
+            ),
+            project_dir=tmp_path,
+        )
+        (tmp_path / "scripts").mkdir(parents=True)
+        (tmp_path / "scripts" / "script.yaml").write_text(
+            "segments:\n- id: 1\n  text: Test segment.\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("narrascape.pipeline.STAGE_MAP", {"fake": FakeStage})
+
+        # First build without auto-approve leaves the stage completed + pending.
+        results = Pipeline(config).run(stages=["fake"])
+        assert results["fake"].success is True
+        assert calls == ["fake"]
+
+        # --approve (auto_approve) mode keeps its existing rerun semantics.
+        results = Pipeline(config, auto_approve=True).run(stages=["fake"])
+
+        assert calls == ["fake", "fake"]
+        assert results["fake"].success is True

@@ -18,6 +18,7 @@
 - `assets/videos/vid_<segment>_take_<take>.mp4` when `video.takes > 1`
 - `pipeline/<project>/video_prompt_quality.yaml`
 - `pipeline/<project>/video_gen_state.json`
+- `pipeline/<project>/video_tasks.json` (paid task ledger)
 
 ## Procedure
 
@@ -37,7 +38,11 @@
    - Seedance receives multimodal `reference_image` inputs.
 12. If `video.takes > 1`, submit one asynchronous task per take using stable
    `vid_<segment>_take_<take>` names.
-13. Poll each task until it succeeds or fails.
+13. Poll each task until it succeeds or fails, up to `video.max_poll_time`
+   seconds per task. Record every created task in `video_tasks.json`
+   immediately; on rerun, resume polling unfinished parameter-equivalent
+   tasks from the ledger instead of creating duplicate paid tasks, and
+   re-download from succeeded records before paying again.
 14. Download completed clips to `assets/videos/`.
 15. Record completed clip ids, `provider_selection`, `take_policy`, generated
     take ids, expected reference ids, resolved assets, missing ids, and uploaded

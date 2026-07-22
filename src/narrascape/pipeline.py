@@ -572,6 +572,40 @@ class Pipeline:
                     )
                     continue
 
+            # Completed but still awaiting human approval: halt without re-running.
+            # Re-running here would silently repeat LLM/paid API calls. Interactive
+            # and --approve (auto_approve) modes keep their existing rerun semantics.
+            if (
+                stage_name not in force_stages
+                and not self.force
+                and not self.interactive
+                and not self.auto_approve
+                and self.state.is_completed(stage_name)
+                and approval_status == "pending"
+            ):
+                if not self._completed_outputs_present(stage_name, stage):
+                    logger.warning(
+                        f"[{stage_name}] Completed state ignored because recorded outputs are missing"
+                    )
+                    self.state.set_stage_status(stage_name, "pending")
+                    self.approval._clear_status_files(stage_name)
+                else:
+                    approve_cmd = f"narrascape approve -p . -s {stage_name}"
+                    logger.info(
+                        f"[{stage_name}] Completed but awaiting approval; stopping here. "
+                        f"Run '{approve_cmd}' (or build with --approve) to continue."
+                    )
+                    results[stage_name] = StageResult(
+                        stage_name,
+                        True,
+                        message=(
+                            f"Awaiting approval; run '{approve_cmd}' "
+                            "or build with --approve to continue."
+                        ),
+                        metadata={"awaiting_approval": True},
+                    )
+                    break
+
             # Check prerequisites
             can_run, reason = stage.can_run(context)
             if not can_run:
@@ -931,6 +965,7 @@ class Pipeline:
             dirs_to_clean.extend(
                 [
                     self.config.pipeline_dir / "video_gen_state.json",
+                    self.config.pipeline_dir / "video_tasks.json",
                     self.config.pipeline_dir / "video_prompt_quality.yaml",
                     self.config.project_dir / "assets" / "videos" / "vid_*.mp4",
                 ]
