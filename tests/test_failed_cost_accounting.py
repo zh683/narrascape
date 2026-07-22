@@ -8,7 +8,6 @@ import time
 import urllib.error
 from types import SimpleNamespace
 
-from narrascape.cache import BuildCache
 from narrascape.config import BudgetConfig, NarrascapeConfig, ProjectConfig, Script
 from narrascape.stages.base import StageContext
 from narrascape.stages.generate_tts import GenerateTTSStage
@@ -38,7 +37,6 @@ def _context(config):
     return StageContext(
         config=config,
         script=Script.model_construct(segments=[]),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
     )
 
 

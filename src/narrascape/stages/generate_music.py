@@ -30,6 +30,7 @@ from narrascape.providers import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
+from narrascape.utils.fingerprint import request_fingerprint
 from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
@@ -185,12 +186,28 @@ class GenerateMusicStage(Stage):
             logger.info(
                 f"[{i + 1}/{len(zones)}] {zone.id} ({label}) · seg {start_id}-{end_id} · target {dur:.0f}s"
             )
-            result = self._generate_one(zone, dur, music_cfg, bgm_state, music_dir)
+            # 请求级指纹：时长量化到整秒，避免浮点抖动导致缓存失效
+            fingerprint = request_fingerprint(
+                provider=selection.tool.provider,
+                model=music_cfg.model,
+                prompt=zone.prompt,
+                params={
+                    "duration": int(round(dur)),
+                    "sample_rate": music_cfg.sample_rate,
+                    "bitrate": music_cfg.bitrate,
+                    "format": "mp3",
+                    "is_instrumental": True,
+                },
+            )
+            result = self._generate_one(
+                zone, dur, music_cfg, bgm_state, music_dir, fingerprint=fingerprint
+            )
             if result:
                 generated.append(result)
+                bgm_state.setdefault("fingerprints", {})[zone.id] = fingerprint
                 if zone.id not in bgm_state.get("done", []):
                     bgm_state.setdefault("done", []).append(zone.id)
-                    atomic_write_json(bgm_state_path, bgm_state)
+                atomic_write_json(bgm_state_path, bgm_state)
                 # Record actual cost per successful zone generation
                 per_zone = budget_tracker.get_cost_estimate("music", 1)
                 spend_ok, spend_msg = budget_tracker.try_spend(
@@ -295,11 +312,15 @@ class GenerateMusicStage(Stage):
         music_cfg: Any,
         state: dict[str, Any],
         music_dir: Path,
+        fingerprint: str | None = None,
     ) -> Path | None:
         zid = zone.id
         out = music_dir / f"{zid}.mp3"
-        if zid in state.get("done", []) and out.exists():
-            logger.info("    skip (cached in state)")
+        fingerprint_ok = (
+            fingerprint is None or state.get("fingerprints", {}).get(zid) == fingerprint
+        )
+        if zid in state.get("done", []) and out.exists() and fingerprint_ok:
+            logger.info("    skip (cached, fingerprint match)")
             return out
 
         prompt = zone.prompt

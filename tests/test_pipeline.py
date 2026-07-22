@@ -6,7 +6,6 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from narrascape.cache import BuildCache
 from narrascape.config import (
     EndingConfig,
     ImageConfig,
@@ -356,7 +355,6 @@ class TestPipelineStageFactory:
             StageContext(
                 config=config,
                 script=Script.model_construct(segments=[]),
-                cache=BuildCache(config.pipeline_dir / ".cache"),
             )
         )
 
@@ -896,7 +894,6 @@ class TestPipelineStageFactory:
             StageContext(
                 config=config,
                 script=Script.model_construct(segments=[]),
-                cache=BuildCache(config.pipeline_dir / ".cache"),
             )
         )
 

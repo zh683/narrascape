@@ -1373,45 +1373,6 @@ elif page == "ai_director":
 elif page == "system":
     st.header("System")
 
-    # Cache
-    st.markdown("<div class='section-label'>Cache</div>", unsafe_allow_html=True)
-    if st.session_state.project_dir and st.session_state.config:
-        try:
-            from narrascape.cache import BuildCache
-
-            cache_dir = Path(st.session_state.config.pipeline_dir) / ".cache"
-            cache = BuildCache(cache_dir)
-            entries: list[Path] = list(cache_dir.iterdir()) if cache_dir.exists() else []
-            cache_summary = (
-                "<div style='color:#525252;font-size:0.8em'>"
-                f"{len(entries)} entries &middot; {cache_dir}</div>"
-            )
-            st.markdown(cache_summary, unsafe_allow_html=True)
-            if entries:
-                cache_rows: list[dict[str, Any]] = []
-                for entry in entries[:30]:
-                    try:
-                        stat = entry.stat()
-                        cache_rows.append(
-                            {
-                                "file": entry.name[:20],
-                                "size": _fmt_size(entry),
-                                "modified": datetime.fromtimestamp(stat.st_mtime).strftime(
-                                    "%Y-%m-%d %H:%M"
-                                ),
-                            }
-                        )
-                    except Exception:
-                        pass
-                st.dataframe(cache_rows, use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.error(f"Cache: {e}")
-    else:
-        st.markdown(
-            "<div style='color:#404040;font-style:italic'>Select a project.</div>",
-            unsafe_allow_html=True,
-        )
-
     # Budget
     st.markdown("<div class='section-label'>Budget</div>", unsafe_allow_html=True)
     if st.session_state.project_dir and st.session_state.config:

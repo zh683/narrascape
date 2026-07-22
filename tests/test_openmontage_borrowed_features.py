@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, ProjectConfig, Script
 from narrascape.pipeline import _resolve_dependencies, get_stage_map
 from narrascape.stages.base import StageContext
@@ -96,7 +95,6 @@ def test_source_media_stage_builds_asset_manifest_from_local_library(tmp_path):
     context = StageContext(
         config=config,
         script=Script.model_construct(segments=[]),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
     )
 
     result = SourceMediaStage().run(context)

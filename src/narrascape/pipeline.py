@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from narrascape.cache import BuildCache
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
     ImageProvider,
@@ -302,7 +301,6 @@ class Pipeline:
         self.minimax_api_key = minimax_api_key
         # Script may not exist yet (research/write stages create it)
         self.script = self._load_script()
-        self.cache = BuildCache(config.pipeline_dir / ".cache")
         self.state = PipelineState(config.pipeline_dir / "state.json")
         self.approval = PipelineApproval(config.pipeline_dir)
         # Project-level budget tracker shared by LLM usage accounting.
@@ -546,7 +544,6 @@ class Pipeline:
         context = StageContext(
             config=self.config,
             script=self.script,
-            cache=self.cache,
             state={},
             dry_run=self.dry_run,
         )

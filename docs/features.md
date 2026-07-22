@@ -191,7 +191,7 @@ This page describes the implemented product surface as it exists in the codebase
 
 ## Cache And Rebuilds
 
-- Content-hash cache under `pipeline/<name>/.cache`.
+- Request-level content-addressed fingerprints for paid generation stages (`generate_images`, `generate_video`, `generate_tts`, `generate_music`): an artifact is reused only when the output file exists and the stored fingerprint of its originating request (prompt, model, parameters, reference content) matches the current request.
 - Stage state tracking.
 - `--force` bypasses cached stage completion.
 - `clean` can remove stage artifacts or all pipeline outputs.

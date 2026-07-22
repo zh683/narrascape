@@ -488,7 +488,6 @@ def research_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.cache import BuildCache
     from narrascape.stages.base import StageContext
     from narrascape.stages.research import ResearchStage
 
@@ -496,7 +495,6 @@ def research_cmd(
     context = StageContext(
         config=config,
         script=_empty_script(),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
     )
@@ -561,7 +559,6 @@ def write_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.cache import BuildCache
     from narrascape.stages.base import StageContext
     from narrascape.stages.write import WriteStage
 
@@ -576,7 +573,6 @@ def write_cmd(
     context = StageContext(
         config=config,
         script=_empty_script(),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
     )
@@ -622,7 +618,6 @@ def humanize_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.cache import BuildCache
     from narrascape.stages.base import StageContext
     from narrascape.stages.humanize import HumanizeStage
 
@@ -632,7 +627,6 @@ def humanize_cmd(
     context = StageContext(
         config=config,
         script=_load_script_or_empty(config),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
     )
@@ -803,13 +797,11 @@ def pre_production_cmd(
         generate_expressions=not skip_expressions,
         generate_storyboard=not skip_storyboard,
     )
-    from narrascape.cache import BuildCache
     from narrascape.stages.base import StageContext
 
     context = StageContext(
         config=config,
         script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
     )
@@ -934,13 +926,11 @@ def design_cmd(
     from narrascape.stages.design import DesignStage
 
     stage = DesignStage(llm_client=llm_client, style_template=style)
-    from narrascape.cache import BuildCache
     from narrascape.stages.base import StageContext
 
     context = StageContext(
         config=config,
         script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
         state={},
         dry_run=False,
     )

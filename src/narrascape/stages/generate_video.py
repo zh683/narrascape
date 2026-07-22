@@ -51,6 +51,7 @@ from narrascape.stages.generate_video_services import (
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.budget import BudgetTracker
 from narrascape.utils.ffmpeg import validate_video
+from narrascape.utils.fingerprint import hash_reference, request_fingerprint
 from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import (
     atomic_write_json,
@@ -264,16 +265,6 @@ class GenerateVideoStage(Stage):
             vid_id = f"vid_{seg['segment_id']:02d}"
             out_names = self._output_names_for_segment(vid_id, take_count)
             state.setdefault("generated_takes", {})[vid_id] = list(out_names)
-            cached_names = [
-                out_name
-                for out_name in out_names
-                if out_name in done and (videos_dir / f"{out_name}.mp4").exists()
-            ]
-            if len(cached_names) == len(out_names):
-                logger.info(f"[{i + 1}/{len(segments)}] {vid_id} skip (cached)")
-                ok_count += len(out_names)
-                job_index += len(out_names)
-                continue
 
             # Build video prompt from cinematic_format or image_prompt
             video_prompt = self._build_video_prompt(
@@ -307,6 +298,31 @@ class GenerateVideoStage(Stage):
             model = self._segment_model(seg, provider_name)
             resolution = self._segment_resolution(seg, provider_name)
 
+            # 请求级指纹：文件存在且台账指纹匹配才允许跳过付费生成
+            segment_fingerprint = self._video_request_fingerprint(
+                provider=provider_name,
+                model=model,
+                resolution=resolution,
+                prompt=video_prompt,
+                negative_prompt=negative_prompt,
+                first_frame=first_frame,
+                last_frame=last_frame,
+                reference_images=reference_images,
+            )
+
+            cached_names = [
+                out_name
+                for out_name in out_names
+                if out_name in done
+                and (videos_dir / f"{out_name}.mp4").exists()
+                and self._ledger_fingerprint_matches(out_name, segment_fingerprint)
+            ]
+            if len(cached_names) == len(out_names):
+                logger.info(f"[{i + 1}/{len(segments)}] {vid_id} skip (cached, fingerprint match)")
+                ok_count += len(out_names)
+                job_index += len(out_names)
+                continue
+
             logger.info(f"[{i + 1}/{len(segments)}] {vid_id}: {video_prompt[:60]}...")
             logger.info(
                 f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}, "
@@ -318,7 +334,11 @@ class GenerateVideoStage(Stage):
                 state.setdefault("reference_inputs", {})[out_name] = reference_inputs["state"]
                 atomic_write_json(state_path, state)
 
-                if out_name in done and (videos_dir / f"{out_name}.mp4").exists():
+                if (
+                    out_name in done
+                    and (videos_dir / f"{out_name}.mp4").exists()
+                    and self._ledger_fingerprint_matches(out_name, segment_fingerprint)
+                ):
                     logger.info(f"  [{job_index}/{total_jobs}] {out_name} skip (cached)")
                     ok_count += 1
                     continue
@@ -1270,6 +1290,49 @@ class GenerateVideoStage(Stage):
         logger.info(f"OK {out_mp4.stat().st_size / 1024 / 1024:.1f}MB")
         return True
 
+    def _video_request_fingerprint(
+        self,
+        *,
+        provider: str,
+        model: str,
+        resolution: str,
+        prompt: str,
+        negative_prompt: str,
+        first_frame: str | None,
+        last_frame: str | None,
+        reference_images: list[str] | None,
+    ) -> str:
+        """Full-fidelity fingerprint of one paid video generation request.
+
+        Distinct from ``video_task_prompt_hash``: the prompt hash is the
+        stable task-equivalence key for resuming in-flight paid tasks and
+        must never change value for existing ledger records; this fingerprint
+        additionally covers negative prompt, ratio, duration, and reference
+        content, and gates cache skips / free re-downloads.
+        """
+        references = [first_frame, *(reference_images or []), last_frame]
+        return request_fingerprint(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            params={
+                "resolution": resolution,
+                "ratio": self.ratio,
+                "duration": self.duration,
+            },
+            reference_hashes=[hash_reference(value) for value in references if value],
+        )
+
+    def _ledger_fingerprint_matches(self, out_name: str, fingerprint: str) -> bool:
+        """Cache gate: without a ledger there is no fingerprint store, so the
+        legacy "file exists" behavior is kept; with a ledger, only an exact
+        fingerprint match on a succeeded record allows skipping."""
+        ledger = self._task_ledger
+        if ledger is None:
+            return True
+        return ledger.fingerprint_matches(out_name, fingerprint)
+
     def _generate_one(
         self,
         prompt: str,
@@ -1284,23 +1347,36 @@ class GenerateVideoStage(Stage):
         negative_prompt: str = "",
     ) -> bool:
         out_mp4 = videos_dir / f"{out_name}.mp4"
-        if out_mp4.exists():
-            return True
 
         ledger = self._task_ledger
         prompt_hash = video_task_prompt_hash(
             provider=provider, model=model, resolution=resolution, prompt=prompt
         )
+        fingerprint = self._video_request_fingerprint(
+            provider=provider,
+            model=model,
+            resolution=resolution,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            first_frame=first_frame,
+            last_frame=last_frame,
+            reference_images=reference_images,
+        )
+
+        if out_mp4.exists():
+            if self._ledger_fingerprint_matches(out_name, fingerprint):
+                return True
+            logger.info(f"  {out_name}: request fingerprint changed, regenerating")
 
         if ledger is not None:
             # 已成功但下载失败的旧任务：直接复用 video_url 重新下载，不再付费。
-            reusable = ledger.find_reusable_download(out_name, prompt_hash)
+            reusable = ledger.find_reusable_download(out_name, prompt_hash, fingerprint)
             if reusable is not None:
                 logger.info(f"  {out_name}: re-downloading from completed task (no new task)")
                 return self._download_video(str(reusable["video_url"]), out_mp4)
 
             # 断点续轮询：恢复未完成的已付费任务，绝不重复创建。
-            record = ledger.find_resumable(out_name, prompt_hash)
+            record = ledger.find_resumable(out_name, prompt_hash, fingerprint)
             if record is not None:
                 task_id = record.get("task_id")
                 video_id = record.get("video_id")
@@ -1352,6 +1428,7 @@ class GenerateVideoStage(Stage):
                     resolution=resolution,
                     output_path=out_mp4.as_posix(),
                     cost_estimate=self._per_task_cost_estimate,
+                    request_fingerprint=fingerprint,
                 )
             video_url = self._poll_agnes_task(task_id=task_id, video_id=video_id)
         else:
@@ -1376,6 +1453,7 @@ class GenerateVideoStage(Stage):
                     resolution=resolution,
                     output_path=out_mp4.as_posix(),
                     cost_estimate=self._per_task_cost_estimate,
+                    request_fingerprint=fingerprint,
                 )
             video_url = self._poll_task(task_id)
         if not video_url:

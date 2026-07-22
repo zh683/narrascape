@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, Script
 from narrascape.utils.safe_io import load_json_mapping, load_yaml_mapping
 
@@ -17,7 +16,6 @@ class StageContext:
 
     config: NarrascapeConfig
     script: Script
-    cache: BuildCache
     state: dict[str, Any] = field(default_factory=dict)
     dry_run: bool = False
 

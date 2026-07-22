@@ -25,6 +25,7 @@ from narrascape.providers import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
+from narrascape.utils.fingerprint import request_fingerprint
 from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
@@ -140,15 +141,9 @@ class GenerateTTSStage(Stage):
             sid = seg.id
             out = tts_dir / f"seg_{sid:02d}.mp3"
 
-            if sid in done and out.exists():
-                logger.info(f"  [{sid:02d}/{ns}] skip (cached)")
-                continue
-
             text = seg.text.replace("\n", " ").strip()
             text = self._apply_pauses(text, seg, tts_cfg)
             merged_tone = self._merge_pronunciations(global_dict, seg.pronunciation)
-
-            logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
 
             payload = {
                 "model": tts_cfg.model,
@@ -177,6 +172,20 @@ class GenerateTTSStage(Stage):
 
             if merged_tone:
                 payload["pronunciation_dict"] = {"tone": merged_tone}
+
+            # 请求级指纹：文件存在 + state 指纹匹配才允许跳过付费生成
+            fingerprint = request_fingerprint(
+                provider=selection.tool.provider,
+                model=str(payload["model"]),
+                prompt=str(payload["text"]),
+                params={k: v for k, v in payload.items() if k not in ("model", "text")},
+            )
+            fingerprints = state.setdefault("fingerprints", {})
+            if sid in done and out.exists() and fingerprints.get(str(sid)) == fingerprint:
+                logger.info(f"  [{sid:02d}/{ns}] skip (cached, fingerprint match)")
+                continue
+
+            logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
 
             try:
                 data = json.dumps(payload).encode("utf-8")
@@ -216,6 +225,7 @@ class GenerateTTSStage(Stage):
                     atomic_write_bytes(out, raw)
                     done.add(sid)
                     state["done"] = list(done)
+                    state.setdefault("fingerprints", {})[str(sid)] = fingerprint
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
                     # Record actual cost per successful TTS generation
                     per_tts = budget_tracker.get_cost_estimate("tts", 1)

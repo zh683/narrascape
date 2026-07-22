@@ -5,7 +5,6 @@ from pathlib import Path
 import yaml
 
 from narrascape.agent.models import ShotDesign
-from narrascape.cache import BuildCache
 from narrascape.config import (
     ImageConfig,
     ImageProvider,
@@ -64,7 +63,6 @@ def _context(config: NarrascapeConfig) -> StageContext:
     return StageContext(
         config=config,
         script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
     )
 
 

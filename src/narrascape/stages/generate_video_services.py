@@ -453,31 +453,77 @@ class VideoTaskLedger:
         record = self._load().get("tasks", {}).get(out_name)
         return dict(record) if isinstance(record, dict) else None
 
-    def find_resumable(self, out_name: str, prompt_hash: str) -> dict[str, Any] | None:
-        """Return an unfinished, parameter-equivalent record, if any."""
+    def find_resumable(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return an unfinished, parameter-equivalent record, if any.
+
+        Records carrying a ``request_fingerprint`` must match it exactly —
+        resuming a task whose full request changed would download content
+        that does not match the current request. Legacy records without a
+        stored fingerprint fall back to ``prompt_hash`` equivalence so
+        in-flight tasks recorded before fingerprints existed stay resumable.
+        """
         record = self.get(out_name)
         if not record:
             return None
         if record.get("status") not in RESUMABLE_TASK_STATUSES:
             return None
-        if record.get("prompt_hash") != prompt_hash:
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
             return None
         if not (record.get("task_id") or record.get("video_id")):
             return None
         return record
 
-    def find_reusable_download(self, out_name: str, prompt_hash: str) -> dict[str, Any] | None:
-        """Return a succeeded record whose video URL can be re-downloaded."""
+    def find_reusable_download(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a succeeded record whose video URL can be re-downloaded.
+
+        Records carrying a ``request_fingerprint`` must match it exactly.
+        Legacy records without one fall back to the weaker ``prompt_hash``
+        equivalence, preserving the pre-fingerprint free-redownload path.
+        """
         record = self.get(out_name)
         if not record:
             return None
         if record.get("status") != "succeeded":
             return None
-        if record.get("prompt_hash") != prompt_hash:
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
             return None
         if not record.get("video_url"):
             return None
         return record
+
+    def fingerprint_matches(self, out_name: str, request_fingerprint: str) -> bool:
+        """True when a succeeded record exists with this exact fingerprint.
+
+        This is the cache gate for skipping paid regeneration: the on-disk
+        artifact is only reusable when the request that produced it is
+        fingerprint-identical to the current one. Legacy records (no stored
+        fingerprint) never match and are regenerated once.
+        """
+        record = self.get(out_name)
+        if not record:
+            return False
+        if record.get("status") != "succeeded":
+            return False
+        stored = record.get("request_fingerprint")
+        return stored is not None and stored == request_fingerprint
 
     def record_created(
         self,
@@ -491,6 +537,7 @@ class VideoTaskLedger:
         output_path: str,
         video_id: str | None = None,
         cost_estimate: float | None = None,
+        request_fingerprint: str | None = None,
     ) -> None:
         """Persist a freshly created paid task (called right after creation).
 
@@ -516,6 +563,7 @@ class VideoTaskLedger:
                 "status": "submitted",
                 "output_path": output_path,
                 "cost_estimate": cost_estimate,
+                "request_fingerprint": request_fingerprint,
                 "created_at": now,
                 "updated_at": now,
             }

@@ -155,13 +155,22 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 ```text
 pipeline/<project>/state.json
 pipeline/<project>/approvals/
-pipeline/<project>/.cache/
 pipeline/<project>/budget_state.json
 pipeline/<project>/video_gen_state.json
+pipeline/<project>/video_tasks.json
 pipeline/<project>/render_report.yaml
 ```
 
-`state.json` stores stage completion. Approval files store human review state. The cache stores content-addressed rendered artifacts.
+`state.json` stores stage completion. Approval files store human review state.
+Paid generation stages (images, video, TTS, music) skip re-generation only when
+the output file exists AND its stored request fingerprint matches the current
+request (prompt, model, size/resolution/duration, voice/speed, reference
+content). Per-unit fingerprints live in each stage's state file
+(`image_gen_state.json`, `tts_state.json`, `bgm_state.json` under a
+`fingerprints` key); for video they live in the paid task ledger
+(`video_tasks.json`, `request_fingerprint` field) alongside the stable
+`prompt_hash` used for in-flight task resume. Legacy state without
+fingerprints never matches and is regenerated once.
 
 ## LLM Client
 

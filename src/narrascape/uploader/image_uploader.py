@@ -19,6 +19,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from narrascape.utils.fingerprint import hash_file_content
+
 logger = logging.getLogger("narrascape.uploader")
 
 
@@ -38,7 +40,7 @@ class ImageUploader:
                      "volcengine" (即梦 native), or "http" (generic POST).
         """
         self.backend = backend
-        self._cache: dict[str, str] = {}  # local_path -> url
+        self._cache: dict[str, str] = {}  # content hash (fallback: resolved path) -> url
 
     def upload(self, local_path: str | Path, force: bool = False) -> str:
         """Upload a local image and return a URL accessible by the API.
@@ -54,7 +56,11 @@ class ImageUploader:
         if not p.exists():
             raise FileNotFoundError(f"Reference image not found: {p}")
 
-        cache_key = str(p.resolve())
+        # 内容寻址：同路径但内容已变化的文件必须重新上传，不得复用旧 URL
+        try:
+            cache_key = hash_file_content(p)
+        except OSError:
+            cache_key = str(p.resolve())
         if not force and cache_key in self._cache:
             return self._cache[cache_key]
 
