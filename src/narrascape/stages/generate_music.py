@@ -193,7 +193,13 @@ class GenerateMusicStage(Stage):
                     atomic_write_json(bgm_state_path, bgm_state)
                 # Record actual cost per successful zone generation
                 per_zone = budget_tracker.get_cost_estimate("music", 1)
-                spend_ok, spend_msg = budget_tracker.try_spend(per_zone)
+                spend_ok, spend_msg = budget_tracker.try_spend(
+                    per_zone,
+                    kind="music",
+                    stage="generate_music",
+                    provider=selection.tool.provider,
+                    detail=zone.id,
+                )
                 if not spend_ok:
                     return StageResult(self.name, False, message=spend_msg)
             else:

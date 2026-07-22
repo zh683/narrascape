@@ -281,9 +281,25 @@ budget:
   total_estimated: null
   mode: warn              # observe | warn | cap
   per_action_threshold: 0.5
+  llm_default_rate:       # conservative fallback for unlisted models
+    input_per_million_usd: 5.0
+    output_per_million_usd: 15.0
+  llm_rates:              # USD per million tokens, keyed by model name
+    gpt-4o:
+      input_per_million_usd: 2.5
+      output_per_million_usd: 10.0
 ```
 
 Set any `*_estimated` value to `0.0` for providers that are free but still rate-limited. `null` means Narrascape uses its conservative default estimate.
+
+`llm_rates` / `llm_default_rate` price LLM token usage. Every completed LLM
+call is recorded into `pipeline/<name>/budget_state.json` (providers without
+usage reporting get a chars/4 token estimate; `local`, `bridge`, and
+`ai_assistant` providers are recorded as zero-cost entries). Provider-billed
+failures — TTS business errors, failed/expired video tasks — are recorded as
+`failed` entries and count against the cap, while network-layer failures are
+zero-cost `network_error` entries. The `assistant_handoff` stage aggregates
+all entries into `pipeline/<name>/cost_report.yaml`.
 
 ## Script File
 

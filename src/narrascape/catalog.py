@@ -23,6 +23,7 @@ CORE_ARTIFACT_TEMPLATES: dict[str, str] = {
     "creative_review": "pipeline/{name}/creative_review.yaml",
     "visual_semantic_report": "pipeline/{name}/visual_semantic_report.yaml",
     "film_supervisor": "pipeline/{name}/film_supervisor.yaml",
+    "cost_report": "pipeline/{name}/cost_report.yaml",
     "assistant_handoff": "pipeline/{name}/assistant_handoff.yaml",
     "rework_execution": "pipeline/{name}/rework_execution.yaml",
 }

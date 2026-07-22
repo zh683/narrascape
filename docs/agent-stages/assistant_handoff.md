@@ -11,6 +11,7 @@
 
 - `pipeline/<project>/assistant_handoff.yaml`
 - `pipeline/<project>/assistant_handoff.md`
+- `pipeline/<project>/cost_report.yaml` (aggregated from `budget_state.json`)
 
 ## Procedure
 

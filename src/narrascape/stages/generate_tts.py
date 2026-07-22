@@ -195,6 +195,15 @@ class GenerateTTSStage(Stage):
                 if r["base_resp"]["status_code"] != 0:
                     logger.error(f"FAIL: {r['base_resp']}")
                     state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                    # 请求已到达服务端并被处理（HTTP 200 + 业务失败）：按估计成本记账
+                    budget_tracker.record_actual(
+                        budget_tracker.get_cost_estimate("tts", 1),
+                        kind="tts",
+                        status="failed",
+                        stage="generate_tts",
+                        provider=selection.tool.provider,
+                        detail=f"seg_{sid}",
+                    )
                 else:
                     raw_hex = (
                         r["data"]["audio"]
@@ -210,12 +219,27 @@ class GenerateTTSStage(Stage):
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
                     # Record actual cost per successful TTS generation
                     per_tts = budget_tracker.get_cost_estimate("tts", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_tts)
+                    spend_ok, spend_msg = budget_tracker.try_spend(
+                        per_tts,
+                        kind="tts",
+                        stage="generate_tts",
+                        provider=selection.tool.provider,
+                        detail=f"seg_{sid}",
+                    )
                     if not spend_ok:
                         return StageResult(self.name, False, message=spend_msg)
             except Exception as e:
                 logger.error(f"FAIL: {e}")
                 state["errors"].append(f"seg_{sid}: {e}")
+                # 网络层失败（请求未到达服务端）：不计费，仅记 zero-cost 条目
+                budget_tracker.record_actual(
+                    0.0,
+                    kind="tts",
+                    status="network_error",
+                    stage="generate_tts",
+                    provider=selection.tool.provider,
+                    detail=f"seg_{sid}",
+                )
 
             atomic_write_json(state_path, state)
             time.sleep(0.3)

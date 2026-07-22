@@ -448,6 +448,25 @@ class EndingConfig(BaseModel):
 # ───────────────────────────────────────────
 
 
+class LLMTokenRate(BaseModel):
+    """USD price per million tokens for one LLM model."""
+
+    input_per_million_usd: float = Field(5.0, ge=0.0)
+    output_per_million_usd: float = Field(15.0, ge=0.0)
+
+
+def _default_llm_rates() -> dict[str, LLMTokenRate]:
+    return {
+        "gpt-4o": LLMTokenRate(input_per_million_usd=2.5, output_per_million_usd=10.0),
+        "gpt-4o-mini": LLMTokenRate(input_per_million_usd=0.15, output_per_million_usd=0.6),
+        "deepseek-chat": LLMTokenRate(input_per_million_usd=0.27, output_per_million_usd=1.1),
+        "claude-3-sonnet-20240229": LLMTokenRate(
+            input_per_million_usd=3.0, output_per_million_usd=15.0
+        ),
+        "doubao-pro-32k": LLMTokenRate(input_per_million_usd=0.8, output_per_million_usd=2.0),
+    }
+
+
 class BudgetConfig(BaseModel):
     """Cost estimation and budget controls."""
 
@@ -459,6 +478,14 @@ class BudgetConfig(BaseModel):
     total_estimated: float | None = Field(None)
     mode: Literal["observe", "warn", "cap"] = Field("warn")
     per_action_threshold: float = Field(0.5, ge=0.0)
+    llm_rates: dict[str, LLMTokenRate] = Field(
+        default_factory=_default_llm_rates,
+        description="USD per million tokens keyed by model name; overrides defaults.",
+    )
+    llm_default_rate: LLMTokenRate = Field(
+        default_factory=LLMTokenRate,
+        description="Conservative fallback token price for models not in llm_rates.",
+    )
 
 
 # ───────────────────────────────────────────

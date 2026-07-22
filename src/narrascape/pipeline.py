@@ -50,6 +50,7 @@ from narrascape.stages.subtitles import SubtitleStage
 from narrascape.stages.take_select import TakeSelectStage
 from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
 from narrascape.stages.write import WriteStage
+from narrascape.utils.budget import BudgetTracker, estimate_llm_cost
 from narrascape.utils.safe_io import (
     atomic_write_json,
     load_json_mapping,
@@ -304,6 +305,43 @@ class Pipeline:
         self.cache = BuildCache(config.pipeline_dir / ".cache")
         self.state = PipelineState(config.pipeline_dir / "state.json")
         self.approval = PipelineApproval(config.pipeline_dir)
+        # Project-level budget tracker shared by LLM usage accounting.
+        self.budget_tracker = BudgetTracker(
+            config.budget, config.pipeline_dir / "budget_state.json"
+        )
+        self._active_stage: str | None = None
+        if self.llm_client is not None and hasattr(self.llm_client, "on_usage"):
+            self.llm_client.on_usage = self._record_llm_usage
+
+    def _record_llm_usage(self, usage: dict[str, int], model: str, estimated: bool) -> None:
+        """Budget-track one completed LLM call (invoked via LLMClient.on_usage).
+
+        Free providers (local / bridge / ai_assistant) are recorded as
+        zero-cost entries so the cost report still shows their token volume.
+        """
+        provider = str(getattr(self.llm_client.config, "provider", "") or "")
+        prompt_tokens = int(usage.get("prompt_tokens", 0))
+        completion_tokens = int(usage.get("completion_tokens", 0))
+        if provider in ("local", "bridge", "ai_assistant"):
+            cost = 0.0
+        else:
+            cost = estimate_llm_cost(
+                self.config.budget.llm_rates,
+                self.config.budget.llm_default_rate,
+                model,
+                prompt_tokens,
+                completion_tokens,
+            )
+        self.budget_tracker.record_actual(
+            cost,
+            kind="llm",
+            stage=self._active_stage or "",
+            provider=provider,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated=estimated,
+        )
 
     def _load_script(self) -> Script:
         """Load script if it exists, otherwise return empty placeholder."""
@@ -631,6 +669,7 @@ class Pipeline:
             start = time.monotonic()
 
             try:
+                self._active_stage = stage_name
                 result = stage.run(context)
                 result.duration_seconds = time.monotonic() - start
             except Exception as e:
@@ -641,6 +680,8 @@ class Pipeline:
                     message=f"Exception: {e}",
                     duration_seconds=time.monotonic() - start,
                 )
+            finally:
+                self._active_stage = None
 
             if result.success:
                 strict_ok, strict_reason = self._strict_director_check(stage_name)
@@ -687,6 +728,7 @@ class Pipeline:
                             stage = self._create_stage(stage_cls)
                             retry_start = time.monotonic()
                             try:
+                                self._active_stage = stage_name
                                 result = stage.run(context)
                                 result.duration_seconds = time.monotonic() - retry_start
                             except Exception as e:
@@ -697,6 +739,8 @@ class Pipeline:
                                     message=f"Retry exception: {e}",
                                     duration_seconds=time.monotonic() - retry_start,
                                 )
+                            finally:
+                                self._active_stage = None
                             results[stage_name] = result
                             if not result.success:
                                 self.state.set_stage_status(stage_name, "failed")

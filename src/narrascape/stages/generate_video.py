@@ -49,6 +49,7 @@ from narrascape.stages.generate_video_services import (
     video_task_prompt_hash,
 )
 from narrascape.uploader.image_uploader import ImageUploader
+from narrascape.utils.budget import BudgetTracker
 from narrascape.utils.ffmpeg import validate_video
 from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import (
@@ -121,6 +122,7 @@ class GenerateVideoStage(Stage):
         self._selected_provider = "seedance"
         self._task_ledger: VideoTaskLedger | None = None
         self._per_task_cost_estimate: float | None = None
+        self._budget_tracker: BudgetTracker | None = None
         self.video_planner = VideoGenerationPlanner(
             model=self.model,
             agnes_model=self.agnes_model,
@@ -227,9 +229,8 @@ class GenerateVideoStage(Stage):
             )
 
         # Budget check
-        from narrascape.utils.budget import BudgetTracker
-
         budget_tracker = BudgetTracker(config.budget, pipe_dir / "budget_state.json")
+        self._budget_tracker = budget_tracker
         take_count = self._takes_per_shot()
         total_jobs = len(segments) * take_count
         est_cost = budget_tracker.get_cost_estimate("video", total_jobs)
@@ -345,7 +346,13 @@ class GenerateVideoStage(Stage):
                     state["done"] = sorted(done)
                     atomic_write_json(state_path, state)
                     per_video = budget_tracker.get_cost_estimate("video", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_video)
+                    spend_ok, spend_msg = budget_tracker.try_spend(
+                        per_video,
+                        kind="video",
+                        stage="generate_video",
+                        provider=provider_name,
+                        detail=out_name,
+                    )
                     if not spend_ok:
                         return StageResult(self.name, False, message=spend_msg)
                 else:
@@ -1195,6 +1202,29 @@ class GenerateVideoStage(Stage):
             return self._query_agnes_task_status(task_id=task_id, video_id=video_id)
         return self._query_task_status(str(task_id)) if task_id else "error"
 
+    def _record_failed_video_cost(self, out_name: str, provider: str) -> None:
+        """Account a provider-billed failed video task (failed/expired/gone).
+
+        The task was created and reached a terminal failure server-side, so
+        the estimated cost is real spend. Paired with the success path in
+        run() — each created task ends in exactly one of the two, so there is
+        no double counting.
+        """
+        tracker = self._budget_tracker
+        if tracker is None:
+            return
+        cost = self._per_task_cost_estimate
+        if cost is None:
+            cost = tracker.get_cost_estimate("video", 1)
+        tracker.record_actual(
+            cost,
+            kind="video",
+            status="failed",
+            stage="generate_video",
+            provider=provider,
+            detail=out_name,
+        )
+
     def _record_poll_outcome(
         self,
         ledger: VideoTaskLedger,
@@ -1212,8 +1242,10 @@ class GenerateVideoStage(Stage):
         status = self._query_provider_task_status(provider, task_id, video_id)
         if status in ("failed", "expired"):
             ledger.update_status(out_name, status)
+            self._record_failed_video_cost(out_name, provider)
         elif status == "not_found":
             ledger.update_status(out_name, "failed", error="task not found (HTTP 404)")
+            self._record_failed_video_cost(out_name, provider)
         else:
             # queued/running/unknown/error: keep the record resumable.
             ledger.update_status(out_name, "polling")
@@ -1287,9 +1319,11 @@ class GenerateVideoStage(Stage):
                 status = self._query_provider_task_status(provider, task_id, video_id)
                 if status in ("failed", "expired"):
                     ledger.update_status(out_name, status)
+                    self._record_failed_video_cost(out_name, provider)
                     # 任务已终结：清理后按正常流程创建新任务
                 elif status == "not_found":
                     ledger.update_status(out_name, "failed", error="task not found (HTTP 404)")
+                    self._record_failed_video_cost(out_name, provider)
                 else:
                     # 远端仍在运行（或状态未知）：保留台账，下次运行继续续轮询
                     ledger.update_status(out_name, "polling")

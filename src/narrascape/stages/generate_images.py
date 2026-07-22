@@ -197,7 +197,12 @@ class GenerateImagesStage(Stage):
                         ok_count += 1
                         # Record actual cost per successful generation in batch
                         per_image = budget_tracker.get_cost_estimate("image", 1)
-                        spend_ok, spend_msg = budget_tracker.try_spend(per_image)
+                        spend_ok, spend_msg = budget_tracker.try_spend(
+                            per_image,
+                            kind="image",
+                            stage="generate_images",
+                            provider=provider_name,
+                        )
                         if not spend_ok:
                             return StageResult(self.name, False, message=spend_msg)
                     else:
@@ -260,7 +265,13 @@ class GenerateImagesStage(Stage):
                     atomic_write_json(state_path, state)
                     # Record actual cost per successful generation
                     per_image = budget_tracker.get_cost_estimate("image", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(per_image)
+                    spend_ok, spend_msg = budget_tracker.try_spend(
+                        per_image,
+                        kind="image",
+                        stage="generate_images",
+                        provider=provider_name,
+                        detail=pid,
+                    )
                     if not spend_ok:
                         return StageResult(self.name, False, message=spend_msg)
                 else:
