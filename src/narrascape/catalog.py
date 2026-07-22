@@ -5,7 +5,7 @@ from pathlib import Path
 CORE_ARTIFACT_TEMPLATES: dict[str, str] = {
     "script": "scripts/script.yaml",
     "pre_production": "pipeline/{name}/pre_production.yaml",
-    "design_report": "design_report.yaml",
+    "design_report": "pipeline/{name}/design_report.yaml",
     "screenplay_structure": "pipeline/{name}/screenplay_structure.yaml",
     "director_contract": "pipeline/{name}/director_contract.yaml",
     "reference_plates": "pipeline/{name}/reference_plates.yaml",

@@ -32,7 +32,7 @@ from narrascape.providers import (
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
-from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import (
     atomic_write_json,
     download_to_path,
@@ -472,7 +472,8 @@ class GenerateImagesStage(Stage):
         finally:
             tmp.unlink(missing_ok=True)
 
-            logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
+            if out_png.exists():
+                logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
         return True
 
     def _post_image_request(self, req: urllib.request.Request, *, provider: str) -> dict[str, Any]:
@@ -484,6 +485,7 @@ class GenerateImagesStage(Stage):
                     base_delay=65.0,
                     max_delay=75.0,
                     retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                    retryable_if=is_retryable_http_error,
                     on_retry=self._log_agnes_retry,
                 )
             )
@@ -493,6 +495,7 @@ class GenerateImagesStage(Stage):
                 max_retries=3,
                 base_delay=2.0,
                 retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                retryable_if=is_retryable_http_error,
             )
         )
 
@@ -650,6 +653,7 @@ class GenerateImagesStage(Stage):
                     max_retries=3,
                     base_delay=2.0,
                     retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                    retryable_if=is_retryable_http_error,
                 )
             )
         except Exception as e:

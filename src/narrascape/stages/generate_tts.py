@@ -25,7 +25,7 @@ from narrascape.providers import (
 )
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
-from narrascape.utils.retry import retry_with_backoff
+from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_tts")
@@ -189,6 +189,7 @@ class GenerateTTSStage(Stage):
                     max_retries=3,
                     base_delay=2.0,
                     retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
+                    retryable_if=is_retryable_http_error,
                 )
 
                 if r["base_resp"]["status_code"] != 0:
