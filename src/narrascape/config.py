@@ -234,6 +234,9 @@ class TTSConfig(BaseModel):
     continuous_sound: bool = Field(True, description="Clause-level smoothing (MiniMax 2.8+)")
     text_normalization: bool = Field(True, description="Normalize numbers and punctuation")
     language_boost: str = Field("Chinese", description="Language hint for TTS engine")
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="TTS API rate limit (0 = unlimited, process-local token bucket)"
+    )
     add_pauses: bool = Field(False, description="Auto-insert pause markers at sentence boundaries")
     pronunciation_dict: list[str] = Field(
         default_factory=list, description="Pronunciation overrides"
@@ -256,6 +259,9 @@ class ImageConfig(BaseModel):
     width: int = Field(2560, ge=640, le=8192)
     height: int = Field(1440, ge=480, le=8192)
     count: int | None = Field(None, description="Number of images (auto-detected)")
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Image API rate limit (0 = unlimited, process-local token bucket)"
+    )
 
 
 class VideoConfig(BaseModel):
@@ -281,6 +287,9 @@ class VideoConfig(BaseModel):
             "720p jobs regularly exceed 5 minutes; on timeout the paid task stays "
             "recorded in video_tasks.json and is resumed on the next run."
         ),
+    )
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Video API rate limit (0 = unlimited, process-local token bucket)"
     )
 
 
@@ -366,6 +375,9 @@ class MusicAudioConfig(BaseModel):
     narration_lufs: int = Field(-16, ge=-70, le=0)
     target_lufs: int = Field(-14, ge=-70, le=0)
     fade_out_seconds: int = Field(5, ge=0, le=30)
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Music API rate limit (0 = unlimited, process-local token bucket)"
+    )
 
 
 class AudioConfig(BaseModel):

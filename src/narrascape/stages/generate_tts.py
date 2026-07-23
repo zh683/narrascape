@@ -6,12 +6,9 @@ Generates timing.json for downstream stages.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +20,11 @@ from narrascape.providers import (
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.health import health_store_for_project
+from narrascape.providers.http_client import ProviderHttpClient
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
 from narrascape.utils.fingerprint import request_fingerprint
-from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_tts")
@@ -51,6 +49,7 @@ class GenerateTTSStage(Stage):
     ):
         self.api_key = api_key or APIKeys.minimax()
         self.base_url = base_url
+        self._http = ProviderHttpClient("minimax_tts")
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -75,6 +74,12 @@ class GenerateTTSStage(Stage):
         pipe_dir.mkdir(parents=True, exist_ok=True)
         selection = select_provider(config, "tts", intent=self._intent_for_config(config))
         provider_meta = selection_metadata(selection)
+        rpm = config.tts.requests_per_minute
+        self._http.configure(
+            rate_per_second=rpm / 60.0 if rpm > 0 else 0.0,
+            health_store=health_store_for_project(config.project_dir),
+            health_key=selection.tool.name,
+        )
 
         tts_cfg = config.tts
         segments = script.segments
@@ -188,17 +193,13 @@ class GenerateTTSStage(Stage):
             logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
 
             try:
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(f"{self.base_url}/v1/t2a_v2", data=data, method="POST")
-                req.add_header("Authorization", f"Bearer {self.api_key}")
-                req.add_header("Content-Type", "application/json")
-
-                r = retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=120).read().decode()),
+                r = self._http.post_json(
+                    f"{self.base_url}/v1/t2a_v2",
+                    payload,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=120,
                     max_retries=3,
                     base_delay=2.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                    retryable_if=is_retryable_http_error,
                 )
 
                 if r["base_resp"]["status_code"] != 0:

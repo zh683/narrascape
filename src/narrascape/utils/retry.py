@@ -40,6 +40,8 @@ def retry_with_backoff(
     retryable_exceptions: tuple[type[Exception], ...] = (ConnectionError, TimeoutError, OSError),
     retryable_if: Callable[[Exception], bool] | None = None,
     on_retry: Callable[[Exception, int, float], None] | None = None,
+    delay_hint: Callable[[Exception], float | None] | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> T:
     """Execute a function with exponential backoff retry.
 
@@ -53,6 +55,13 @@ def retry_with_backoff(
             returns False the exception is re-raised immediately without retrying.
             When None (default), every caught retryable exception is retried.
         on_retry: Optional callback(error, attempt, next_delay) called before each retry.
+        delay_hint: Optional callback(error) -> suggested delay in seconds (e.g. a
+            server-provided Retry-After). When it returns a value, the actual sleep
+            is ``max(computed_backoff, hint)`` so server backpressure is honored for
+            real instead of only being logged.
+        sleeper: Sleep function (injectable for tests). None (default) resolves
+            ``time.sleep`` at call time, so monkeypatching ``time.sleep`` keeps
+            working exactly as before this parameter existed.
 
     Returns:
         The result of func() on success.
@@ -72,10 +81,14 @@ def retry_with_backoff(
                 raise
 
             delay = min(base_delay * (2**attempt), max_delay)
+            if delay_hint is not None:
+                hint = delay_hint(e)
+                if hint is not None:
+                    delay = max(delay, hint)
             if on_retry:
                 on_retry(e, attempt + 1, delay)
             else:
                 logger.warning(f"Retry {attempt + 1}/{max_retries} after {delay:.1f}s: {e}")
-            time.sleep(delay)
+            (time.sleep if sleeper is None else sleeper)(delay)
 
     raise RuntimeError("retry_with_backoff: unreachable")

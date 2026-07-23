@@ -349,7 +349,7 @@ def _mock_tts_api(monkeypatch):
     monkeypatch.setattr(
         "narrascape.stages.generate_tts.select_provider", lambda *a, **k: _tts_selection()
     )
-    monkeypatch.setattr("narrascape.stages.generate_tts.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     monkeypatch.setattr(time, "sleep", lambda seconds: None)
     return calls
 
@@ -464,7 +464,7 @@ def _mock_music_api(monkeypatch):
     monkeypatch.setattr(
         "narrascape.stages.generate_music.select_provider", lambda *a, **k: selection
     )
-    monkeypatch.setattr("narrascape.stages.generate_music.urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     monkeypatch.setattr(time, "sleep", lambda seconds: None)
     return calls
 

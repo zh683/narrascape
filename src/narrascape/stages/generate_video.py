@@ -20,7 +20,6 @@ import binascii
 import json
 import logging
 import math
-import re
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +38,8 @@ from narrascape.providers import (
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.health import health_store_for_project
+from narrascape.providers.http_client import ProviderHttpClient, retry_after_hint
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_video_services import (
     VideoGenerationPlanner,
@@ -52,7 +53,6 @@ from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.budget import BudgetTracker
 from narrascape.utils.ffmpeg import validate_video
 from narrascape.utils.fingerprint import hash_reference, request_fingerprint
-from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
 from narrascape.utils.safe_io import (
     atomic_write_json,
     download_to_path,
@@ -124,6 +124,7 @@ class GenerateVideoStage(Stage):
         self._task_ledger: VideoTaskLedger | None = None
         self._per_task_cost_estimate: float | None = None
         self._budget_tracker: BudgetTracker | None = None
+        self._http = ProviderHttpClient("video_generation")
         self.video_planner = VideoGenerationPlanner(
             model=self.model,
             agnes_model=self.agnes_model,
@@ -183,6 +184,12 @@ class GenerateVideoStage(Stage):
         provider_name = selection.tool.provider
         self._selected_provider = provider_name
         self._apply_video_config(config, provider_name)
+        rpm = config.video.requests_per_minute
+        self._http.configure(
+            rate_per_second=rpm / 60.0 if rpm > 0 else 0.0,
+            health_store=health_store_for_project(config.project_dir),
+            health_key=selection.tool.name,
+        )
 
         # Load design report
         design_path = self._first_existing(
@@ -763,15 +770,7 @@ class GenerateVideoStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = self._json_object(
-                retry_with_backoff(
-                    lambda: json.loads(urllib.request.urlopen(req, timeout=60).read().decode()),
-                    max_retries=3,
-                    base_delay=2.0,
-                    retryable_exceptions=(urllib.error.URLError, urllib.error.HTTPError),
-                    retryable_if=is_retryable_http_error,
-                )
-            )
+            r = self._http.execute_request(req, timeout=60, max_retries=3, base_delay=2.0)
         except Exception as e:
             logger.error(f"Task creation failed: {e}")
             return None
@@ -801,9 +800,27 @@ class GenerateVideoStage(Stage):
             req.add_header("Authorization", f"Bearer {api_key}")
 
             try:
-                r = self._json_object(
-                    json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+                r = self._http.get_json(
+                    poll_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=30
                 )
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    # 限流不是故障：按 Retry-After 实际等待，不计入连续错误
+                    hint = retry_after_hint(e)
+                    wait = max(self.poll_interval, hint) if hint is not None else self.poll_interval
+                    logger.warning(
+                        f"  Poll rate-limited (429, attempt {attempts}); "
+                        f"waiting {wait:.1f}s (not counted as error)"
+                    )
+                    time.sleep(wait)
+                    continue
+                consecutive_errors += 1
+                logger.warning(f"  Poll error (attempt {attempts}): {e}")
+                if consecutive_errors >= self.max_poll_errors:
+                    logger.error(f"  Polling aborted after {consecutive_errors} consecutive errors")
+                    return None
+                time.sleep(self.poll_interval)
+                continue
             except Exception as e:
                 consecutive_errors += 1
                 logger.warning(f"  Poll error (attempt {attempts}): {e}")
@@ -879,10 +896,9 @@ class GenerateVideoStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            response = retry_with_backoff(
-                lambda: json.loads(
-                    urllib.request.urlopen(req, timeout=self.AGNES_CREATE_TIMEOUT).read().decode()
-                ),
+            response = self._http.execute_request(
+                req,
+                timeout=self.AGNES_CREATE_TIMEOUT,
                 max_retries=4,
                 base_delay=65.0,
                 max_delay=75.0,
@@ -891,7 +907,6 @@ class GenerateVideoStage(Stage):
                     urllib.error.URLError,
                     urllib.error.HTTPError,
                 ),
-                retryable_if=is_retryable_http_error,
                 on_retry=self._log_agnes_retry,
             )
         except Exception as exc:
@@ -915,20 +930,8 @@ class GenerateVideoStage(Stage):
         logger.warning(f"Agnes retry {attempt} after {retry_delay:.1f}s: {exc}")
 
     def _retry_after_from_http_error(self, exc: urllib.error.HTTPError) -> float:
-        header = exc.headers.get("Retry-After") if exc.headers else None
-        if header:
-            try:
-                return float(header)
-            except ValueError:
-                pass
-        try:
-            body = exc.read().decode(errors="ignore")
-        except Exception:
-            body = ""
-        minute_match = re.search(r"(\d+)\s+minute", body, flags=re.IGNORECASE)
-        if minute_match:
-            return max(65.0, float(minute_match.group(1)) * 65.0)
-        return 65.0
+        hint = retry_after_hint(exc, default_for_429=65.0)
+        return hint if hint is not None else 65.0
 
     def _build_agnes_payload(
         self,
@@ -1108,10 +1111,29 @@ class GenerateVideoStage(Stage):
             else:
                 return None
 
-            req = urllib.request.Request(poll_url, method="GET")
-            req.add_header("Authorization", f"Bearer {api_key}")
             try:
-                response = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+                response = self._http.get_json(
+                    poll_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=30
+                )
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429:
+                    # 限流不是故障：按 Retry-After 实际等待，不计入连续错误
+                    wait = max(self.poll_interval, self._retry_after_from_http_error(exc))
+                    logger.warning(
+                        f"  Agnes poll rate-limited (429, attempt {attempts}); "
+                        f"waiting {wait:.1f}s (not counted as error)"
+                    )
+                    time.sleep(wait)
+                    continue
+                consecutive_errors += 1
+                logger.warning(f"  Agnes poll error (attempt {attempts}): {exc}")
+                if consecutive_errors >= self.max_poll_errors:
+                    logger.error(
+                        f"  Agnes polling aborted after {consecutive_errors} consecutive errors"
+                    )
+                    return None
+                time.sleep(self.poll_interval)
+                continue
             except Exception as exc:
                 consecutive_errors += 1
                 logger.warning(f"  Agnes poll error (attempt {attempts}): {exc}")

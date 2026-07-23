@@ -72,7 +72,7 @@ class TestTTSFailureAccounting:
             {"base_resp": {"status_code": 1002, "status_msg": "bad request"}, "data": {}}
         ).encode()
         monkeypatch.setattr(
-            "narrascape.stages.generate_tts.urllib.request.urlopen",
+            "urllib.request.urlopen",
             lambda req, timeout=None: SimpleNamespace(read=lambda: body),
         )
         monkeypatch.setattr(time, "sleep", lambda seconds: None)
@@ -100,7 +100,7 @@ class TestTTSFailureAccounting:
         def raise_network(req, timeout=None):
             raise urllib.error.URLError("connection refused")
 
-        monkeypatch.setattr("narrascape.stages.generate_tts.urllib.request.urlopen", raise_network)
+        monkeypatch.setattr("urllib.request.urlopen", raise_network)
         monkeypatch.setattr(time, "sleep", lambda seconds: None)
 
         result = stage.run(_context(config))

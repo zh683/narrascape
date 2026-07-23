@@ -113,9 +113,12 @@ tts:
   language_boost: Chinese
   add_pauses: false
   pronunciation_dict: []
+  requests_per_minute: 0
 ```
 
 `provider: local` creates deterministic MP3 tones for verification.
+`requests_per_minute` limits the TTS API call rate with a process-local token
+bucket (`0` = unlimited, the previous behavior).
 
 ## Images
 
@@ -129,6 +132,7 @@ images:
   width: 2560
   height: 1440
   count: null
+  requests_per_minute: 0
 ```
 
 `provider: local` creates deterministic placeholder PNG files.
@@ -148,6 +152,7 @@ video:
   frame_rate: 24
   takes: 1
   max_poll_time: 900
+  requests_per_minute: 0
 ```
 
 `max_poll_time` is the per-task polling budget in seconds (default `900`).
@@ -224,6 +229,7 @@ audio:
     narration_lufs: -16
     target_lufs: -14
     fade_out_seconds: 5
+    requests_per_minute: 0
 ```
 
 ## BGM Map
