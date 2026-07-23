@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.contracts import DirectorContract
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
@@ -97,6 +98,8 @@ class DirectorContractStage(Stage):
             },
             "shots": shots,
         }
+        # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
+        DirectorContract.model_validate(contract)
         validate_artifact("director_contract", contract)
         atomic_write_yaml(output, contract)
         return StageResult(

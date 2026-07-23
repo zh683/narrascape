@@ -386,5 +386,5 @@ This proves the workflow is wired end to end without pretending that local place
 - Add a stage by subclassing `Stage`, registering it in `ALL_STAGES`, and declaring `depends_on`.
 - If the stage should appear in assistant takeover packets, register its doc path,
   intent, or artifact template in `src/narrascape/catalog.py`.
-- Add new output fields through Pydantic models first, then export them to YAML.
+- Add new output fields through the pydantic models in `src/narrascape/contracts/` first (they are the write-side schema gate), then export them to YAML.
 - Add human review rules through `PipelineApproval`.

@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
     ImageProvider,
@@ -14,6 +16,7 @@ from narrascape.config import (
     Script,
     load_script,
 )
+from narrascape.contracts import FilmSupervisorReport
 from narrascape.pipeline_approval import PipelineApproval
 from narrascape.stages.animatic import AnimaticStage
 from narrascape.stages.assistant_handoff import AssistantHandoffStage
@@ -1232,9 +1235,17 @@ class Pipeline:
         except Exception as exc:
             logger.warning(f"Could not read film_supervisor.yaml: {exc}")
             return []
-        if data.get("status") != "needs_rework":
+        try:
+            report = FilmSupervisorReport.model_validate(data)
+        except ValidationError:
+            # 读取侧是 advisory：老 artifact 落回裸 dict 访问
+            logger.warning("film_supervisor.yaml failed typed validation; using raw access")
+            if data.get("status") != "needs_rework":
+                return []
+            return [str(stage) for stage in data.get("next_stages", []) or []]
+        if report.status != "needs_rework":
             return []
-        return [str(stage) for stage in data.get("next_stages", []) or []]
+        return [str(stage) for stage in report.next_stages]
 
     def _recordable_outputs(self, result: StageResult) -> list[str]:
         paths: list[str] = []

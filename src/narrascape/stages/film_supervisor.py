@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.contracts import FilmSupervisorReport
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
 
@@ -64,6 +65,8 @@ class FilmSupervisorStage(Stage):
                 "render_report": (config.pipeline_dir / "render_report.yaml").as_posix(),
             },
         }
+        # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
+        FilmSupervisorReport.model_validate(report)
         validate_artifact("film_supervisor", report)
         atomic_write_yaml(output, report)
         return StageResult(

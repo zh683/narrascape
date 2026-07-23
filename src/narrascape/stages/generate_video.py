@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, UnidentifiedImageError
+from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
+from narrascape.contracts import DirectorContract
 from narrascape.prompt_safety import sanitize_prompt_for_provider
 from narrascape.providers import (
     record_provider_failure,
@@ -580,6 +582,7 @@ class GenerateVideoStage(Stage):
         if not path.exists():
             return {}
         data = load_yaml_mapping(path)
+        self._warn_on_contract_drift(data)
         result: dict[int, dict[str, Any]] = {}
         for shot in data.get("shots", []) or []:
             if not isinstance(shot, dict):
@@ -589,6 +592,23 @@ class GenerateVideoStage(Stage):
                 continue
             result[segment_id] = shot
         return result
+
+    def _warn_on_contract_drift(self, data: dict[str, Any]) -> None:
+        """Detect contract schema drift at read time without changing behavior.
+
+        Downstream reference resolution is deep dict plumbing; the typed model
+        is used here as a drift detector (warning only) rather than re-typing
+        the whole consumption chain.
+        """
+        if not data:
+            return
+        try:
+            DirectorContract.model_validate(data)
+        except ValidationError as exc:
+            logger.warning(
+                f"director_contract.yaml schema drift detected "
+                f"(read continues with legacy access): {exc}"
+            )
 
     def _load_reference_plates(self, path: Path) -> dict[int, dict[str, Any]]:
         if not path.exists():

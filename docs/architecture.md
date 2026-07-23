@@ -15,6 +15,7 @@ src/narrascape/
   llm/                   LLM clients, bridge transport, prompt templates, validators
   providers/             Provider registry, selector scoring, execution helpers
   artifacts.py           Lightweight canonical artifact validation
+  contracts/             Typed pydantic schemas for the core stage contracts
   compose.py             Composition runtime selection surface
   stages/                Pipeline stages
   motion/                Ken Burns and crop/zoom/PIL render engines
@@ -219,6 +220,29 @@ content). Per-unit fingerprints live in each stage's state file
 (`video_tasks.json`, `request_fingerprint` field) alongside the stable
 `prompt_hash` used for in-flight task resume. Legacy state without
 fingerprints never matches and is regenerated once.
+
+## Contract Schemas
+
+`contracts/` holds the canonical field-level pydantic models for the three
+core stage-to-stage contracts: `director_contract.yaml`
+(`DirectorContract`), `film_timeline.yaml` (`FilmTimeline`), and
+`film_supervisor.yaml` (`FilmSupervisorReport`). They complement — not
+replace — the lightweight top-level key / `schema_version` checks in
+`artifacts.py`.
+
+- **Write side (fail-fast):** each producing stage validates its full payload
+  through the model immediately before the `artifacts.py` gate and the YAML
+  write, so schema drift raises `pydantic.ValidationError` at the write
+  point and no broken artifact reaches disk.
+- **Read side (advisory):** readers such as `Pipeline._supervisor_next_stages`,
+  `FilmTimelineStage._semantic_fields`, and
+  `GenerateVideoStage._load_director_contract` validate loaded artifacts for
+  typed access or drift detection, but fall back to raw dict access with a
+  warning when an older artifact does not match the model.
+- **Compatibility policy:** every model uses `extra="allow"`, optional fields
+  carry defaults, and `schema_version` stays a required `Literal` anchor, so
+  artifacts from older/newer producers keep loading and unknown fields
+  round-trip unchanged.
 
 ## LLM Client
 
