@@ -188,6 +188,15 @@ class PipelineConfig(BaseModel):
             "or fallback_after_error LLM status."
         ),
     )
+    max_workers: int = Field(
+        1,
+        ge=1,
+        le=16,
+        description=(
+            "Orchestration-level parallelism: stages in the same dependency layer run "
+            "concurrently. 1 (default) keeps the classic strictly-serial scheduler."
+        ),
+    )
     production_quality_gates: bool = Field(
         False,
         description=(
@@ -236,6 +245,12 @@ class TTSConfig(BaseModel):
     language_boost: str = Field("Chinese", description="Language hint for TTS engine")
     requests_per_minute: float = Field(
         0.0, ge=0.0, description="TTS API rate limit (0 = unlimited, process-local token bucket)"
+    )
+    max_concurrency: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description="Max concurrent TTS segment generations (1 = serial; rate limit still applies)",
     )
     add_pauses: bool = Field(False, description="Auto-insert pause markers at sentence boundaries")
     pronunciation_dict: list[str] = Field(

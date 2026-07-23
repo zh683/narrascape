@@ -133,6 +133,10 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 
 `_resolve_dependencies()` expands requested targets with transitive dependencies and performs a topological sort.
 
+`_resolve_dependency_levels()` groups the same closure into topological levels
+(registry order within a level, deterministic) for the optional layered
+parallel scheduler.
+
 ## Pipeline Runtime
 
 `Pipeline.run()` does the following:
@@ -149,6 +153,40 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
    - marks stage completed or failed
    - reloads the script after `write` or `humanize`
    - creates or checks approval state
+
+### Parallel orchestration (opt-in)
+
+When `pipeline.max_workers > 1` (or `--stage-parallel N` is passed), the
+scheduler switches to layered parallel execution. The serial loop is untouched
+and remains the default. Parallel semantics:
+
+- Stages within one dependency level run concurrently on a thread pool;
+  pre-gates (rejected / cached-skip / pending-approval halt / `can_run`) are
+  evaluated serially on the main thread before a level is submitted.
+- A pre-gate halt stops the run before the level executes; execution halts
+  (stage failure, review request) take effect at the level boundary —
+  already-submitted stages always run to completion.
+- When approval is required, every successful stage of the level gets a review
+  request (in execution order) instead of stopping after the first one.
+- Results are aggregated in dependency execution order, never completion order.
+- The script context is refreshed at level boundaries (after `write` /
+  `humanize`), never mid-level.
+- `--interactive` forces serial orchestration because approval prompts only
+  work on the main thread.
+- LLM budget attribution (`_active_stage`) is thread-local, so concurrent
+  stages charge the correct stage; state, approval, budget, and provider-health
+  files are already guarded by `safe_io` file locks.
+
+### Per-asset concurrency (opt-in)
+
+`generate_tts` supports `tts.max_concurrency > 1` to generate segments
+concurrently. Payloads and cache-fingerprint checks are prepared serially; only
+paid generation runs on the pool. The per-provider token bucket
+(`requests_per_minute`) is thread-safe (lock-guarded check-and-decrement) and
+still applies per request. State and fingerprint writes are lock-guarded. On
+budget exhaustion, in-flight requests finish before the stage fails. Image and
+video generation remain serial per asset (video already pipelines
+submit/poll/complete through the task ledger).
 
 ## State Files
 

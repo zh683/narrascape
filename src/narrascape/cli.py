@@ -959,8 +959,18 @@ def build_cmd(
     force: Annotated[bool, typer.Option("--force", help="Ignore cache and rebuild")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview without executing")] = False,
     parallel: Annotated[
-        int, typer.Option("--parallel", help="Max parallel workers", min=1, max=16)
+        int,
+        typer.Option("--parallel", help="Max parallel render workers (kenburns)", min=1, max=16),
     ] = 4,
+    stage_parallel: Annotated[
+        int,
+        typer.Option(
+            "--stage-parallel",
+            help="Max concurrent stages per dependency layer (0 = use pipeline.max_workers config)",
+            min=0,
+            max=16,
+        ),
+    ] = 0,
     interactive: Annotated[
         bool, typer.Option("--interactive", "-i", help="Pause after each stage for human review")
     ] = False,
@@ -1041,6 +1051,7 @@ def build_cmd(
             console=console,
             llm_client=_get_llm_client(config=config),
             minimax_api_key=APIKeys.minimax(),
+            max_workers=stage_parallel or None,
         )
         results = pipeline.run(stages)
 

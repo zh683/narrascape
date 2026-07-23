@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +144,9 @@ class GenerateTTSStage(Stage):
 
         global_dict = list(tts_cfg.pronunciation_dict) if tts_cfg.pronunciation_dict else []
 
+        # Phase 1 (serial, main thread): build payloads + fingerprints and
+        # evaluate cache skips. All of this is pure / read-only.
+        todo: list[dict[str, Any]] = []
         for seg in segments:
             sid = seg.id
             out = tts_dir / f"seg_{sid:02d}.mp3"
@@ -191,7 +196,19 @@ class GenerateTTSStage(Stage):
                 continue
 
             logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
+            todo.append({"sid": sid, "out": out, "payload": payload, "fingerprint": fingerprint})
 
+        # Phase 2: generate. Serial by default; per-asset concurrency is opt-in
+        # via tts.max_concurrency. Shared state mutations are lock-guarded, and
+        # the per-provider token bucket (rate limit) still applies per request.
+        state_lock = threading.Lock()
+        budget_failure: list[str] = []
+
+        def _generate_one(item: dict[str, Any]) -> None:
+            sid = item["sid"]
+            out: Path = item["out"]
+            payload = item["payload"]
+            fingerprint = item["fingerprint"]
             try:
                 r = self._http.post_json(
                     f"{self.base_url}/v1/t2a_v2",
@@ -204,7 +221,9 @@ class GenerateTTSStage(Stage):
 
                 if r["base_resp"]["status_code"] != 0:
                     logger.error(f"FAIL: {r['base_resp']}")
-                    state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                    with state_lock:
+                        state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                        atomic_write_json(state_path, state)
                     # 请求已到达服务端并被处理（HTTP 200 + 业务失败）：按估计成本记账
                     budget_tracker.record_actual(
                         budget_tracker.get_cost_estimate("tts", 1),
@@ -224,9 +243,11 @@ class GenerateTTSStage(Stage):
                     )
                     raw = bytes.fromhex(raw_hex)
                     atomic_write_bytes(out, raw)
-                    done.add(sid)
-                    state["done"] = list(done)
-                    state.setdefault("fingerprints", {})[str(sid)] = fingerprint
+                    with state_lock:
+                        done.add(sid)
+                        state["done"] = list(done)
+                        state.setdefault("fingerprints", {})[str(sid)] = fingerprint
+                        atomic_write_json(state_path, state)
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
                     # Record actual cost per successful TTS generation
                     per_tts = budget_tracker.get_cost_estimate("tts", 1)
@@ -238,10 +259,14 @@ class GenerateTTSStage(Stage):
                         detail=f"seg_{sid}",
                     )
                     if not spend_ok:
-                        return StageResult(self.name, False, message=spend_msg)
+                        with state_lock:
+                            if not budget_failure:
+                                budget_failure.append(spend_msg)
             except Exception as e:
                 logger.error(f"FAIL: {e}")
-                state["errors"].append(f"seg_{sid}: {e}")
+                with state_lock:
+                    state["errors"].append(f"seg_{sid}: {e}")
+                    atomic_write_json(state_path, state)
                 # 网络层失败（请求未到达服务端）：不计费，仅记 zero-cost 条目
                 budget_tracker.record_actual(
                     0.0,
@@ -251,9 +276,25 @@ class GenerateTTSStage(Stage):
                     provider=selection.tool.provider,
                     detail=f"seg_{sid}",
                 )
-
-            atomic_write_json(state_path, state)
             time.sleep(0.3)
+
+        max_concurrency = max(1, min(8, int(tts_cfg.max_concurrency)))
+        if max_concurrency <= 1 or len(todo) <= 1:
+            for item in todo:
+                _generate_one(item)
+                if budget_failure:
+                    return StageResult(self.name, False, message=budget_failure[0])
+        else:
+            logger.info(f"TTS: generating {len(todo)} segments, max_concurrency={max_concurrency}")
+            with ThreadPoolExecutor(
+                max_workers=max_concurrency, thread_name_prefix="narrascape-tts"
+            ) as pool:
+                futures = [pool.submit(_generate_one, item) for item in todo]
+                for future in as_completed(futures):
+                    future.result()  # workers record all failures into state
+            # 并发语义：超预算时已在飞行的请求跑完后才中止（串行为立即中止）。
+            if budget_failure:
+                return StageResult(self.name, False, message=budget_failure[0])
 
         # Generate timing.json
         logger.info("  Measuring durations...")

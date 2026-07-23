@@ -44,6 +44,7 @@ pipeline:
   production_quality_gates: false
   auto_rework: true
   max_rework_cycles: 1
+  max_workers: 1
 ```
 
 | Field | Behavior |
@@ -56,6 +57,7 @@ pipeline:
 | `design_overwrite` | When true, `design` rewrites root `image_prompts.yaml` and `image_map.yaml`. Set false for hand-curated projects that should preserve authored prompt files while still writing `pipeline/<name>/design_report.yaml`. |
 | `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
 | `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
+| `max_workers` | Maximum concurrent stages per dependency layer (`1` = serial, the default). Overridable per run with `narrascape build --stage-parallel N`. `--interactive` always forces serial orchestration. |
 
 `video_generation: required` is an AI-film production policy. It rejects `llm.mode: none` during config validation because required generated-video workflows need an AI Director client for script breakdown, director contract, take selection, semantic QA, and rework decisions.
 
@@ -114,11 +116,17 @@ tts:
   add_pauses: false
   pronunciation_dict: []
   requests_per_minute: 0
+  max_concurrency: 1
 ```
 
 `provider: local` creates deterministic MP3 tones for verification.
 `requests_per_minute` limits the TTS API call rate with a process-local token
 bucket (`0` = unlimited, the previous behavior).
+`max_concurrency` allows up to N segments to generate concurrently (`1` =
+serial, the default). The rate limiter still applies per request, and state,
+fingerprint, and budget bookkeeping stays consistent under concurrency. When
+the budget is exceeded mid-run, in-flight requests finish before the stage
+fails (serial mode aborts immediately).
 
 ## Images
 

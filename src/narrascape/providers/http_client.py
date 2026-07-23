@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -114,23 +115,31 @@ class TokenBucketRateLimiter:
         self._updated = clock()
         self._sleeper = sleeper
         self._clock = clock
+        self._lock = threading.Lock()
 
     def set_rate(self, rate_per_second: float) -> None:
-        self.rate = max(0.0, float(rate_per_second))
-        self.capacity = max(self.capacity, self.rate, 1.0)
+        with self._lock:
+            self.rate = max(0.0, float(rate_per_second))
+            self.capacity = max(self.capacity, self.rate, 1.0)
 
     def acquire(self) -> None:
-        """Block until one token is available; returns immediately when unlimited."""
+        """Block until one token is available; returns immediately when unlimited.
+
+        Thread-safe: the token check-and-decrement is guarded by a lock so
+        concurrent per-asset generation cannot over-draw the bucket. The sleep
+        happens outside the lock and the loop re-checks on wake.
+        """
         if self.rate <= 0:
             return
         while True:
-            now = self._clock()
-            self._tokens = min(self.capacity, self._tokens + (now - self._updated) * self.rate)
-            self._updated = now
-            if self._tokens >= 1.0:
-                self._tokens -= 1.0
-                return
-            wait = (1.0 - self._tokens) / self.rate
+            with self._lock:
+                now = self._clock()
+                self._tokens = min(self.capacity, self._tokens + (now - self._updated) * self.rate)
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / self.rate
             logger.debug(f"rate limit: waiting {wait:.2f}s")
             (time.sleep if self._sleeper is None else self._sleeper)(wait)
 

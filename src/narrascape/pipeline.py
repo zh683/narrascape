@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -194,6 +196,53 @@ def _resolve_dependencies(
     return result
 
 
+def _resolve_dependency_levels(
+    target_stages: list[str],
+    available: dict[str, type[Stage]],
+) -> list[list[str]]:
+    """Group stages into topological levels for layered parallel execution.
+
+    Every stage in a level depends only on stages in earlier levels, so all
+    stages within one level may run concurrently. Level order and within-level
+    order are deterministic (registry order), matching the serial topological
+    order produced by ``_resolve_dependencies``.
+    """
+    deps: dict[str, set[str]] = {}
+    for name, cls in available.items():
+        deps[name] = set(_stage_class_depends_on(cls))
+
+    required = set()
+    queue = list(target_stages)
+    while queue:
+        name = queue.pop(0)
+        if name in required:
+            continue
+        required.add(name)
+        for dep in deps.get(name, set()):
+            if dep not in required:
+                queue.append(dep)
+
+    stage_order = {name: idx for idx, name in enumerate(available)}
+
+    levels: list[list[str]] = []
+    assigned: set[str] = set()
+    remaining = set(required)
+    while remaining:
+        ready = [
+            name
+            for name in remaining
+            if all(dep in assigned or dep not in required for dep in deps.get(name, set()))
+        ]
+        if not ready:
+            raise RuntimeError("Circular dependency detected in stages")
+        ready.sort(key=lambda item: stage_order.get(item, len(stage_order)))
+        levels.append(ready)
+        assigned.update(ready)
+        remaining -= set(ready)
+
+    return levels
+
+
 # ═══════════════════════════════════════════
 # Pipeline State
 # ═══════════════════════════════════════════
@@ -284,6 +333,7 @@ class Pipeline:
         llm_client: Any = None,
         image_api_key: str | None = None,
         minimax_api_key: str | None = None,
+        max_workers: int | None = None,
     ):
         self.config = config
         self.dry_run = dry_run
@@ -292,6 +342,13 @@ class Pipeline:
         self.auto_approve = auto_approve
         self.console = console
         self.llm_client = llm_client
+        workers = max_workers if max_workers is not None else config.pipeline.max_workers
+        workers = max(1, min(16, int(workers)))
+        if workers > 1 and interactive:
+            # 审批交互只能在主线程进行：interactive 模式强制串行
+            logger.warning("--interactive requires serial orchestration; max_workers forced to 1")
+            workers = 1
+        self.max_workers = workers
         if self.config.pipeline.video_generation == "required" and self.llm_client is None:
             raise RuntimeError(
                 "pipeline.video_generation=required requires an LLM client. "
@@ -308,8 +365,20 @@ class Pipeline:
             config.budget, config.pipeline_dir / "budget_state.json"
         )
         self._active_stage: str | None = None
+        self._stage_local = threading.local()
         if self.llm_client is not None and hasattr(self.llm_client, "on_usage"):
             self.llm_client.on_usage = self._record_llm_usage
+
+    def _set_active_stage(self, name: str | None) -> None:
+        """Mark the stage currently running *in this thread*.
+
+        Thread-local so LLM usage attribution stays correct when orchestration
+        runs same-layer stages concurrently; the ``_active_stage`` attribute is
+        kept as the main-thread mirror for backward compatibility.
+        """
+        self._stage_local.active = name
+        if threading.current_thread() is threading.main_thread():
+            self._active_stage = name
 
     def _record_llm_usage(self, usage: dict[str, int], model: str, estimated: bool) -> None:
         """Budget-track one completed LLM call (invoked via LLMClient.on_usage).
@@ -333,13 +402,17 @@ class Pipeline:
         self.budget_tracker.record_actual(
             cost,
             kind="llm",
-            stage=self._active_stage or "",
+            stage=self._current_active_stage(),
             provider=provider,
             model=model,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             estimated=estimated,
         )
+
+    def _current_active_stage(self) -> str:
+        """Stage running in the calling thread (empty string when unknown)."""
+        return str(getattr(self._stage_local, "active", None) or self._active_stage or "")
 
     def _load_script(self) -> Script:
         """Load script if it exists, otherwise return empty placeholder."""
@@ -535,6 +608,12 @@ class Pipeline:
         allow_optional_skips: bool = False,
         force_stages: set[str] | None = None,
     ) -> dict[str, StageResult]:
+        if self.max_workers > 1:
+            return self._run_once_parallel(
+                stages,
+                allow_optional_skips=allow_optional_skips,
+                force_stages=force_stages,
+            )
         # Resolve dependencies
         stage_map = get_stage_map()
         execution_order = _resolve_dependencies(stages, stage_map)
@@ -666,7 +745,7 @@ class Pipeline:
             start = time.monotonic()
 
             try:
-                self._active_stage = stage_name
+                self._set_active_stage(stage_name)
                 result = stage.run(context)
                 result.duration_seconds = time.monotonic() - start
             except Exception as e:
@@ -678,7 +757,7 @@ class Pipeline:
                     duration_seconds=time.monotonic() - start,
                 )
             finally:
-                self._active_stage = None
+                self._set_active_stage(None)
 
             if result.success:
                 strict_ok, strict_reason = self._strict_director_check(stage_name)
@@ -725,7 +804,7 @@ class Pipeline:
                             stage = self._create_stage(stage_cls)
                             retry_start = time.monotonic()
                             try:
-                                self._active_stage = stage_name
+                                self._set_active_stage(stage_name)
                                 result = stage.run(context)
                                 result.duration_seconds = time.monotonic() - retry_start
                             except Exception as e:
@@ -737,7 +816,7 @@ class Pipeline:
                                     duration_seconds=time.monotonic() - retry_start,
                                 )
                             finally:
-                                self._active_stage = None
+                                self._set_active_stage(None)
                             results[stage_name] = result
                             if not result.success:
                                 self.state.set_stage_status(stage_name, "failed")
@@ -771,6 +850,300 @@ class Pipeline:
                     break
 
         return results
+
+    def _run_once_parallel(
+        self,
+        stages: list[str],
+        *,
+        allow_optional_skips: bool = False,
+        force_stages: set[str] | None = None,
+    ) -> dict[str, StageResult]:
+        """Layered parallel execution used when ``max_workers > 1``.
+
+        Stages are grouped into dependency levels; stages within one level run
+        concurrently on a thread pool. Semantics intentionally mirror the serial
+        scheduler with these precisely defined differences:
+
+        - Pre-gates (rejected / cached-skip / pending-halt / can_run) are
+          evaluated serially on the main thread before a level is submitted.
+          A pre-gate halt stops the whole run immediately (already-gated
+          runnable stages of the same level are NOT executed).
+        - Execution halts (failure, review request) take effect at the level
+          boundary: already-submitted stages of the current level always run
+          to completion before the pipeline stops.
+        - When approval is required, every successful stage of the level gets
+          a review request (in execution order) instead of stopping after the
+          first one.
+        - ``results`` are keyed by stage name; consumers iterate them in
+          dependency execution order, never in completion order.
+        - The script context is refreshed at level boundaries (after a
+          successful write / humanize), never mid-level.
+        - Interactive mode never reaches this path (max_workers forced to 1).
+        """
+        stage_map = get_stage_map()
+        levels = _resolve_dependency_levels(stages, stage_map)
+        execution_order = [name for level in levels for name in level]
+        logger.info(f"Pipeline execution levels (max_workers={self.max_workers}): {levels}")
+
+        context = StageContext(
+            config=self.config,
+            script=self.script,
+            state={},
+            dry_run=self.dry_run,
+        )
+
+        results: dict[str, StageResult] = {}
+        force = force_stages or set()
+        halt = False
+        with ThreadPoolExecutor(
+            max_workers=self.max_workers, thread_name_prefix="narrascape-stage"
+        ) as pool:
+            for level in levels:
+                if halt:
+                    break
+                runnable: list[tuple[str, Stage]] = []
+                for stage_name in level:
+                    if self._parallel_pre_gate(
+                        stage_name,
+                        stage_map[stage_name],
+                        context,
+                        results,
+                        execution_order,
+                        force,
+                        allow_optional_skips,
+                        runnable,
+                    ):
+                        halt = True
+                        break
+                if halt:
+                    break
+                futures = {
+                    pool.submit(self._parallel_execute, stage_name, stage, context): stage_name
+                    for stage_name, stage in runnable
+                }
+                for future in as_completed(futures):
+                    stage_name = futures[future]
+                    try:
+                        results[stage_name] = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        logger.exception(f"[{stage_name}] Execution failed")
+                        results[stage_name] = StageResult(
+                            stage_name, False, message=f"Exception: {exc}"
+                        )
+                if self._parallel_post_gates(runnable, results, execution_order, context):
+                    halt = True
+        # Aggregate in dependency execution order, never completion order.
+        return {name: results[name] for name in execution_order if name in results}
+
+    def _parallel_pre_gate(
+        self,
+        stage_name: str,
+        stage_cls: type[Stage],
+        context: StageContext,
+        results: dict[str, StageResult],
+        execution_order: list[str],
+        force_stages: set[str],
+        allow_optional_skips: bool,
+        runnable: list[tuple[str, Stage]],
+    ) -> bool:
+        """Evaluate serial pre-gates for one stage (main thread).
+
+        Mirrors the pre-execution gates of the serial scheduler exactly.
+        Returns True when the run must halt before executing this level.
+        """
+        stage = self._create_stage(stage_cls)
+
+        # ── Check approval gate ──
+        approval_status = self.approval.get_status(stage_name)
+        if approval_status == "rejected":
+            logger.error(
+                f"[{stage_name}] Previously rejected. Fix and retry, or run: narrascape approve -p . -s {stage_name}"
+            )
+            results[stage_name] = StageResult(
+                stage_name,
+                False,
+                message=f"Stage rejected. Run 'narrascape approve -p . -s {stage_name}' to continue.",
+            )
+            return True
+
+        # Check if already completed (incremental) AND approved
+        if (
+            stage_name not in force_stages
+            and not self.force
+            and self.state.is_completed(stage_name)
+            and approval_status in ("approved", "skipped")
+        ):
+            if not self._completed_outputs_present(stage_name, stage):
+                logger.warning(
+                    f"[{stage_name}] Completed state ignored because recorded outputs are missing"
+                )
+                self.state.set_stage_status(stage_name, "pending")
+                self.approval._clear_status_files(stage_name)
+            else:
+                logger.info(
+                    f"[{stage_name}] Already completed and approved (skip with --force to rebuild)"
+                )
+                strict_ok, strict_reason = self._strict_director_check(stage_name)
+                if not strict_ok:
+                    result = StageResult(
+                        stage_name,
+                        False,
+                        message=strict_reason,
+                        metadata={
+                            "strict_director": True,
+                            "strict_director_reason": strict_reason,
+                            "cached_artifact": True,
+                        },
+                    )
+                    results[stage_name] = result
+                    self.state.set_stage_status(stage_name, "failed")
+                    logger.error(f"[{stage_name}] Failed: {result.message}")
+                    self._mark_remaining_pending(execution_order, stage_name)
+                    return True
+                results[stage_name] = StageResult(
+                    stage_name, True, message="skipped (cached + approved)"
+                )
+                return False
+
+        # Completed but still awaiting human approval: halt without re-running.
+        if (
+            stage_name not in force_stages
+            and not self.force
+            and not self.interactive
+            and not self.auto_approve
+            and self.state.is_completed(stage_name)
+            and approval_status == "pending"
+        ):
+            if not self._completed_outputs_present(stage_name, stage):
+                logger.warning(
+                    f"[{stage_name}] Completed state ignored because recorded outputs are missing"
+                )
+                self.state.set_stage_status(stage_name, "pending")
+                self.approval._clear_status_files(stage_name)
+            else:
+                approve_cmd = f"narrascape approve -p . -s {stage_name}"
+                logger.info(
+                    f"[{stage_name}] Completed but awaiting approval; stopping here. "
+                    f"Run '{approve_cmd}' (or build with --approve) to continue."
+                )
+                results[stage_name] = StageResult(
+                    stage_name,
+                    True,
+                    message=(
+                        f"Awaiting approval; run '{approve_cmd}' "
+                        "or build with --approve to continue."
+                    ),
+                    metadata={"awaiting_approval": True},
+                )
+                return True
+
+        # Check prerequisites
+        can_run, reason = stage.can_run(context)
+        if not can_run:
+            if allow_optional_skips and self._can_skip_optional_stage(stage_name, reason):
+                logger.warning(f"[{stage_name}] Optional stage skipped: {reason}")
+                results[stage_name] = StageResult(
+                    stage_name,
+                    True,
+                    message=f"skipped optional stage: {reason}",
+                    metadata={"optional_skipped": True, "reason": reason},
+                )
+                self.state.set_stage_status(stage_name, "skipped")
+                if self.auto_approve:
+                    self.approval.skip(stage_name, reviewer="auto", notes=reason)
+                return False
+            logger.error(f"[{stage_name}] Prerequisites not met: {reason}")
+            results[stage_name] = StageResult(stage_name, False, message=reason)
+            return True
+
+        runnable.append((stage_name, stage))
+        return False
+
+    def _parallel_execute(
+        self, stage_name: str, stage: Stage, context: StageContext
+    ) -> StageResult:
+        """Run one stage on a worker thread (called via ThreadPoolExecutor)."""
+        self.state.set_stage_status(stage_name, "running")
+        start = time.monotonic()
+        try:
+            self._set_active_stage(stage_name)
+            result = stage.run(context)
+            result.duration_seconds = time.monotonic() - start
+        except Exception as exc:
+            logger.exception(f"[{stage_name}] Execution failed")
+            result = StageResult(
+                stage_name,
+                False,
+                message=f"Exception: {exc}",
+                duration_seconds=time.monotonic() - start,
+            )
+        finally:
+            self._set_active_stage(None)
+
+        if result.success:
+            strict_ok, strict_reason = self._strict_director_check(stage_name)
+            if not strict_ok:
+                result = StageResult(
+                    stage_name,
+                    False,
+                    outputs=result.outputs,
+                    message=strict_reason,
+                    duration_seconds=result.duration_seconds,
+                    metadata={
+                        **result.metadata,
+                        "strict_director": True,
+                        "strict_director_reason": strict_reason,
+                    },
+                )
+        return result
+
+    def _parallel_post_gates(
+        self,
+        runnable: list[tuple[str, Stage]],
+        results: dict[str, StageResult],
+        execution_order: list[str],
+        context: StageContext,
+    ) -> bool:
+        """Apply post-execution bookkeeping in execution order. Returns True to halt.
+
+        Unlike the serial scheduler (which stops at the first review request),
+        every successful stage of the level gets a review request before the
+        run halts, so no completed stage is left unreviewed.
+        """
+        halt = False
+        for stage_name, stage in runnable:
+            result = results[stage_name]
+            if result.success:
+                self.state.set_stage_status(stage_name, "completed")
+                self.state.set_stage_outputs(stage_name, self._recordable_outputs(result))
+                logger.info(f"[{stage_name}] Completed in {result.duration_seconds:.1f}s")
+                if not self.auto_approve:
+                    self.approval.request_review(stage_name, result)
+                    logger.info(
+                        f"[{stage_name}] Review required. Run: narrascape approve -p . -s {stage_name}"
+                    )
+                    halt = True
+                else:
+                    self.approval.approve(stage_name, reviewer="auto")
+                    logger.info(f"[{stage_name}] Auto-approved")
+            else:
+                self.state.set_stage_status(stage_name, "failed")
+                logger.error(f"[{stage_name}] Failed: {result.message}")
+                if not getattr(stage, "continue_on_failure", False) and not halt:
+                    self._mark_remaining_pending(execution_order, stage_name)
+                    halt = True
+
+        # Refresh the script context at the level boundary so later levels see
+        # write/humanize output (serial does this immediately after the stage).
+        if any(
+            name in ("write", "humanize")
+            and results[name].success
+            and self.config.script_path.exists()
+            for name, _ in runnable
+        ):
+            self.script = self._load_script()
+            context.script = self.script
+        return halt
 
     def _can_skip_optional_stage(self, stage_name: str, reason: str) -> bool:
         if self.config.pipeline.video_generation == "required":
