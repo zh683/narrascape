@@ -161,6 +161,7 @@ video:
   takes: 1
   max_poll_time: 900
   requests_per_minute: 0
+  max_concurrency: 1
 ```
 
 `max_poll_time` is the per-task polling budget in seconds (default `900`).
@@ -168,6 +169,17 @@ video:
 task is kept in `pipeline/<name>/video_tasks.json` and the next
 `generate_video` run resumes polling that task instead of creating — and
 paying for — a duplicate.
+
+`max_concurrency` above `1` switches `generate_video` to submit-all →
+poll-all pipelining: cache decisions (fingerprint skip / free re-download /
+resume) are made serially up front, all new tasks are created with bounded
+concurrency (ledger-recorded on creation), and every in-flight task is then
+polled in one unified loop with downloads running concurrently. In this mode
+`max_poll_time` budgets the whole poll loop (slowest task), not each task
+serially. Agnes keeps its >=65s creation cadence by submitting serially.
+Ledger, fingerprint, 429-exemption, exactly-once accounting, and crash
+resume semantics are unchanged; a resumed task that terminates failed is
+re-created on the next run rather than in the same one.
 
 Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
 shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.

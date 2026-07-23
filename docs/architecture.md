@@ -184,9 +184,19 @@ concurrently. Payloads and cache-fingerprint checks are prepared serially; only
 paid generation runs on the pool. The per-provider token bucket
 (`requests_per_minute`) is thread-safe (lock-guarded check-and-decrement) and
 still applies per request. State and fingerprint writes are lock-guarded. On
-budget exhaustion, in-flight requests finish before the stage fails. Image and
-video generation remain serial per asset (video already pipelines
-submit/poll/complete through the task ledger).
+budget exhaustion, in-flight requests finish before the stage fails.
+
+`generate_video` supports `video.max_concurrency > 1` as a submit-all →
+poll-all pipeline (see `docs/agent-stages/generate_video.md`): serial Phase A
+cache/fingerprint decisions, bounded-concurrency Phase B task creation
+(Agnes serialized to keep its >=65s cadence), and a unified Phase C poll loop
+with concurrent downloads, 429 Retry-After backoff exempt from error counts,
+and `max_poll_time` budgeting the slowest task. The paid task ledger,
+exactly-once accounting, and crash-resume semantics are unchanged; no extra
+locks were needed because ledger/budget/state writes are already
+file-lock-atomic and all shared-state aggregation stays on the main thread.
+Image generation remains serial per asset (its sequential-batch mode produces
+N images per request and is not asset-parallelizable).
 
 ## State Files
 

@@ -44,6 +44,17 @@
    tasks from the ledger instead of creating duplicate paid tasks, and
    re-download from succeeded records before paying again.
 14. Download completed clips to `assets/videos/`.
+
+   When `video.max_concurrency > 1`, steps 12-14 run as a submit-all →
+   poll-all pipeline instead: cache decisions (fingerprint skip / free
+   re-download / resume) are made serially up front (Phase A), all new tasks
+   are created with bounded concurrency (Phase B, ledger-recorded on
+   creation; Agnes submits serially to keep its >=65s creation cadence), and
+   every in-flight task is polled in one unified loop with concurrent
+   downloads (Phase C; `max_poll_time` budgets the slowest task, 429 polls
+   back off per Retry-After without counting as errors, unfinished tasks
+   stay resumable in the ledger). Exactly-once cost accounting is unchanged:
+   success → `try_spend`, terminal failed/expired → `record_actual(failed)`.
 15. Record completed clip ids, `provider_selection`, `take_policy`, generated
     take ids, expected reference ids, resolved assets, missing ids, and uploaded
     reference counts in `video_gen_state.json`.

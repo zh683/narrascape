@@ -306,6 +306,16 @@ class VideoConfig(BaseModel):
     requests_per_minute: float = Field(
         0.0, ge=0.0, description="Video API rate limit (0 = unlimited, process-local token bucket)"
     )
+    max_concurrency: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description=(
+            "Max concurrent video task submissions (1 = serial per-take lifecycle). "
+            "Values above 1 enable submit-all -> poll-all pipelining: tasks are "
+            "created up front and polled in one unified loop."
+        ),
+    )
 
 
 # ───────────────────────────────────────────

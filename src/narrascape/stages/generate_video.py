@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -265,6 +266,30 @@ class GenerateVideoStage(Stage):
             f"{selection.tool.name} {self._active_model(provider_name)}: "
             f"{total_jobs} video job(s) to generate"
         )
+
+        max_concurrency = max(1, min(8, int(getattr(config.video, "max_concurrency", 1))))
+        if max_concurrency > 1:
+            return self._run_pipelined(
+                config=config,
+                state=state,
+                state_path=state_path,
+                done=done,
+                segments=segments,
+                design=design,
+                images_dir=images_dir,
+                videos_dir=videos_dir,
+                provider_name=provider_name,
+                selection=selection,
+                provider_meta=provider_meta,
+                budget_tracker=budget_tracker,
+                take_count=take_count,
+                total_jobs=total_jobs,
+                rework_segment_ids=rework_segment_ids,
+                max_concurrency=max_concurrency,
+                contract_by_segment=contract_by_segment,
+                reference_plates=reference_plates,
+                pre_production=pre_production,
+            )
 
         ok_count, fail_count = 0, 0
         job_index = 0
@@ -1177,15 +1202,17 @@ class GenerateVideoStage(Stage):
             return data.get("video_url") or data.get("url")
         return None
 
-    def _query_task_status(self, task_id: str) -> str:
-        """Single-shot Seedance status query.
+    def _query_task_status_detailed(self, task_id: str) -> tuple[str, str | None, float | None]:
+        """Single-shot Seedance status query for the unified poll loop.
 
-        Returns one of: queued, running, succeeded, failed, expired,
-        not_found (HTTP 404), unknown, or error (request failed).
+        Returns ``(status, video_url, retry_after_hint)``. Status is one of:
+        queued, running, succeeded, failed, expired, not_found (HTTP 404),
+        rate_limited (HTTP 429 — hint attached, never an error), unknown,
+        or error (request failed).
         """
         api_key = self._api_key_for_provider("seedance")
         if not api_key:
-            return "error"
+            return "error", None, None
         req = urllib.request.Request(f"{self.BASE_URL}/tasks/{task_id}", method="GET")
         req.add_header("Authorization", f"Bearer {api_key}")
         try:
@@ -1194,26 +1221,49 @@ class GenerateVideoStage(Stage):
             )
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                return "not_found"
-            return "error"
+                return "not_found", None, None
+            if e.code == 429:
+                return "rate_limited", None, retry_after_hint(e)
+            return "error", None, None
         except Exception:
-            return "error"
-        return str(r.get("status", "unknown")).lower()
+            return "error", None, None
+        status = str(r.get("status", "unknown")).lower()
+        if status != "succeeded":
+            return status, None, None
+        content = r.get("content", {})
+        video_url = content.get("video_url") if isinstance(content, dict) else None
+        if not video_url:
+            video_url = r.get("video_url") or r.get("url")
+        return "succeeded", str(video_url) if video_url else None, None
 
-    def _query_agnes_task_status(
+    def _query_task_status(self, task_id: str) -> str:
+        """Single-shot Seedance status query.
+
+        Returns one of: queued, running, succeeded, failed, expired,
+        not_found (HTTP 404), unknown, or error (request failed).
+        """
+        status, _, _ = self._query_task_status_detailed(task_id)
+        # 旧接口把 429 折叠为 error：续跑对账语义不变（保持台账可续跑）
+        return "error" if status == "rate_limited" else status
+
+    def _query_agnes_task_status_detailed(
         self, task_id: str | None = None, video_id: str | None = None
-    ) -> str:
-        """Single-shot Agnes status query, normalized to Seedance-like values."""
+    ) -> tuple[str, str | None, float | None]:
+        """Single-shot Agnes status query for the unified poll loop.
+
+        Returns ``(status, video_url, retry_after_hint)`` with status
+        normalized to Seedance-like values (plus rate_limited / error).
+        """
         api_key = self._api_key_for_provider("agnes")
         if not api_key:
-            return "error"
+            return "error", None, None
         if video_id:
             query = urllib.parse.urlencode({"video_id": video_id, "model_name": self.agnes_model})
             poll_url = f"{self.AGNES_RESULT_URL}?{query}"
         elif task_id:
             poll_url = f"{self.AGNES_CREATE_URL}/{task_id}"
         else:
-            return "error"
+            return "error", None, None
         req = urllib.request.Request(poll_url, method="GET")
         req.add_header("Authorization", f"Bearer {api_key}")
         try:
@@ -1222,10 +1272,12 @@ class GenerateVideoStage(Stage):
             )
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                return "not_found"
-            return "error"
+                return "not_found", None, None
+            if e.code == 429:
+                return "rate_limited", None, self._retry_after_from_http_error(e)
+            return "error", None, None
         except Exception:
-            return "error"
+            return "error", None, None
         status = str(response.get("status", "unknown")).lower()
         mapping = {
             "completed": "succeeded",
@@ -1235,7 +1287,18 @@ class GenerateVideoStage(Stage):
             "error": "failed",
             "expired": "expired",
         }
-        return mapping.get(status, "running")
+        normalized = mapping.get(status, "running")
+        if normalized != "succeeded":
+            return normalized, None, None
+        video_url = self._extract_agnes_video_url(response)
+        return "succeeded", video_url, None
+
+    def _query_agnes_task_status(
+        self, task_id: str | None = None, video_id: str | None = None
+    ) -> str:
+        """Single-shot Agnes status query, normalized to Seedance-like values."""
+        status, _, _ = self._query_agnes_task_status_detailed(task_id, video_id)
+        return "error" if status == "rate_limited" else status
 
     def _query_provider_task_status(
         self, provider: str, task_id: str | None, video_id: str | None
@@ -1243,6 +1306,15 @@ class GenerateVideoStage(Stage):
         if provider == "agnes":
             return self._query_agnes_task_status(task_id=task_id, video_id=video_id)
         return self._query_task_status(str(task_id)) if task_id else "error"
+
+    def _query_provider_task_status_detailed(
+        self, provider: str, task_id: str | None, video_id: str | None
+    ) -> tuple[str, str | None, float | None]:
+        if provider == "agnes":
+            return self._query_agnes_task_status_detailed(task_id=task_id, video_id=video_id)
+        if not task_id:
+            return "error", None, None
+        return self._query_task_status_detailed(str(task_id))
 
     def _record_failed_video_cost(self, out_name: str, provider: str) -> None:
         """Account a provider-billed failed video task (failed/expired/gone).
@@ -1486,3 +1558,457 @@ class GenerateVideoStage(Stage):
         if ledger is not None:
             ledger.update_status(out_name, "succeeded", video_url=video_url)
         return self._download_video(video_url, out_mp4)
+
+    # ── Submit-all → poll-all pipeline (opt-in: video.max_concurrency > 1) ──
+
+    def _pipelined_mark_success(
+        self,
+        out_name: str,
+        state: dict[str, Any],
+        state_path: Path,
+        done: set[str],
+        budget_tracker: BudgetTracker,
+        provider_name: str,
+    ) -> tuple[bool, str]:
+        """Mirror the serial run() post-success block: state done + try_spend."""
+        done.add(out_name)
+        state["done"] = sorted(done)
+        atomic_write_json(state_path, state)
+        per_video = budget_tracker.get_cost_estimate("video", 1)
+        return budget_tracker.try_spend(
+            per_video,
+            kind="video",
+            stage="generate_video",
+            provider=provider_name,
+            detail=out_name,
+        )
+
+    def _run_pipelined(
+        self,
+        *,
+        config: Any,
+        state: dict[str, Any],
+        state_path: Path,
+        done: set[str],
+        segments: list[dict[str, Any]],
+        design: dict[str, Any],
+        images_dir: Path,
+        videos_dir: Path,
+        provider_name: str,
+        selection: Any,
+        provider_meta: dict[str, Any],
+        budget_tracker: BudgetTracker,
+        take_count: int,
+        total_jobs: int,
+        rework_segment_ids: set[int],
+        max_concurrency: int,
+        contract_by_segment: dict[int, dict[str, Any]],
+        reference_plates: dict[int, dict[str, Any]],
+        pre_production: dict[str, Any],
+    ) -> StageResult:
+        """Submit-all → poll-all pipeline used when ``video.max_concurrency > 1``.
+
+        Thread model:
+
+        - Phase A (main thread, serial): prompt/reference building, request
+          fingerprints, and all cache decisions (skip / free re-download /
+          resume / create) — identical judgment order to ``_generate_one``.
+        - Phase B (bounded thread pool): task creation only. Creations are
+          recorded in the paid task ledger the moment a task id exists. Agnes
+          keeps its >=65s creation cadence by submitting serially with the
+          provider sleep between creates. A failed creation fails only its
+          own take and is never billed (network failure, task not created).
+        - Phase C (main thread unified poll loop + download pool): every
+          in-flight task (new + resumed) is queried once per round; HTTP 429
+          backs off per Retry-After and is exempt from error counting;
+          succeeded tasks are ledger-marked and handed to the download pool;
+          failed/expired/not_found tasks are accounted exactly once via
+          ``_record_failed_video_cost``. The total poll budget is
+          ``max_poll_time`` measured across the slowest task, not per task.
+          Tasks still running at timeout keep their ledger record resumable
+          (anti-orphan semantics unchanged).
+
+        Deliberate differences from the serial path (opt-in only):
+
+        - A resumed task that terminates failed/expired is accounted and fails
+          this run; it is NOT re-created in the same run (the next run's
+          Phase A picks it up as a fresh creation).
+        - Budget-cap exhaustion lets in-flight work finish before the stage
+          fails (serial aborts immediately).
+        """
+        ledger = self._task_ledger
+        ok_count = 0
+        fail_count = 0
+        budget_failure: list[str] = []
+        redownloads: list[dict[str, Any]] = []
+        creates: list[dict[str, Any]] = []
+        in_flight: list[dict[str, Any]] = []
+
+        # ── Phase A：主线程串行判定（与 _generate_one 同一判定序）──
+        for i, seg in enumerate(segments):
+            vid_id = f"vid_{seg['segment_id']:02d}"
+            out_names = self._output_names_for_segment(vid_id, take_count)
+            state.setdefault("generated_takes", {})[vid_id] = list(out_names)
+
+            video_prompt = self._build_video_prompt(
+                seg,
+                contract_by_segment=contract_by_segment,
+                provider=provider_name,
+            )
+            img_id = f"img_{seg['segment_id']:02d}"
+            first_frame = self._resolve_first_frame(seg, images_dir, img_id)
+            last_frame = self._resolve_last_frame(seg, images_dir, design)
+            contract = contract_by_segment.get(int(seg["segment_id"]), {})
+            negative_prompt = self._build_video_negative_prompt(contract, provider_name)
+            reference_inputs = self._reference_inputs_for_segment(
+                config,
+                design,
+                pre_production,
+                seg,
+                contract,
+                reference_plates.get(int(seg["segment_id"]), {}),
+            )
+            uploaded_reference_images = reference_inputs.get("uploaded_reference_images", [])
+            reference_images = (
+                reference_inputs.get("uploaded_reference_assets", uploaded_reference_images)
+                if provider_name == "agnes"
+                else uploaded_reference_images
+            )
+            model = self._segment_model(seg, provider_name)
+            resolution = self._segment_resolution(seg, provider_name)
+            segment_fingerprint = self._video_request_fingerprint(
+                provider=provider_name,
+                model=model,
+                resolution=resolution,
+                prompt=video_prompt,
+                negative_prompt=negative_prompt,
+                first_frame=first_frame,
+                last_frame=last_frame,
+                reference_images=reference_images,
+            )
+
+            cached_names = [
+                out_name
+                for out_name in out_names
+                if out_name in done
+                and (videos_dir / f"{out_name}.mp4").exists()
+                and self._ledger_fingerprint_matches(out_name, segment_fingerprint)
+            ]
+            if len(cached_names) == len(out_names):
+                logger.info(f"[{i + 1}/{len(segments)}] {vid_id} skip (cached, fingerprint match)")
+                ok_count += len(out_names)
+                continue
+
+            logger.info(f"[{i + 1}/{len(segments)}] {vid_id}: {video_prompt[:60]}...")
+            logger.info(
+                f"  model={model}, resolution={resolution}, first_frame={first_frame is not None}, "
+                f"references={len(reference_images)}, takes={take_count}"
+            )
+            prompt_hash = video_task_prompt_hash(
+                provider=provider_name, model=model, resolution=resolution, prompt=video_prompt
+            )
+
+            for take_number, out_name in enumerate(out_names, start=1):
+                state.setdefault("reference_inputs", {})[out_name] = reference_inputs["state"]
+                atomic_write_json(state_path, state)
+
+                if (
+                    out_name in done
+                    and (videos_dir / f"{out_name}.mp4").exists()
+                    and self._ledger_fingerprint_matches(out_name, segment_fingerprint)
+                ):
+                    logger.info(f"  {out_name} skip (cached)")
+                    ok_count += 1
+                    continue
+
+                out_mp4 = videos_dir / f"{out_name}.mp4"
+                if take_count > 1:
+                    logger.info(f"  {out_name} take {take_number}/{take_count}")
+
+                # 与 _generate_one 相同：文件+指纹 → 免费重下载 → 续跑 → 创建
+                if out_mp4.exists() and self._ledger_fingerprint_matches(
+                    out_name, segment_fingerprint
+                ):
+                    ok_count += 1
+                    spend_ok, spend_msg = self._pipelined_mark_success(
+                        out_name, state, state_path, done, budget_tracker, provider_name
+                    )
+                    if not spend_ok:
+                        budget_failure.append(spend_msg)
+                    continue
+
+                if ledger is not None:
+                    reusable = ledger.find_reusable_download(
+                        out_name, prompt_hash, segment_fingerprint
+                    )
+                    if reusable is not None:
+                        logger.info(
+                            f"  {out_name}: re-downloading from completed task (no new task)"
+                        )
+                        redownloads.append(
+                            {
+                                "out_name": out_name,
+                                "video_url": str(reusable["video_url"]),
+                                "out_mp4": out_mp4,
+                            }
+                        )
+                        continue
+                    record = ledger.find_resumable(out_name, prompt_hash, segment_fingerprint)
+                    if record is not None:
+                        logger.info(
+                            f"  {out_name}: resuming paid task "
+                            f"task_id={record.get('task_id')} video_id={record.get('video_id')} "
+                            "(no new task created)"
+                        )
+                        ledger.update_status(out_name, "polling")
+                        in_flight.append(
+                            {
+                                "out_name": out_name,
+                                "task_id": record.get("task_id"),
+                                "video_id": record.get("video_id"),
+                                "out_mp4": out_mp4,
+                                "consecutive_errors": 0,
+                                "next_poll_at": 0.0,
+                            }
+                        )
+                        continue
+
+                creates.append(
+                    {
+                        "out_name": out_name,
+                        "prompt": video_prompt,
+                        "model": model,
+                        "resolution": resolution,
+                        "first_frame": first_frame,
+                        "last_frame": last_frame,
+                        "reference_images": reference_images,
+                        "negative_prompt": negative_prompt,
+                        "out_mp4": out_mp4,
+                        "prompt_hash": prompt_hash,
+                        "fingerprint": segment_fingerprint,
+                    }
+                )
+
+        logger.info(
+            f"Pipelined plan (max_concurrency={max_concurrency}): "
+            f"{len(creates)} to create, {len(in_flight)} to resume, "
+            f"{len(redownloads)} to re-download, {ok_count} cached"
+        )
+
+        # ── Phase B：受限并发提交（创建即落台账）──
+        def _submit(item: dict[str, Any]) -> dict[str, Any]:
+            # 预算 cap 复查：超预算不创建新付费任务（不超发）
+            if self._per_task_cost_estimate is not None:
+                can, msg = budget_tracker.can_spend(self._per_task_cost_estimate)
+                if not can:
+                    return {"item": item, "task_id": None, "video_id": None, "budget_error": msg}
+            if provider_name == "agnes":
+                task_id, video_id = self._create_agnes_task(
+                    item["prompt"],
+                    item["model"],
+                    item["resolution"],
+                    item["first_frame"],
+                    item["last_frame"],
+                    reference_images=item["reference_images"],
+                    negative_prompt=item["negative_prompt"],
+                )
+            else:
+                task_id = self._create_task(
+                    item["prompt"],
+                    item["model"],
+                    item["resolution"],
+                    item["first_frame"],
+                    item["last_frame"],
+                    reference_images=item["reference_images"],
+                )
+                video_id = None
+            if not task_id and not video_id:
+                # 创建失败（任务不存在，未计费）：该 take 记失败，不阻断其他 take
+                return {"item": item, "task_id": None, "video_id": None, "budget_error": None}
+            if ledger is not None:
+                ledger.record_created(
+                    item["out_name"],
+                    task_id=str(task_id) if task_id else None,
+                    video_id=str(video_id) if video_id else None,
+                    provider=provider_name,
+                    prompt_hash=item["prompt_hash"],
+                    model=item["model"],
+                    resolution=item["resolution"],
+                    output_path=item["out_mp4"].as_posix(),
+                    cost_estimate=self._per_task_cost_estimate,
+                    request_fingerprint=item["fingerprint"],
+                )
+            return {"item": item, "task_id": task_id, "video_id": video_id, "budget_error": None}
+
+        def _collect_submission(outcome: dict[str, Any]) -> None:
+            nonlocal fail_count
+            item = outcome["item"]
+            if outcome["budget_error"] is not None:
+                logger.error(f"  {item['out_name']}: {outcome['budget_error']}")
+                budget_failure.append(str(outcome["budget_error"]))
+                fail_count += 1
+                return
+            if not outcome["task_id"] and not outcome["video_id"]:
+                fail_count += 1
+                return
+            in_flight.append(
+                {
+                    "out_name": item["out_name"],
+                    "task_id": outcome["task_id"],
+                    "video_id": outcome["video_id"],
+                    "out_mp4": item["out_mp4"],
+                    "consecutive_errors": 0,
+                    "next_poll_at": 0.0,
+                }
+            )
+
+        if creates:
+            if provider_name == "agnes":
+                # Agnes 创建节奏（≥65s/次）保留：串行提交 + 创建间隔 sleep
+                for index, item in enumerate(creates):
+                    _collect_submission(_submit(item))
+                    if index < len(creates) - 1:
+                        time.sleep(self._sleep_between_for_provider(provider_name))
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=max_concurrency,
+                    thread_name_prefix="narrascape-video-submit",
+                ) as pool:
+                    futures = [pool.submit(_submit, item) for item in creates]
+                    for future in as_completed(futures):
+                        _collect_submission(future.result())
+
+        # ── Phase C：统一轮询 + 并发下载 ──
+        download_futures: dict[Future[bool], str] = {}
+        with ThreadPoolExecutor(
+            max_workers=max_concurrency,
+            thread_name_prefix="narrascape-video-dl",
+        ) as download_pool:
+            for item in redownloads:
+                dl_future = download_pool.submit(
+                    self._download_video, item["video_url"], item["out_mp4"]
+                )
+                download_futures[dl_future] = item["out_name"]
+
+            poll_start = time.monotonic()
+            while in_flight and (time.monotonic() - poll_start) < self.max_poll_time:
+                now = time.monotonic()
+                for task in list(in_flight):
+                    if task["next_poll_at"] > now:
+                        continue
+                    status, video_url, retry_hint = self._query_provider_task_status_detailed(
+                        provider_name, task["task_id"], task["video_id"]
+                    )
+                    if status == "succeeded" and video_url:
+                        if ledger is not None:
+                            ledger.update_status(task["out_name"], "succeeded", video_url=video_url)
+                        dl_future = download_pool.submit(
+                            self._download_video, video_url, task["out_mp4"]
+                        )
+                        download_futures[dl_future] = task["out_name"]
+                        in_flight.remove(task)
+                    elif status == "succeeded":
+                        logger.error(
+                            f"  {task['out_name']}: succeeded but no video URL; "
+                            "ledger kept resumable"
+                        )
+                        in_flight.remove(task)
+                        fail_count += 1
+                    elif status in ("failed", "expired"):
+                        if ledger is not None:
+                            ledger.update_status(task["out_name"], status)
+                        self._record_failed_video_cost(task["out_name"], provider_name)
+                        in_flight.remove(task)
+                        fail_count += 1
+                    elif status == "not_found":
+                        if ledger is not None:
+                            ledger.update_status(
+                                task["out_name"], "failed", error="task not found (HTTP 404)"
+                            )
+                        self._record_failed_video_cost(task["out_name"], provider_name)
+                        in_flight.remove(task)
+                        fail_count += 1
+                    elif status == "rate_limited":
+                        # 限流不是故障：按 Retry-After 退避，不计入连续错误
+                        wait = max(self.poll_interval, retry_hint or 0.0)
+                        logger.warning(
+                            f"  {task['out_name']}: poll rate-limited (429); "
+                            f"backing off {wait:.1f}s (not counted as error)"
+                        )
+                        task["next_poll_at"] = time.monotonic() + wait
+                    elif status == "error":
+                        task["consecutive_errors"] += 1
+                        if task["consecutive_errors"] >= self.max_poll_errors:
+                            logger.error(
+                                f"  {task['out_name']}: polling aborted after "
+                                f"{task['consecutive_errors']} consecutive errors; "
+                                "ledger kept resumable"
+                            )
+                            if ledger is not None:
+                                ledger.update_status(task["out_name"], "polling")
+                            in_flight.remove(task)
+                            fail_count += 1
+                        else:
+                            task["next_poll_at"] = time.monotonic() + self.poll_interval
+                    else:
+                        # queued / running / unknown：继续等
+                        task["next_poll_at"] = time.monotonic() + self.poll_interval
+                if in_flight:
+                    wait = min(t["next_poll_at"] for t in in_flight) - time.monotonic()
+                    if wait > 0:
+                        time.sleep(min(wait, 1.0))
+
+            # 超时未终结：台账保持 polling 可续（反孤儿语义不动），本轮记失败
+            for task in in_flight:
+                logger.error(
+                    f"  {task['out_name']}: polling timeout after {self.max_poll_time}s; "
+                    "paid task stays resumable in the ledger"
+                )
+                if ledger is not None:
+                    ledger.update_status(task["out_name"], "polling")
+                fail_count += 1
+
+            # 汇总下载结果（主线程，按提交顺序无关）
+            for dl_future, out_name in download_futures.items():
+                try:
+                    download_ok = bool(dl_future.result())
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.error(f"  {out_name}: download raised: {exc}")
+                    download_ok = False
+                if download_ok:
+                    ok_count += 1
+                    spend_ok, spend_msg = self._pipelined_mark_success(
+                        out_name, state, state_path, done, budget_tracker, provider_name
+                    )
+                    if not spend_ok:
+                        budget_failure.append(spend_msg)
+                else:
+                    fail_count += 1
+
+        if budget_failure:
+            return StageResult(self.name, False, message=budget_failure[0])
+
+        logger.info(f"Done: {ok_count} OK, {fail_count} failed")
+        if fail_count == 0:
+            record_provider_success(config, selection.tool.name)
+        else:
+            record_provider_failure(
+                config,
+                selection.tool.name,
+                f"{fail_count}/{len(segments)} video generations failed",
+            )
+        return StageResult(
+            self.name,
+            fail_count == 0,
+            message=f"{ok_count} OK, {fail_count} failed",
+            metadata={
+                "provider_selection": provider_meta,
+                "ok_count": ok_count,
+                "fail_count": fail_count,
+                "takes_per_shot": take_count,
+                "take_count": total_jobs,
+                "rework_segment_ids": sorted(rework_segment_ids),
+                "pipelined": True,
+                "max_concurrency": max_concurrency,
+            },
+        )
