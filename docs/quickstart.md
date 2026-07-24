@@ -62,6 +62,17 @@ llm:
   api_key: "${OPENAI_API_KEY}"
 ```
 
+`config.yaml` string values support `${VAR}` and `${VAR:-default}` environment
+references, expanded when the config loads. With `mode: api`, the key is
+resolved from `llm.api_key` first, then from the provider's environment
+variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, or
+`ARK_API_KEY`); if neither is set, the command stops with an explicit error
+instead of silently degrading to bridge mode.
+
+> **Security:** keep real API keys in the environment or a git-ignored `.env`
+> file — never paste them into `config.yaml`. A plaintext `llm.api_key` logs a
+> startup warning for this reason.
+
 ## 4. Build The Video
 
 ```powershell

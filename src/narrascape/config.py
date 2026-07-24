@@ -6,11 +6,16 @@ Replaces raw YAML dicts with validated, typed, auto-completed configs.
 
 from __future__ import annotations
 
+import logging
+import os
+import re
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_VISUAL_STYLE = (
     "Oil painting style, painterly cinematic frames, visible brush texture, "
@@ -775,16 +780,85 @@ class ImageMap(BaseModel):
 # Loader helpers
 # ───────────────────────────────────────────
 
+# ${VAR} / ${VAR:-default} references inside config string values.
+_ENV_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_ENV_REF_FULLMATCH = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$")
+
+# Credential fields where an unresolved ${VAR} reference must fail fast:
+# a literal "${VAR}" would otherwise be sent to providers as the secret.
+_STRICT_INTERPOLATION_FIELDS = {"llm.api_key"}
+
+
+def _interpolate_env_value(value: Any, field_path: str) -> Any:
+    """Expand ${VAR} / ${VAR:-default} references in config string values.
+
+    Only the ``${...}`` pattern is touched; every other byte is preserved.
+    Unresolved references in credential fields (``llm.api_key``) raise
+    ``ValueError``; elsewhere they are kept verbatim with a debug log.
+    """
+    if isinstance(value, str):
+
+        def _replace(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            default = match.group(2)
+            env_value = os.environ.get(var_name)
+            if env_value is not None:
+                return env_value
+            if default is not None:
+                return default
+            if field_path in _STRICT_INTERPOLATION_FIELDS:
+                raise ValueError(
+                    f"config.yaml field '{field_path}' references environment variable "
+                    f"'{var_name}', which is not set. Export {var_name} (or add it to "
+                    f".env), write ${{{var_name}:-fallback}} to provide a default, or "
+                    "remove the reference. See docs/quickstart.md and "
+                    "docs/config-reference.md."
+                )
+            logger.debug(
+                "Leaving unresolved ${%s} placeholder in config field '%s'",
+                var_name,
+                field_path or "<root>",
+            )
+            return match.group(0)
+
+        return _ENV_REF_PATTERN.sub(_replace, value)
+    if isinstance(value, dict):
+        return {
+            key: _interpolate_env_value(item, f"{field_path}.{key}" if field_path else str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_interpolate_env_value(item, field_path) for item in value]
+    return value
+
 
 def load_config(path: Path) -> NarrascapeConfig:
-    """Load and validate config.yaml from a project directory or file path."""
+    """Load and validate config.yaml from a project directory or file path.
+
+    String values support ``${VAR}`` / ``${VAR:-default}`` environment
+    interpolation, expanded before validation. A plaintext ``llm.api_key``
+    (not an env reference) logs a warning recommending environment-based
+    secrets; the loaded config object itself is never logged.
+    """
     from narrascape.utils.safe_io import load_yaml_mapping
 
     # If path is a directory, look for config.yaml inside it
     if path.is_dir():
         path = path / "config.yaml"
     data = load_yaml_mapping(path)
+    raw_llm = data.get("llm")
+    raw_api_key = ""
+    if isinstance(raw_llm, dict):
+        raw_api_key = str(raw_llm.get("api_key") or "")
+    data = _interpolate_env_value(data, "")
     cfg = NarrascapeConfig(**data)
+    if cfg.llm.api_key and raw_api_key and not _ENV_REF_FULLMATCH.match(raw_api_key):
+        logger.warning(
+            "config.yaml (%s) contains a plaintext llm.api_key. Prefer an environment "
+            'reference such as api_key: "${OPENAI_API_KEY}" and keep the secret in the '
+            "environment or .env so it cannot be committed. See docs/quickstart.md.",
+            path,
+        )
     cfg.project_dir = path.parent
     return cfg
 

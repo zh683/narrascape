@@ -140,6 +140,16 @@ def _status_stage_names() -> list[str]:
 from narrascape.llm import LLMClient
 from narrascape.llm import LLMConfig as LLMClientConfig
 
+# Credential environment variable consulted per provider in explicit
+# llm.mode=api (after config.yaml llm.api_key, which itself supports
+# "${VAR}" interpolation at load time).
+_LLM_PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "volcengine": "ARK_API_KEY",
+}
+
 
 def _get_llm_client(
     api_key: str | NarrascapeConfig | None = None, config: NarrascapeConfig | None = None
@@ -194,21 +204,40 @@ def _get_llm_client(
                 )
             )
         elif config.llm.mode == "api":
-            # Use config API settings
-            if config.llm.api_key:
-                return LLMClient(
-                    LLMClientConfig(
-                        provider=cast(LLMProviderName, config.llm.provider or "openai"),
-                        model=config.llm.model or "gpt-4o",
-                        api_key=config.llm.api_key,
-                        base_url=config.llm.base_url or None,
-                        temperature=config.llm.temperature,
-                        max_tokens=config.llm.max_tokens,
-                        max_retries=3,
-                        retry_delay=2.0,
-                        json_mode=True,
-                    )
+            # Explicit API mode never falls back to assistant/bridge: a missing
+            # key is a configuration error and must fail loudly.
+            provider = (config.llm.provider or "openai").lower()
+            env_var = _LLM_PROVIDER_ENV_VARS.get(provider, "")
+            api_key = config.llm.api_key.strip()
+            if not api_key and env_var:
+                api_key = APIKeys.get(env_var) or ""
+            if not api_key or api_key.startswith("${"):
+                key_source = (
+                    f'Set llm.api_key in config.yaml ("${{{env_var}}}" references are '
+                    f"expanded at load time) or export {env_var}"
+                    if env_var
+                    else "Set llm.provider and llm.api_key in config.yaml"
                 )
+                console.print(
+                    "[bold red]LLM config error:[/] llm.mode=api requires an API key, "
+                    f"but none was found. {key_source}. Explicit api mode does not fall "
+                    "back to assistant/bridge mode. See docs/quickstart.md and "
+                    "docs/config-reference.md."
+                )
+                raise typer.Exit(1)
+            return LLMClient(
+                LLMClientConfig(
+                    provider=cast(LLMProviderName, provider),
+                    model=config.llm.model or "gpt-4o",
+                    api_key=api_key,
+                    base_url=config.llm.base_url or None,
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens,
+                    max_retries=3,
+                    retry_delay=2.0,
+                    json_mode=True,
+                )
+            )
         elif config.llm.mode == "none":
             if config.pipeline.video_generation == "required":
                 console.print(

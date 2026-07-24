@@ -96,6 +96,18 @@ llm:
 
 `none` is useful for offline tests. It is not a creative production mode.
 
+`api_key` accepts environment references: `${VAR}` and `${VAR:-default}` are
+expanded when `config.yaml` loads. An unresolved reference in `llm.api_key` is
+a config error naming the missing variable; unresolved references in other
+fields are kept verbatim with a debug log.
+
+With `mode: api`, a missing key is a hard error — there is no silent fallback
+to assistant/bridge mode. Resolution order: `llm.api_key`, then the provider
+environment variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`,
+or `ARK_API_KEY`). Prefer env references over plaintext keys: a plaintext
+`llm.api_key` logs a warning because tracked config files are easy to commit
+by accident. Keep secrets in the environment or a git-ignored `.env` file.
+
 `llm.mode: none` is only valid with `pipeline.video_generation: auto` or `off`. A project with `pipeline.video_generation: required` must use `auto`, `ai_assistant`, `bridge`, or `api`, and the pipeline also refuses to start if no LLM client is supplied.
 
 ## TTS

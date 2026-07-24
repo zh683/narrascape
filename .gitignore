@@ -94,6 +94,11 @@ test_style_consistency/
 *.pfx
 credentials*
 secrets*
+# Never commit real API keys: keep them in the environment or .env, and use
+# "${VAR}" references inside tracked config.yaml files (see docs/quickstart.md).
+# config.local.yaml is the convention for machine-local overlays with secrets.
+config.local.yaml
+**/config.local.yaml
 
 # Editor and OS files
 .vscode/
