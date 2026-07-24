@@ -157,7 +157,7 @@ def find_ffprobe() -> Path:
 # ═══════════════════════════════════════════
 
 
-def get_duration(path: Path) -> float:
+def get_duration(path: Path, timeout: int | None = None) -> float:
     """Get media duration in seconds using ffprobe."""
     probe = find_ffprobe()
     media_path = safe_media_arg(path)
@@ -174,6 +174,7 @@ def get_duration(path: Path) -> float:
         ],
         capture_output=True,
         text=True,
+        timeout=timeout,
     )
     if r.returncode != 0 or not r.stdout.strip():
         raise RuntimeError(f"Cannot get duration for {path}: {r.stderr}")

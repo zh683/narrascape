@@ -82,7 +82,7 @@ Narrascape 不是一个"一键文生视频"工具，而是一条 **以文件契�
 ### P2 — 改进项（节选，完整见各分项审计）
 
 - `film_supervisor.py:77-124` 与 `rework_execute.py:161-204` 的返工阶段链是两份拷贝，**已发生漂移**（前者含 `assistant_handoff`，后者不含）
-- `take_select.py:122-127` 确定性评分 = **文件字节数**，与画质无关
+- `take_select.py:122-127` 确定性评分 = **文件字节数**，与画质无关 —— **已修复**：确定性评分升级为 ffmpeg 抽帧质量信号组合（sharpness/brightness/duration/stability，见 `utils/video_quality.py` 与 `docs/agent-stages/take_select.md`），失败时按段回退字节数并 warning
 - `compose.py:30-37` `FFmpegCompositionRuntime.render()` 直接 `return True` 假装成功
 - `prompt_safety.py:7-66` 静默重写 prompt（blood→dark mark 等），无日志不入产物，导演层无法感知
 - `film_timeline.py:42-44` 读 `take_selection.yaml` 但不声明 `take_select` 依赖，正确性依赖注册顺序的隐式约定
@@ -136,7 +136,7 @@ Narrascape 不是一个"一键文生视频"工具，而是一条 **以文件契�
 
 ### 第四梯队：质量智能（学术驱动，与文献对标）
 
-13. **take_select 真实质量信号**：接入 VBench 式感知维度（抽帧 + 主体一致性/运动/审美评分）替代字节数评分；中期可评估 MCTS 选 take（AniMaker 路径）。
+13. **take_select 真实质量信号**：接入 VBench 式感知维度（抽帧 + 主体一致性/运动/审美评分）替代字节数评分；中期可评估 MCTS 选 take（AniMaker 路径）。**进展**：字节数评分已由本地抽帧信号组合（清晰度/亮度/时长/冻结帧）替代；VBench 式语义/审美维度与 MCTS 仍待评估。
 14. **分镜即生成条件**：把 storyboard 关键帧直接作为 Seedance image-to-video 的首帧条件（STAGE/DrawVideo/SmartDirector 已验证），而非仅作参考——这是把"storyboard-bound director contract"从治理概念变成物理约束的关键一步。
 15. **QA 断言维度扩充**：对照 Stable cinemetrics 分类法扩充 director_contract 的 QA 断言；考虑接入 AIGVQA/Video Inspector 式自动评估作为 visual_semantic_qa 的确定性底座，LLM 评审只做高层语义。
 

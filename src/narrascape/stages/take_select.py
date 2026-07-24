@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,9 @@ import yaml
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
+from narrascape.utils.video_quality import analyze_take
+
+logger = logging.getLogger(__name__)
 
 
 class TakeSelectStage(Stage):
@@ -37,18 +42,30 @@ class TakeSelectStage(Stage):
         output.parent.mkdir(parents=True, exist_ok=True)
         qa_report = self._load_yaml(config.pipeline_dir / "render_report.yaml")
         video_state = self._load_json(config.pipeline_dir / "video_gen_state.json")
+        expected_durations = self._expected_durations(
+            self._load_yaml(config.pipeline_dir / "director_contract.yaml")
+        )
         candidates = self._collect_candidates(config.project_dir / "assets" / "videos", video_state)
         selections: list[dict[str, Any]] = []
         llm_used = False
         llm_errors: list[str] = []
-        for segment_id, takes in candidates.items():
-            selection, used_llm, error = self._select_for_segment(
-                segment_id, takes, qa_report, context
-            )
-            selections.append(selection)
-            llm_used = llm_used or used_llm
-            if error:
-                llm_errors.append(error)
+        fallback_segments: list[int] = []
+        with tempfile.TemporaryDirectory(prefix="take_select_frames_") as work_dir:
+            for segment_id, takes in candidates.items():
+                selection, used_llm, error, scoring = self._select_for_segment(
+                    segment_id,
+                    takes,
+                    qa_report,
+                    context,
+                    expected_duration=expected_durations.get(segment_id),
+                    work_dir=Path(work_dir),
+                )
+                selections.append(selection)
+                llm_used = llm_used or used_llm
+                if error:
+                    llm_errors.append(error)
+                if scoring == "bytes_fallback":
+                    fallback_segments.append(segment_id)
         selection = {
             "schema_version": "take_selection.v1",
             "project": {
@@ -60,6 +77,8 @@ class TakeSelectStage(Stage):
                 "mode": "qa_plus_llm" if llm_used else "deterministic_quality_score",
                 "llm_status": self._llm_status(llm_used, llm_errors),
                 "llm_errors": llm_errors,
+                "quality_signals": ["sharpness", "brightness", "duration", "stability"],
+                "bytes_fallback_segments": fallback_segments,
             },
             "selections": selections,
         }
@@ -104,7 +123,10 @@ class TakeSelectStage(Stage):
         takes: list[dict[str, Any]],
         qa_report: dict[str, Any],
         context: StageContext,
-    ) -> tuple[dict[str, Any], bool, str | None]:
+        *,
+        expected_duration: float | None = None,
+        work_dir: Path,
+    ) -> tuple[dict[str, Any], bool, str | None, str]:
         scored: list[dict[str, Any]] = []
         risky_segments: set[int] = set()
         checks = qa_report.get("checks", {}) if isinstance(qa_report, dict) else {}
@@ -119,11 +141,43 @@ class TakeSelectStage(Stage):
                     risky_segments.add(int(item))
                 except (TypeError, ValueError):
                     continue
+
+        # Frame-analysis scoring; a single failed take drops the WHOLE segment
+        # back to byte-size scoring so scores stay on one comparable scale.
+        qualities: dict[str, dict[str, Any]] = {}
+        scoring = "frame_analysis"
         for take in takes:
-            score = float(take["bytes"])
+            try:
+                qualities[take["id"]] = analyze_take(
+                    take["path"],
+                    expected_duration=expected_duration,
+                    work_dir=work_dir,
+                )
+            except Exception as exc:
+                scoring = "bytes_fallback"
+                logger.warning(
+                    "take_select: quality analysis failed for %s (%s); "
+                    "segment %s falls back to byte-size scoring",
+                    take["id"],
+                    exc,
+                    segment_id,
+                )
+                break
+
+        for take in takes:
+            if scoring == "frame_analysis":
+                score = float(qualities[take["id"]]["composite"])
+            else:
+                score = float(take["bytes"])
             if segment_id in risky_segments:
                 score -= 1.0
-            scored.append({**take, "score": round(score, 3)})
+            scored.append(
+                {
+                    **take,
+                    "score": round(score, 3),
+                    "quality": qualities.get(take["id"]) or {"status": "unavailable"},
+                }
+            )
         scored.sort(key=lambda item: (item["score"], item["take_number"]), reverse=True)
         selected = scored[0]
         llm_error = None
@@ -152,18 +206,21 @@ class TakeSelectStage(Stage):
                 "selected_take": selected["id"],
                 "selected_path": f"assets/videos/{selected['id']}.mp4",
                 "reason": reason,
+                "scoring": scoring,
                 "candidates": [
                     {
                         "take": item["id"],
                         "path": f"assets/videos/{item['id']}.mp4",
                         "score": item["score"],
                         "bytes": item["bytes"],
+                        "quality": item["quality"],
                     }
                     for item in scored
                 ],
             },
             llm_used,
             llm_error,
+            scoring,
         )
 
     def _ask_llm(
@@ -209,6 +266,28 @@ class TakeSelectStage(Stage):
         if errors:
             return "fallback_after_error"
         return "not_configured"
+
+    def _expected_durations(self, director_contract: dict[str, Any]) -> dict[int, float]:
+        """Segment id -> expected clip seconds from director_contract generation.duration."""
+        expected: dict[int, float] = {}
+        for shot in director_contract.get("shots", []) or []:
+            if not isinstance(shot, dict):
+                continue
+            generation = shot.get("generation")
+            if not isinstance(generation, dict):
+                continue
+            raw_segment = shot.get("segment_id")
+            raw_duration = generation.get("duration")
+            if raw_segment is None or raw_duration is None:
+                continue
+            try:
+                segment_id = int(str(raw_segment))
+                duration = float(str(raw_duration))
+            except (TypeError, ValueError):
+                continue
+            if duration > 0:
+                expected[segment_id] = duration
+        return expected
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         if not path.exists():
