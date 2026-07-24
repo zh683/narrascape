@@ -5,6 +5,70 @@
 
 ---
 
+## 修复状态追踪（2026-07-24 更新）
+
+> 本报告原有内容保留为历史审计快照（基线 `8d1c124`）。下列问题已在后续 10 个提交中逐项修复并验证（pytest 327 → 519，ruff/black/mypy strict 全程全绿，golden-sample 端到端通过）。当前 HEAD：`e921662`。
+
+### P0 — 全部清零 ✅
+
+| # | 问题 | 状态 | 修复提交 |
+|---|---|---|---|
+| P0-1 | generate_images finally 崩溃 | ✅ 已修复 | `9831441` |
+| P0-2 | 已付费 task_id 不落盘（task_map 死代码） | ✅ 已修复（VideoTaskLedger 创建即落盘） | `70bd7c5` |
+| P0-3 | 轮询上限 300s 不可配置致任务成孤儿 | ✅ 已修复（`VideoConfig.max_poll_time` 默认 900s + 超时反孤儿） | `70bd7c5` |
+| P0-4 | 非幂等 POST 盲目重试 | ✅ 已修复（重试白名单；幂等键为 provider 侧限制，见残留风险） | `9831441` |
+| P0-5 | 4xx 永久错误被指数退避重试 | ✅ 已修复（`is_retryable_http_error`：仅 408/429/5xx 可重试） | `9831441` |
+
+### P1 — 全部清零 ✅
+
+| # | 问题 | 状态 | 修复提交 |
+|---|---|---|---|
+| P1-1 | completed+pending 阶段静默重跑 | ✅ 已修复（pending 即 halt 并提示 approve） | `70bd7c5` |
+| P1-2 | 编排层零并行、生成阶段串行 | ✅ 已修复（`--stage-parallel` 同层并发 + TTS/video `max_concurrency` 流水化，opt-in） | `39fc4bc` `fb043b5` |
+| P1-3 | BuildCache 死代码 + 路径语义错误 | ✅ 已修复（连根删除，由请求指纹缓存替代） | `f3fc5b8` |
+| P1-4 | catalog design_report 路径错误 | ✅ 已修复 | `9831441` |
+| P1-5 | mode=api 缺 key 静默降级 | ✅ 已修复（显式报错退出） | `c83ff8f` |
+| P1-6 | `${VAR}` 假插值 | ✅ 已修复（load_config 真插值，api_key 未命中加载期报错） | `c83ff8f` |
+| P1-7 | bridge 锁无 stale 回收 / 非法 JSON 即崩 | ⏳ 未修复（P1 中唯一遗留项，见备注¹） | — |
+| P1-8 | Agnes 429 假 Retry-After | ✅ 已修复（`delay_hint` 真实睡眠） | `11445af` |
+| P1-9 | 去重仅看输出文件是否存在 | ✅ 已修复（请求指纹：prompt+模型+参数+参考内容哈希） | `f3fc5b8` |
+| P1-10 | 成本台账只记成功、LLM 游离在外 | ✅ 已修复（失败记账恰好一次 + LLM token 进预算 + 费率可配） | `6b476cb` |
+| P1-11 | .env 向上两级游走 / 明文 key 无防护 | ✅ 已修复（cwd-only + mtime 缓存 + 明文告警 + gitignore 约定） | `c83ff8f` |
+| P1-12 | 契约无强类型 | ✅ 已修复（三大核心契约 pydantic 化，写点 fail-fast） | `46457a8` |
+
+¹ P1-7 在修复执行中被重新评估：bridge 锁与响应解析属于 AI assistant 接管通道的健壮性增强，未纳入本轮 P1 清零范围，仍开放。
+
+### P2 — 部分解决
+
+| 问题 | 状态 | 提交 |
+|---|---|---|
+| take_select 字节数评分 | ✅ 已修复（ffmpeg 四信号质量分：清晰度/亮度/时长保真/帧稳定性） | `e921662` |
+| `--parallel` 参数名误导 | ✅ 已修复（help 修正 + 新增 `--stage-parallel`） | `39fc4bc` |
+| compose.py 假成功 stub | ⏳ 开放（`compose.py:37` 仍 `return True`，属死代码待清理） | — |
+| 文档失真（architecture/design 与实现不符） | ✅ 已修复（各轮同步更新） | 多个 |
+| 令牌桶并发竞态（修复中发现的新问题） | ✅ 已修复 | `39fc4bc` |
+| 返工阶段链双份拷贝已漂移 | ⏳ 开放 | — |
+| clean 三处重复维护 | ⏳ 开放 | — |
+| prompt_safety 静默重写无日志 | ⏳ 开放 | — |
+| film_timeline 欠声明 take_select 依赖 | ⏳ 开放 | — |
+| design_report 查找优先级不一致 | ⏳ 开放 | — |
+| build 退出码含中间返工轮失败 | ⏳ 开放 | — |
+| CLI 单阶段命令样板/不写 state | ⏳ 开放 | — |
+| _THREAD_LOCKS 永久增长 | ⏳ 开放 | — |
+| 依赖无上界/无 lock | ⏳ 开放 | — |
+| 6 处 except Exception: pass | ⏳ 开放 | — |
+
+### 第四梯队（学术驱动）— 已落地 1/4
+
+| 方向 | 状态 | 提交 |
+|---|---|---|
+| take_select 真实质量信号（VBench 式感知评分前置版） | ✅ 已落地 | `e921662` |
+| 分镜即生成条件（STAGE/DrawVideo 路径） | ⏳ 开放 | — |
+| MCTS 选 take（AniMaker 路径） | ⏳ 开放 | — |
+| QA 断言维度对照 Stable cinemetrics 扩充 | ⏳ 开放 | — |
+
+---
+
 ## 一、这是个什么样的项目（代码层面）
 
 ### 1.1 一句话定位
