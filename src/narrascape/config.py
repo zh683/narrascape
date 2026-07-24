@@ -335,6 +335,47 @@ class VideoConfig(BaseModel):
 
 
 # ───────────────────────────────────────────
+# Take selection
+# ───────────────────────────────────────────
+
+
+class TakeSelectConfig(BaseModel):
+    """Multi-take selection strategy configuration."""
+
+    selection_strategy: Literal["auto", "mcts"] = Field(
+        "auto",
+        description=(
+            "Take-selection strategy. 'auto' keeps the legacy single-pass LLM judge "
+            "(one completion per segment, zero behavior change). 'mcts' opts into an "
+            "MCTS-style UCT search: pairwise LLM duels between candidate takes within "
+            "a hard per-segment evaluation budget, with the full decision trace "
+            "persisted to take_selection.yaml for human review."
+        ),
+    )
+    mcts_budget: int = Field(
+        5,
+        ge=1,
+        le=50,
+        description=(
+            "Hard cap on LLM pairwise evaluations per segment when "
+            "selection_strategy='mcts'. Every evaluation is one complete() call, so "
+            "this bounds LLM cost per multi-take segment; attempts that error also "
+            "count against the cap."
+        ),
+    )
+    mcts_exploration: float = Field(
+        1.414,
+        gt=0.0,
+        le=10.0,
+        description=(
+            "UCT exploration constant c in win_rate + c*sqrt(ln(total)/visits). "
+            "Higher values favor rarely-compared takes (exploration); lower values "
+            "exploit the current duel leader."
+        ),
+    )
+
+
+# ───────────────────────────────────────────
 # Visual / Ken Burns
 # ───────────────────────────────────────────
 
@@ -555,6 +596,7 @@ class NarrascapeConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     images: ImageConfig = Field(default_factory=ImageConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
+    take_select: TakeSelectConfig = Field(default_factory=TakeSelectConfig)
     visual: VisualConfig = Field(default_factory=VisualConfig)
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

@@ -11,6 +11,7 @@ import yaml
 
 from narrascape.artifacts import validate_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
+from narrascape.stages.take_select_mcts import PairwiseUCTSelector, fallback_trace
 from narrascape.utils.safe_io import atomic_write_yaml
 from narrascape.utils.video_quality import analyze_take
 
@@ -46,10 +47,18 @@ class TakeSelectStage(Stage):
             self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         )
         candidates = self._collect_candidates(config.project_dir / "assets" / "videos", video_state)
+        strategy = config.take_select.selection_strategy
+        if strategy == "mcts" and not self.llm_client:
+            logger.warning(
+                "take_select: selection_strategy=mcts requires an LLM client; "
+                "falling back to deterministic quality-score selection for all segments"
+            )
         selections: list[dict[str, Any]] = []
         llm_used = False
         llm_errors: list[str] = []
         fallback_segments: list[int] = []
+        mcts_segments: list[int] = []
+        mcts_fallback_segments: list[int] = []
         with tempfile.TemporaryDirectory(prefix="take_select_frames_") as work_dir:
             for segment_id, takes in candidates.items():
                 selection, used_llm, error, scoring = self._select_for_segment(
@@ -66,20 +75,35 @@ class TakeSelectStage(Stage):
                     llm_errors.append(error)
                 if scoring == "bytes_fallback":
                     fallback_segments.append(segment_id)
+                mcts_info = selection.get("mcts")
+                if isinstance(mcts_info, dict):
+                    if mcts_info.get("status") == "fallback_no_llm":
+                        mcts_fallback_segments.append(segment_id)
+                    else:
+                        mcts_segments.append(segment_id)
+        selection_process: dict[str, Any] = {
+            "judges": ["qa", "llm"],
+            "mode": "qa_plus_llm" if llm_used else "deterministic_quality_score",
+            "llm_status": self._llm_status(llm_used, llm_errors),
+            "llm_errors": llm_errors,
+            "quality_signals": ["sharpness", "brightness", "duration", "stability"],
+            "bytes_fallback_segments": fallback_segments,
+            "selection_strategy": strategy,
+        }
+        if strategy == "mcts":
+            selection_process["mcts"] = {
+                "budget": config.take_select.mcts_budget,
+                "exploration": config.take_select.mcts_exploration,
+                "segments": mcts_segments,
+                "fallback_segments": mcts_fallback_segments,
+            }
         selection = {
             "schema_version": "take_selection.v1",
             "project": {
                 "name": config.project.name,
                 "title": config.project.title,
             },
-            "selection_process": {
-                "judges": ["qa", "llm"],
-                "mode": "qa_plus_llm" if llm_used else "deterministic_quality_score",
-                "llm_status": self._llm_status(llm_used, llm_errors),
-                "llm_errors": llm_errors,
-                "quality_signals": ["sharpness", "brightness", "duration", "stability"],
-                "bytes_fallback_segments": fallback_segments,
-            },
+            "selection_process": selection_process,
             "selections": selections,
         }
         validate_artifact("take_selection", selection)
@@ -182,42 +206,83 @@ class TakeSelectStage(Stage):
         selected = scored[0]
         llm_error = None
         llm_used = False
+        mcts_trace: dict[str, Any] | None = None
+        strategy = context.config.take_select.selection_strategy
         if self.llm_client:
-            try:
-                llm_choice = self._ask_llm(segment_id, scored, qa_report, context)
-                selected_id = llm_choice.get("selected_take")
-                llm_selected = next((item for item in scored if item["id"] == selected_id), None)
-                if llm_selected:
-                    selected = llm_selected
-                    llm_used = True
-                    reason = str(llm_choice.get("reason") or "LLM director selected this take.")
-                else:
-                    reason = "highest QA proxy score; LLM returned an unknown take"
-                    llm_error = f"segment {segment_id}: unknown LLM take {selected_id!r}"
-            except Exception as exc:
-                reason = "highest QA proxy score; LLM judge unavailable"
-                llm_error = f"segment {segment_id}: {exc}"
+            if strategy == "mcts":
+                segment = context.script.get_segment(segment_id)
+                outcome = PairwiseUCTSelector(
+                    self.llm_client,
+                    budget=context.config.take_select.mcts_budget,
+                    exploration=context.config.take_select.mcts_exploration,
+                ).select(
+                    segment_id=segment_id,
+                    narration=segment.text if segment else "",
+                    candidates=scored,
+                    qa_checks=(qa_report or {}).get("checks", {}),
+                )
+                mcts_selected = next(
+                    (item for item in scored if item["id"] == outcome.selected_take), None
+                )
+                if mcts_selected:
+                    selected = mcts_selected
+                mcts_trace = outcome.trace
+                llm_used = outcome.evaluations_used > 0
+                reason = outcome.reason
+                if outcome.errors:
+                    llm_error = f"segment {segment_id}: {'; '.join(outcome.errors)}"
+            else:
+                try:
+                    llm_choice = self._ask_llm(segment_id, scored, qa_report, context)
+                    selected_id = llm_choice.get("selected_take")
+                    llm_selected = next(
+                        (item for item in scored if item["id"] == selected_id), None
+                    )
+                    if llm_selected:
+                        selected = llm_selected
+                        llm_used = True
+                        reason = str(llm_choice.get("reason") or "LLM director selected this take.")
+                    else:
+                        reason = "highest QA proxy score; LLM returned an unknown take"
+                        llm_error = f"segment {segment_id}: unknown LLM take {selected_id!r}"
+                except Exception as exc:
+                    reason = "highest QA proxy score; LLM judge unavailable"
+                    llm_error = f"segment {segment_id}: {exc}"
         else:
             reason = "highest QA proxy score; ready for LLM judge override"
+            if strategy == "mcts":
+                mcts_trace = fallback_trace(
+                    budget=context.config.take_select.mcts_budget,
+                    exploration=context.config.take_select.mcts_exploration,
+                    candidates=scored,
+                )
+                reason = (
+                    "highest QA proxy score; MCTS requested but no LLM client configured "
+                    "(see mcts trace)"
+                )
+
+        selection_entry: dict[str, Any] = {
+            "segment_id": segment_id,
+            "selected_take": selected["id"],
+            "selected_path": f"assets/videos/{selected['id']}.mp4",
+            "reason": reason,
+            "scoring": scoring,
+            "candidates": [
+                {
+                    "take": item["id"],
+                    "path": f"assets/videos/{item['id']}.mp4",
+                    "score": item["score"],
+                    "bytes": item["bytes"],
+                    "quality": item["quality"],
+                }
+                for item in scored
+            ],
+        }
+        if mcts_trace is not None:
+            selection_entry["mcts"] = mcts_trace
 
         return (
-            {
-                "segment_id": segment_id,
-                "selected_take": selected["id"],
-                "selected_path": f"assets/videos/{selected['id']}.mp4",
-                "reason": reason,
-                "scoring": scoring,
-                "candidates": [
-                    {
-                        "take": item["id"],
-                        "path": f"assets/videos/{item['id']}.mp4",
-                        "score": item["score"],
-                        "bytes": item["bytes"],
-                        "quality": item["quality"],
-                    }
-                    for item in scored
-                ],
-            },
+            selection_entry,
             llm_used,
             llm_error,
             scoring,

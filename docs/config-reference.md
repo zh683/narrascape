@@ -224,6 +224,32 @@ director-contract prompts into Seedance, then writes completed clips for
 `take_select`, `film_timeline`, QA, and rework stages. Legacy Agnes video
 support remains only for older configs.
 
+## Take Select
+
+```yaml
+take_select:
+  selection_strategy: auto   # auto | mcts
+  mcts_budget: 5
+  mcts_exploration: 1.414
+```
+
+`selection_strategy: auto` (default) keeps the legacy behavior: one LLM judge
+completion per segment overriding the deterministic quality score — zero
+behavior change.
+
+`selection_strategy: mcts` opts into an MCTS-style UCT search
+(AniMaker-inspired): the LLM judges candidate takes through **pairwise duels**
+chosen by UCT (`win_rate + c*sqrt(ln(total)/visits)`), with the deterministic
+quality score as prior. `mcts_budget` (default `5`, range 1-50) is a hard cap
+on LLM duel attempts per segment — including errored attempts — so LLM cost
+per multi-take segment stays bounded; `mcts_exploration` (default `1.414`) is
+the UCT exploration constant. The full decision trace (every duel, per-take
+visits/wins/win-rate/final-UCT, budget usage, human-readable summary) is
+persisted to `take_selection.yaml` under each selection's `mcts` block for
+human review. Without an LLM client the stage falls back to the deterministic
+ranking with a warning and a `fallback_no_llm` trace block. See
+`docs/agent-stages/take_select.md`.
+
 ## Visual Rendering
 
 ```yaml
