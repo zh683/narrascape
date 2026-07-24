@@ -29,14 +29,14 @@
 | P1-4 | catalog design_report 路径错误 | ✅ 已修复 | `9831441` |
 | P1-5 | mode=api 缺 key 静默降级 | ✅ 已修复（显式报错退出） | `c83ff8f` |
 | P1-6 | `${VAR}` 假插值 | ✅ 已修复（load_config 真插值，api_key 未命中加载期报错） | `c83ff8f` |
-| P1-7 | bridge 锁无 stale 回收 / 非法 JSON 即崩 | ⏳ 未修复（P1 中唯一遗留项，见备注¹） | — |
+| P1-7 | bridge 锁无 stale 回收 / 非法 JSON 即崩 | ✅ 已修复（复用 safe_io.file_lock，60s 自愈；半截响应容错等待 + 超时诊断字段） | `7a50f62` |
 | P1-8 | Agnes 429 假 Retry-After | ✅ 已修复（`delay_hint` 真实睡眠） | `11445af` |
 | P1-9 | 去重仅看输出文件是否存在 | ✅ 已修复（请求指纹：prompt+模型+参数+参考内容哈希） | `f3fc5b8` |
 | P1-10 | 成本台账只记成功、LLM 游离在外 | ✅ 已修复（失败记账恰好一次 + LLM token 进预算 + 费率可配） | `6b476cb` |
 | P1-11 | .env 向上两级游走 / 明文 key 无防护 | ✅ 已修复（cwd-only + mtime 缓存 + 明文告警 + gitignore 约定） | `c83ff8f` |
 | P1-12 | 契约无强类型 | ✅ 已修复（三大核心契约 pydantic 化，写点 fail-fast） | `46457a8` |
 
-¹ P1-7 在修复执行中被重新评估：bridge 锁与响应解析属于 AI assistant 接管通道的健壮性增强，未纳入本轮 P1 清零范围，仍开放。
+> 状态更新（2026-07-24 二更）：P1 已 **12/12 全部清零**。当前 HEAD：`7a50f62`，pytest 527 passed。
 
 ### P2 — 部分解决
 
