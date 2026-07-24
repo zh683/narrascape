@@ -10,17 +10,21 @@ src/narrascape/
   config.py              Pydantic config and project file models
   pipeline.py            Stage graph, dependency resolution, state handling
   pipeline_approval.py   Human review gates
-  cache.py               Content-hash artifact cache
+  catalog.py             Stage, doc, and artifact catalogs for handoffs
+  api_keys.py            API key resolution with ${VAR} env interpolation
+  prompt_safety.py       Provider prompt sanitization and audit persistence
+  prompt_quality.py      Video prompt ingredient scoring
+  prompt_compiler.py     Provider-specific prompt compilation
   agent/                 AI Director models and PromptDirector
   llm/                   LLM clients, bridge transport, prompt templates, validators
-  providers/             Provider registry, selector scoring, execution helpers
+  providers/             Provider registry, selector scoring, execution, HTTP middleware, health
   artifacts.py           Lightweight canonical artifact validation
   contracts/             Typed pydantic schemas for the core stage contracts
   compose.py             Composition runtime selection surface
   stages/                Pipeline stages
   motion/                Ken Burns and crop/zoom/PIL render engines
   uploader/              Reference image upload helpers
-  utils/                 ffmpeg, retry, budget helpers
+  utils/                 ffmpeg, retry, budget, fingerprint, safe_io, video_quality helpers
 ```
 
 ## Stage Registry
@@ -219,9 +223,14 @@ pipeline/<project>/budget_state.json
 pipeline/<project>/video_gen_state.json
 pipeline/<project>/video_tasks.json
 pipeline/<project>/render_report.yaml
+pipeline/<project>/prompt_safety.yaml
+pipeline/<project>/cost_report.yaml
 ```
 
 `state.json` stores stage completion. Approval files store human review state.
+`prompt_safety.yaml` is the prompt-sanitize audit (written only when a stage
+rewrote a provider-bound prompt); `cost_report.yaml` is the spend aggregate
+refreshed by `assistant_handoff` from `budget_state.json`.
 Paid generation stages (images, video, TTS, music) skip re-generation only when
 the output file exists AND its stored request fingerprint matches the current
 request (prompt, model, size/resolution/duration, voice/speed, reference
@@ -254,6 +263,13 @@ replace — the lightweight top-level key / `schema_version` checks in
   carry defaults, and `schema_version` stays a required `Literal` anchor, so
   artifacts from older/newer producers keep loading and unknown fields
   round-trip unchanged.
+
+`contracts/qa_taxonomy.py` complements the models with the stable QA assertion
+dimension taxonomy (`QA_DIMENSIONS`) shared by both sides of the QA contract:
+`director_contract` tags every `qa.assertions` entry with one dimension, and
+`visual_semantic_qa` reviews per dimension and attributes every finding to
+one. Its normalization helpers tolerate legacy untagged artifacts by bucketing
+them as `uncategorized`.
 
 ## LLM Client
 

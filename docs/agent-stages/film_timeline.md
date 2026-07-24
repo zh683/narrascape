@@ -6,6 +6,7 @@
 - `pipeline/<project>/design_report.yaml`
 - `image_map.yaml`
 - optional `pipeline/<project>/video_gen_state.json`
+- optional `pipeline/<project>/take_selection.yaml`
 - optional `assets/videos/vid_*.mp4`
 - optional `asset_manifest.yaml`
 - optional `footage_timeline.yaml`
@@ -20,13 +21,15 @@
 
 1. Read script segments and narration timing.
 2. Load AI Director shot metadata from the design report.
-3. Prefer generated video clips when `assets/videos/vid_*.mp4` exists and generation state allows them.
-4. Prefer source-media edits when generated video is unavailable for the segment.
-5. Use generated image clips as fallback visual coverage.
-6. Add narration clip references for every script segment.
-7. Add music zone references and subtitle references when present.
-8. Record coverage for generated-video, source-media, generated-image, and missing-visual segments.
-9. Leave visual preview and final rendering to downstream `remotion_preview` and `film_assemble`.
+3. When `take_selection.yaml` exists, use the selected take as that segment's generated video; the base `vid_NN.mp4` glob only fills segments without a selection.
+4. Emit an advisory (non-blocking) warning when multi-take files (`vid_*_take_*.mp4`) exist but `take_selection.yaml` is missing, because take files are invisible to the fallback glob.
+5. Prefer generated video clips when `assets/videos/vid_*.mp4` exists and generation state allows them.
+6. Prefer source-media edits when generated video is unavailable for the segment.
+7. Use generated image clips as fallback visual coverage.
+8. Add narration clip references for every script segment.
+9. Add music zone references and subtitle references when present.
+10. Record coverage for generated-video, source-media, generated-image, and missing-visual segments.
+11. Leave visual preview and final rendering to downstream `remotion_preview` and `film_assemble`.
 
 ## Do Not
 

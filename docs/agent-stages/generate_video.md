@@ -19,6 +19,7 @@
 - `pipeline/<project>/video_prompt_quality.yaml`
 - `pipeline/<project>/video_gen_state.json`
 - `pipeline/<project>/video_tasks.json` (paid task ledger)
+- `pipeline/<project>/prompt_safety.yaml` (sanitize audit, only when a prompt was rewritten)
 
 ## Procedure
 

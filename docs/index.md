@@ -20,6 +20,9 @@ and rework queues.
 | Understand provider selection | [Provider Governance](provider-governance.md) |
 | Use reference images and storyboard bindings | [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md) |
 | Track long-term film capability | [Film Capability Roadmap](film-capability-roadmap.md) |
+| Run the LLM over the file-based bridge | [Bridge Mode](BRIDGE_MODE.md) |
+| Keep visual style consistent across shots | [Style Consistency](style-consistency.md) |
+| Work on the codebase with strict typing | [Type Checking](type-checking.md) |
 
 ## Recommended Paths
 
@@ -113,6 +116,7 @@ debugging one stage at a time:
 - [generate_images](agent-stages/generate_images.md)
 - [generate_video](agent-stages/generate_video.md)
 - [production_readiness](agent-stages/production_readiness.md)
+- [pre_production](agent-stages/pre_production.md)
 - [qa](agent-stages/qa.md)
 - [reference_plate](agent-stages/reference_plate.md)
 - [remotion_preview](agent-stages/remotion_preview.md)

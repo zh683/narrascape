@@ -128,6 +128,7 @@ tts:
   pitch: 0
   vol: 1.0
   sample_rate: 32000
+  segments: null
   continuous_sound: true
   text_normalization: true
   language_boost: Chinese
@@ -138,6 +139,8 @@ tts:
 ```
 
 `provider: local` creates deterministic MP3 tones for verification.
+`segments` pins the segment count reported to the TTS engine (`null` =
+auto-detected from the script).
 `requests_per_minute` limits the TTS API call rate with a process-local token
 bucket (`0` = unlimited, the previous behavior).
 `max_concurrency` allows up to N segments to generate concurrently (`1` =
@@ -344,6 +347,7 @@ encode:
 ending:
   enabled: true
   duration: 15.0
+  tone: hopeful
   template: null
   lines:
     - text: Produced by Narrascape
@@ -351,6 +355,8 @@ ending:
   quote: null
   quote_size: 28
 ```
+
+`tone` steers the narrative tone of generated closing narration.
 
 ## Budget
 

@@ -109,7 +109,9 @@ Every stage follows the same base contract:
 
 The pipeline creates stage instances with the right shared clients:
 
-- LLM client for research, write, humanize, pre-production, and design.
+- LLM client for research, write, humanize, pre-production, and design, and
+  for the `director_contract`, `take_select`, `creative_review`, and
+  `visual_semantic_qa` execution-layer directors.
 - Image API key for image and optional video generation.
 - MiniMax API key for TTS and music.
 
@@ -152,12 +154,16 @@ Canonical artifacts can be validated before they flow downstream:
 - `editing_review`
 - `film_supervisor`
 - `film_timeline`
-- `render_report`
+- `production_readiness`
 - `reference_plates`
+- `remotion_preview`
+- `render_report`
 - `rework_execution`
 - `rework_plan`
 - `screenplay_structure`
+- `storyboard_sheet`
 - `take_selection`
+- `video_prompt_quality`
 - `visual_semantic_report`
 
 The schema layer is intentionally lightweight in the first version and can grow into JSON Schema files later.

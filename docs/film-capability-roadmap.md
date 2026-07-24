@@ -18,6 +18,14 @@ Implemented now:
 - Final render QA with subtitle, duration, silence, black-frame, repeated-shot,
   placeholder, shot coverage, missing clip, continuity, and pacing checks.
 - Director rework reports through `director_review`.
+- Multi-take generated-video integration: `video.takes` generates several
+  takes per shot and `take_select` ranks them by QA and director preference,
+  keeping the selected take in `film_timeline.yaml`.
+- Automated rework execution: `rework_plan` turns director findings into
+  regenerate/recut/replacement actions and `rework_execute` applies them under
+  the default-on auto-rework loop (`pipeline.auto_rework`).
+- Continuity bible: `continuity_bible` persists character, wardrobe, location,
+  lighting, and screen-axis state across scenes and generated media.
 
 ## Film Spine
 
@@ -40,17 +48,19 @@ The current schema records:
    Add `act`, `scene`, `shot`, `take`, and `edit` concepts above script
    segments.
 
-2. Multi-take generated-video integration:
-   Support several generated takes per shot, rank them by QA and director
-   preference, then keep the selected take in `film_timeline.yaml`.
+2. Multi-take enhancement:
+   Multi-take generation and selection are implemented; the next layer is
+   richer ranking signals (perceptual quality models, director taste memory)
+   and take-level edit decisions inside the timeline.
 
-3. Automated rework execution:
-   Turn `director_review.yaml` queues into repeatable regenerate/recut runs,
-   with human approval before replacing timeline clips.
+3. Rework enhancement:
+   Automated rework execution is implemented; the next layer is finer-grained
+   approval before replacing timeline clips and cross-cycle rework learning.
 
-4. Continuity bible:
-   Persist character, wardrobe, location, lighting, lens, color, and style rules
-   across scenes and generated media.
+4. Continuity enhancement:
+   The continuity bible is implemented; the next layer is enforcing lens,
+   color, and style rules at generation time instead of reporting drift after
+   the fact.
 
 5. Sound design:
    Add ambience, foley, effects, music cues, and mix notes as timeline tracks.

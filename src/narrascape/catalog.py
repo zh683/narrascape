@@ -44,6 +44,7 @@ STAGE_DOC_PATHS: dict[str, str] = {
     "footage_edit": "docs/agent-stages/footage_edit.md",
     "generate_images": "docs/agent-stages/generate_images.md",
     "generate_video": "docs/agent-stages/generate_video.md",
+    "pre_production": "docs/agent-stages/pre_production.md",
     "production_readiness": "docs/agent-stages/production_readiness.md",
     "qa": "docs/agent-stages/qa.md",
     "reference_plate": "docs/agent-stages/reference_plate.md",
