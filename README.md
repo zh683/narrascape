@@ -235,6 +235,26 @@ pytest -q --tb=short --no-cov
 Use it when bootstrapping a fresh checkout so CLI dependencies such as Typer and
 test tools such as pytest are installed before running `python -m narrascape.cli`.
 
+### Reproducible environments (dependency lock)
+
+`pyproject.toml` intentionally declares only lower bounds (`>=`) for runtime and
+dev dependencies: Narrascape is a library, and upper bounds are an anti-pattern
+for libraries unless a specific future release is known to break compatibility
+(no such case is known today).
+
+For reproducible CI/dev installs, `requirements-lock.txt` pins the exact
+versions resolved in the project's test environment:
+
+```bash
+pip install -r requirements-lock.txt
+pip install -e . --no-deps
+```
+
+Regenerate it after dependency upgrades with
+`pip freeze --exclude-editable` from the test venv (excluding the `narrascape`
+editable install itself). The snapshot is interpreter-specific; regenerate on
+the target Python minor if an exact cross-version pin is needed.
+
 ## License
 
 Narrascape is released under the GNU Affero General Public License v3.0. See

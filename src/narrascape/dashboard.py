@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import subprocess
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════
 #  Page config
@@ -486,7 +489,7 @@ def _get_stage_status(stage_name: str) -> dict[str, Any]:
                 try:
                     total_size += f.stat().st_size
                 except Exception:
-                    pass
+                    logger.debug("Could not stat stage artifact %s", f, exc_info=True)
     return {"done": done, "files": files, "size": total_size, "dir": stage_dir}
 
 

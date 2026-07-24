@@ -333,6 +333,80 @@ class PipelineState:
         return self.get_stage_status(name) == "completed"
 
 
+def flatten_output_values(value: Any) -> list[str | Path]:
+    if value is None:
+        return []
+    if isinstance(value, (str, Path)):
+        return [value]
+    if isinstance(value, dict):
+        flattened: list[str | Path] = []
+        for item in value.values():
+            flattened.extend(flatten_output_values(item))
+        return flattened
+    if isinstance(value, (list, tuple, set)):
+        sequence_values: list[str | Path] = []
+        for item in value:
+            sequence_values.extend(flatten_output_values(item))
+        return sequence_values
+    return []
+
+
+def normalize_recorded_output(config: NarrascapeConfig, text: str) -> str:
+    """Normalize one stage output for state.json recording.
+
+    Stage results carry absolute paths, or cwd-relative *display* paths
+    that already include the project_dir prefix (e.g. with
+    ``-p sub/proj`` the result is ``sub/proj/pipeline/...``). Blindly
+    joining project_dir onto such display paths produced double-prefixed
+    records that could never exist on disk, silently disabling
+    incremental skips and the approval halt for relative-path projects.
+
+    Normalized form: project_dir-relative (posix) whenever the output
+    lives under the project; absolute only when it lives outside. This
+    also keeps state.json valid when the project directory is moved.
+    """
+    path = Path(text)
+    project_dir = config.project_dir
+    if path.is_absolute():
+        try:
+            return path.relative_to(project_dir).as_posix()
+        except ValueError:
+            return str(path)
+    if not project_dir.is_absolute():
+        prefix = project_dir.parts
+        if prefix and path.parts[: len(prefix)] == prefix:
+            stripped = Path(*path.parts[len(prefix) :])
+            if stripped.parts:
+                return stripped.as_posix()
+    return path.as_posix()
+
+
+def recordable_outputs(config: NarrascapeConfig, result: StageResult) -> list[str]:
+    paths: list[str] = []
+    for item in flatten_output_values(result.outputs):
+        text = str(item)
+        if not text:
+            continue
+        paths.append(normalize_recorded_output(config, text))
+    return paths
+
+
+def record_stage_result(config: NarrascapeConfig, stage_name: str, result: StageResult) -> None:
+    """Persist one stage outcome to state.json for single-stage CLI commands.
+
+    Mirrors build's bookkeeping for a completed stage (status + normalized
+    outputs; failures record "failed" and leave outputs untouched), without
+    creating approval files: single-stage commands are explicit user
+    invocations and never enter the approval gate.
+    """
+    state = PipelineState(config.pipeline_dir / "state.json")
+    if result.success:
+        state.set_stage_status(stage_name, "completed")
+        state.set_stage_outputs(stage_name, recordable_outputs(config, result))
+    else:
+        state.set_stage_status(stage_name, "failed")
+
+
 # ═══════════════════════════════════════════
 # Pipeline Executor
 # ═══════════════════════════════════════════
@@ -1264,59 +1338,13 @@ class Pipeline:
         return [str(stage) for stage in report.next_stages]
 
     def _recordable_outputs(self, result: StageResult) -> list[str]:
-        paths: list[str] = []
-        for item in self._flatten_output_values(result.outputs):
-            text = str(item)
-            if not text:
-                continue
-            paths.append(self._normalize_recorded_output(text))
-        return paths
+        return recordable_outputs(self.config, result)
 
     def _normalize_recorded_output(self, text: str) -> str:
-        """Normalize one stage output for state.json recording.
-
-        Stage results carry absolute paths, or cwd-relative *display* paths
-        that already include the project_dir prefix (e.g. with
-        ``-p sub/proj`` the result is ``sub/proj/pipeline/...``). Blindly
-        joining project_dir onto such display paths produced double-prefixed
-        records that could never exist on disk, silently disabling
-        incremental skips and the approval halt for relative-path projects.
-
-        Normalized form: project_dir-relative (posix) whenever the output
-        lives under the project; absolute only when it lives outside. This
-        also keeps state.json valid when the project directory is moved.
-        """
-        path = Path(text)
-        project_dir = self.config.project_dir
-        if path.is_absolute():
-            try:
-                return path.relative_to(project_dir).as_posix()
-            except ValueError:
-                return str(path)
-        if not project_dir.is_absolute():
-            prefix = project_dir.parts
-            if prefix and path.parts[: len(prefix)] == prefix:
-                stripped = Path(*path.parts[len(prefix) :])
-                if stripped.parts:
-                    return stripped.as_posix()
-        return path.as_posix()
+        return normalize_recorded_output(self.config, text)
 
     def _flatten_output_values(self, value: Any) -> list[str | Path]:
-        if value is None:
-            return []
-        if isinstance(value, (str, Path)):
-            return [value]
-        if isinstance(value, dict):
-            flattened: list[str | Path] = []
-            for item in value.values():
-                flattened.extend(self._flatten_output_values(item))
-            return flattened
-        if isinstance(value, (list, tuple, set)):
-            sequence_values: list[str | Path] = []
-            for item in value:
-                sequence_values.extend(self._flatten_output_values(item))
-            return sequence_values
-        return []
+        return flatten_output_values(value)
 
     def _completed_outputs_present(self, stage_name: str, stage: Stage) -> bool:
         recorded = self.state.get_stage_outputs(stage_name)
@@ -1413,170 +1441,32 @@ class Pipeline:
         }
 
     def clean(self, stages: list[str] | None = None) -> None:
-        """Remove intermediate artifacts for given stages."""
+        """Remove intermediate artifacts for given stages.
+
+        The per-stage deletion set is derived from the catalog
+        (``stage_clean_targets``), not a hand-maintained list here: catalog
+        artifact templates resolve to their current paths, and extras cover
+        directories, globs, and stage-local state files. Stages without
+        declared targets (e.g. design/write/research) only get their status
+        reset, exactly as before.
+        """
+        import glob
+        import shutil
+
+        from narrascape.catalog import stage_clean_targets
+
         stage_map = get_stage_map()
-        dirs_to_clean = []
-        if stages is None or "kenburns" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "video_segments")
-        if stages is None or "concat" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "gaps",
-                    self.config.pipeline_dir / "body_concat.mp4",
-                    self.config.pipeline_dir / "final_nosub.mp4",
-                ]
-            )
-        if stages is None or "audio" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "mixed_audio*.mp3",
-                    self.config.pipeline_dir / "narration_*.mp3",
-                    self.config.output_dir / f"{self.config.project.name}-clean.mp4",
-                ]
-            )
-        if stages is None or "subtitles" in stages:
-            dirs_to_clean.append(self.config.output_dir / f"{self.config.project.name}-sub.mp4")
-        if stages is None or "pre_production" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.project_dir / "assets" / "references" / "*.png",
-                    self.config.project_dir / "assets" / "storyboard" / "*.png",
-                    self.config.pipeline_dir / "pre_production.yaml",
-                ]
-            )
-        if stages is None or "generate_images" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.images_dir / "*.png",
-                    self.config.pipeline_dir / "image_gen_state.json",
-                ]
-            )
-        if stages is None or "generate_video" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "video_gen_state.json",
-                    self.config.pipeline_dir / "video_tasks.json",
-                    self.config.pipeline_dir / "video_prompt_quality.yaml",
-                    self.config.project_dir / "assets" / "videos" / "vid_*.mp4",
-                ]
-            )
-        if stages is None or "generate_tts" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.tts_dir / "*.mp3",
-                    self.config.pipeline_dir / "timing.json",
-                    self.config.pipeline_dir / "tts_state.json",
-                ]
-            )
-        if stages is None or "film_timeline" in stages:
-            dirs_to_clean.append(self.config.project_dir / "film_timeline.yaml")
-        if stages is None or "remotion_preview" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "remotion_preview.yaml",
-                    self.config.pipeline_dir / "remotion_preview",
-                ]
-            )
-        if stages is None or "film_assemble" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "timeline_segments",
-                    self.config.pipeline_dir / "film_assemble.txt",
-                    self.config.pipeline_dir / "film_assembled.mp4",
-                ]
-            )
-        if stages is None or "generate_music" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.music_dir / "*.mp3",
-                    self.config.pipeline_dir / "bgm_state.json",
-                ]
-            )
-        if stages is None or "remix_audio" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "mixed_audio*.mp3",
-                    self.config.pipeline_dir / "narration_*.mp3",
-                ]
-            )
-        if stages is None or "qa" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "render_report.yaml")
-        if stages is None or "screenplay_structure" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "screenplay_structure.yaml")
-        if stages is None or "director_contract" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "director_contract.yaml")
-        if stages is None or "reference_plate" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "reference_plates.yaml")
-        if stages is None or "storyboard_sheet" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "storyboard_sheet.yaml",
-                    self.config.pipeline_dir / "storyboard_sheet.png",
-                    self.config.pipeline_dir / "storyboard_sheet.pdf",
-                ]
-            )
-        if stages is None or "production_readiness" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "production_readiness.yaml")
-        if stages is None or "animatic" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "animatic.yaml",
-                    self.config.pipeline_dir / "animatic.mp4",
-                    self.config.pipeline_dir / "animatic.txt",
-                    self.config.pipeline_dir / "animatic_panels",
-                ]
-            )
-        if stages is None or "continuity_bible" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "continuity_bible.yaml")
-        if stages is None or "editing_review" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "editing_review.yaml")
-        if stages is None or "director_review" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "director_review.yaml")
-        if stages is None or "rework_plan" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "rework_plan.yaml")
-        if stages is None or "creative_review" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "creative_review.yaml")
-        if stages is None or "visual_semantic_qa" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "visual_semantic_report.yaml")
-        if stages is None or "film_supervisor" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "film_supervisor.yaml")
-        if stages is None or "assistant_handoff" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "assistant_handoff.yaml",
-                    self.config.pipeline_dir / "assistant_handoff.md",
-                ]
-            )
-        if stages is None or "rework_execute" in stages:
-            dirs_to_clean.extend(
-                [
-                    self.config.pipeline_dir / "rework_execution.yaml",
-                    self.config.pipeline_dir / "director_contract_rewrite_queue.yaml",
-                    self.config.pipeline_dir / "video_regen_queue.yaml",
-                    self.config.pipeline_dir / "recut_queue.yaml",
-                    self.config.pipeline_dir / "source_media_replacement_queue.yaml",
-                ]
-            )
-        if stages is None or "take_select" in stages:
-            dirs_to_clean.append(self.config.pipeline_dir / "take_selection.yaml")
-
-        for path in dirs_to_clean:
-            if isinstance(path, str) and "*" in path:
-                import glob
-
-                for p in glob.glob(path):
-                    Path(p).unlink(missing_ok=True)
-            elif isinstance(path, Path) and "*" in str(path):
-                import glob
-
-                for p in glob.glob(str(path)):
-                    Path(p).unlink(missing_ok=True)
-            elif path.is_dir():
-                import shutil
-
-                shutil.rmtree(path, ignore_errors=True)
-            elif path.exists():
-                path.unlink(missing_ok=True)
+        selected = list(stage_map.keys()) if stages is None else stages
+        for stage_name in selected:
+            for template in stage_clean_targets(stage_name):
+                target = self.config.project_dir / template.format(name=self.config.project.name)
+                if "*" in str(target):
+                    for match in glob.glob(str(target)):
+                        Path(match).unlink(missing_ok=True)
+                elif template.endswith("/"):
+                    shutil.rmtree(target, ignore_errors=True)
+                else:
+                    target.unlink(missing_ok=True)
 
         # Reset state and approvals
         for stage in stages or list(stage_map.keys()):

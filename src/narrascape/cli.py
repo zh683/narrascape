@@ -30,6 +30,7 @@ from narrascape.config import (
 )
 from narrascape.log_setup import setup_logging
 from narrascape.pipeline import Pipeline, final_stage_results
+from narrascape.stages.base import Stage, StageResult
 
 LLMProviderName = Literal[
     "openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"
@@ -87,6 +88,45 @@ def _empty_script() -> Script:
 
 def _load_script_or_empty(config: NarrascapeConfig) -> Script:
     return load_script(config.script_path) if config.script_path.exists() else _empty_script()
+
+
+def _load_project_config(project_dir: Path) -> NarrascapeConfig:
+    """Load config.yaml from a project dir, exiting with a consistent error."""
+    config_path = project_dir / "config.yaml"
+    if not config_path.exists():
+        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
+        raise typer.Exit(1)
+    try:
+        return load_config(config_path)
+    except Exception as e:
+        console.print(f"[bold red]Config error:[/] {e}")
+        raise typer.Exit(1)
+
+
+def run_single_stage(
+    stage: Stage, config: NarrascapeConfig, *, script: Script | None = None
+) -> StageResult:
+    """Run one stage for a single-stage CLI command and persist its outcome.
+
+    These commands bypass the Pipeline executor, so without this bookkeeping
+    state.json never learns about their results and ``narrascape status``
+    goes blind. Records exactly what build records for a completed stage
+    (status + normalized outputs; failures record "failed") and creates no
+    approval files — single-stage commands are explicit user invocations and
+    must not demand an approve round-trip.
+    """
+    from narrascape.pipeline import record_stage_result
+    from narrascape.stages.base import StageContext
+
+    context = StageContext(
+        config=config,
+        script=script if script is not None else _load_script_or_empty(config),
+        state={},
+        dry_run=False,
+    )
+    result = stage.run(context)
+    record_stage_result(config, stage.name, result)
+    return result
 
 
 def _pre_production_report_output(outputs: Any) -> str:
@@ -506,29 +546,12 @@ def research_cmd(
 
     Generates research_report.md with structured findings.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.stages.base import StageContext
     from narrascape.stages.research import ResearchStage
 
     stage = ResearchStage(llm_client=_get_llm_client(config=config), topic=topic, depth=depth)
-    context = StageContext(
-        config=config,
-        script=_empty_script(),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=_empty_script())
     if not result.success:
         console.print(f"[bold red]Research failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -577,18 +600,8 @@ def write_cmd(
     The script will be humanized and marked for your approval.
     After editing, approve it to proceed to design/build.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.stages.base import StageContext
     from narrascape.stages.write import WriteStage
 
     stage = WriteStage(
@@ -599,14 +612,7 @@ def write_cmd(
         research_report=research_report or "",
         auto_humanize=not skip_humanize,
     )
-    context = StageContext(
-        config=config,
-        script=_empty_script(),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=_empty_script())
     if not result.success:
         console.print(f"[bold red]Write failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -636,31 +642,14 @@ def humanize_cmd(
 
     Backs up the original script and applies humanization patterns.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.stages.base import StageContext
     from narrascape.stages.humanize import HumanizeStage
 
     stage = HumanizeStage(
         llm_client=_get_llm_client(config=config), aggressive=aggressive, score_only=score_only
     )
-    context = StageContext(
-        config=config,
-        script=_load_script_or_empty(config),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config)
     if not result.success:
         console.print(f"[bold red]Humanize failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -782,16 +771,7 @@ def pre_production_cmd(
     Uses AI Assistant bridge tasks for intelligent character/scene extraction.
     No external API keys needed when running with an AI assistant.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
-
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
     script_path = project_dir / config.project.script_file
     if not script_path.exists():
@@ -826,16 +806,7 @@ def pre_production_cmd(
         generate_expressions=not skip_expressions,
         generate_storyboard=not skip_storyboard,
     )
-    from narrascape.stages.base import StageContext
-
-    context = StageContext(
-        config=config,
-        script=load_script(config.script_path),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=load_script(config.script_path))
 
     if result.success:
         console.print("[bold green]✅ Pre-production complete[/]")
@@ -897,16 +868,7 @@ def design_cmd(
     Uses AI Assistant bridge tasks for autonomous cinematic design via PromptDirector.
     No external API keys needed when running with an AI assistant.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
-
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
     script_path = project_dir / config.project.script_file
     if not script_path.exists():
@@ -955,16 +917,7 @@ def design_cmd(
     from narrascape.stages.design import DesignStage
 
     stage = DesignStage(llm_client=llm_client, style_template=style)
-    from narrascape.stages.base import StageContext
-
-    context = StageContext(
-        config=config,
-        script=load_script(config.script_path),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=load_script(config.script_path))
 
     if result.success:
         console.print("[bold green]✅ Design complete[/]")

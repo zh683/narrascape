@@ -127,14 +127,14 @@ class PILEngine(MotionEngine):
                 try:
                     proc.kill()
                 except Exception:
-                    pass
+                    logger.debug("proc.kill() failed during write-error cleanup", exc_info=True)
             finally:
                 if proc.stdin:
                     try:
                         proc.stdin.close()
                         proc.stdin = None
                     except Exception:
-                        pass
+                        logger.debug("ffmpeg stdin close failed during cleanup", exc_info=True)
                 try:
                     proc.wait(timeout=max(params.duration * 4.0, 30.0))
                 except subprocess.TimeoutExpired:

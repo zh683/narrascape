@@ -7,6 +7,7 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,18 +20,55 @@ class ArtifactLoadError(ValueError):
     """Raised when an artifact cannot be loaded as the expected data type."""
 
 
-_THREAD_LOCKS: dict[str, threading.RLock] = {}
+class _ThreadLockEntry:
+    """One per-file RLock plus the count of threads currently using it.
+
+    ``users`` is bumped under ``_THREAD_LOCKS_GUARD`` before the caller can
+    block on the lock, so an entry with waiters can never look idle.
+    """
+
+    __slots__ = ("lock", "users")
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.users = 0
+
+
+# Bounded LRU of per-file thread locks. The dict used to grow forever (one
+# entry per file ever locked), which slowly leaks memory in long-running
+# processes such as the dashboard. Entries are evicted least-recently-used
+# first once the cap is exceeded, and only when no thread holds or waits on
+# them — cross-process semantics (the .lock file) are unaffected.
+_THREAD_LOCKS: OrderedDict[str, _ThreadLockEntry] = OrderedDict()
 _THREAD_LOCKS_GUARD = threading.Lock()
+_THREAD_LOCKS_MAX = 128
 
 
-def _thread_lock_for(path: Path) -> threading.RLock:
+def _thread_lock_entry_for(path: Path) -> _ThreadLockEntry:
     key = str(path.resolve())
     with _THREAD_LOCKS_GUARD:
-        lock = _THREAD_LOCKS.get(key)
-        if lock is None:
-            lock = threading.RLock()
-            _THREAD_LOCKS[key] = lock
-        return lock
+        entry = _THREAD_LOCKS.get(key)
+        if entry is not None:
+            _THREAD_LOCKS.move_to_end(key)
+        else:
+            entry = _ThreadLockEntry()
+            _THREAD_LOCKS[key] = entry
+            while len(_THREAD_LOCKS) > _THREAD_LOCKS_MAX:
+                for old_key, old_entry in list(_THREAD_LOCKS.items()):
+                    if old_entry.users == 0:
+                        del _THREAD_LOCKS[old_key]
+                        break
+                else:
+                    # Every entry is in use; keep the extra one rather than
+                    # evicting a live lock. The cap reasserts as locks idle.
+                    break
+        entry.users += 1
+        return entry
+
+
+def _release_thread_lock_entry(entry: _ThreadLockEntry) -> None:
+    with _THREAD_LOCKS_GUARD:
+        entry.users -= 1
 
 
 @contextmanager
@@ -39,37 +77,40 @@ def file_lock(path: Path, *, timeout: float = 30.0, stale_after: float = 600.0) 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_name(f"{target.name}.lock")
-    thread_lock = _thread_lock_for(lock_path)
+    entry = _thread_lock_entry_for(lock_path)
     deadline = time.monotonic() + timeout
 
-    with thread_lock:
-        fd: int | None = None
-        while True:
-            try:
-                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
-                break
-            except FileExistsError:
+    try:
+        with entry.lock:
+            fd: int | None = None
+            while True:
                 try:
-                    age = time.time() - lock_path.stat().st_mtime
-                    if age > stale_after:
-                        lock_path.unlink(missing_ok=True)
-                        continue
+                    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
+                    break
+                except FileExistsError:
+                    try:
+                        age = time.time() - lock_path.stat().st_mtime
+                        if age > stale_after:
+                            lock_path.unlink(missing_ok=True)
+                            continue
+                    except OSError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Timed out waiting for lock: {lock_path}")
+                    time.sleep(0.05)
+
+            try:
+                yield
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                try:
+                    lock_path.unlink(missing_ok=True)
                 except OSError:
                     pass
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Timed out waiting for lock: {lock_path}")
-                time.sleep(0.05)
-
-        try:
-            yield
-        finally:
-            if fd is not None:
-                os.close(fd)
-            try:
-                lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+    finally:
+        _release_thread_lock_entry(entry)
 
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8", lock: bool = True) -> None:
