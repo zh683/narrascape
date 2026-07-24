@@ -1269,11 +1269,37 @@ class Pipeline:
             text = str(item)
             if not text:
                 continue
-            path = Path(text)
-            if not path.is_absolute():
-                path = self.config.project_dir / path
-            paths.append(str(path))
+            paths.append(self._normalize_recorded_output(text))
         return paths
+
+    def _normalize_recorded_output(self, text: str) -> str:
+        """Normalize one stage output for state.json recording.
+
+        Stage results carry absolute paths, or cwd-relative *display* paths
+        that already include the project_dir prefix (e.g. with
+        ``-p sub/proj`` the result is ``sub/proj/pipeline/...``). Blindly
+        joining project_dir onto such display paths produced double-prefixed
+        records that could never exist on disk, silently disabling
+        incremental skips and the approval halt for relative-path projects.
+
+        Normalized form: project_dir-relative (posix) whenever the output
+        lives under the project; absolute only when it lives outside. This
+        also keeps state.json valid when the project directory is moved.
+        """
+        path = Path(text)
+        project_dir = self.config.project_dir
+        if path.is_absolute():
+            try:
+                return path.relative_to(project_dir).as_posix()
+            except ValueError:
+                return str(path)
+        if not project_dir.is_absolute():
+            prefix = project_dir.parts
+            if prefix and path.parts[: len(prefix)] == prefix:
+                stripped = Path(*path.parts[len(prefix) :])
+                if stripped.parts:
+                    return stripped.as_posix()
+        return path.as_posix()
 
     def _flatten_output_values(self, value: Any) -> list[str | Path]:
         if value is None:
@@ -1295,11 +1321,34 @@ class Pipeline:
     def _completed_outputs_present(self, stage_name: str, stage: Stage) -> bool:
         recorded = self.state.get_stage_outputs(stage_name)
         if recorded:
-            return all(Path(path).exists() for path in recorded)
+            return all(self._recorded_output_exists(path) for path in recorded)
         expected = self._expected_stage_outputs(stage)
         if expected:
             return all(path.exists() for path in expected)
         return True
+
+    def _recorded_output_exists(self, recorded: str) -> bool:
+        """Existence check for one recorded output, tolerant of legacy records.
+
+        Candidates, in order: project_dir-joined (the normalized storage
+        form), the raw recorded string (cwd-relative display form — the
+        pre-normalization check semantics), and the string with one redundant
+        project_dir prefix stripped (migration for double-prefixed records
+        written by the join bug). Records that match nothing report missing,
+        the stage reruns once, and the corrected record self-heals state.json.
+        """
+        path = Path(recorded)
+        if path.is_absolute():
+            return path.exists()
+        candidates = [self.config.project_dir / path, path]
+        project_dir = self.config.project_dir
+        if not project_dir.is_absolute():
+            prefix = project_dir.parts
+            if prefix and path.parts[: len(prefix)] == prefix:
+                stripped = Path(*path.parts[len(prefix) :])
+                if stripped.parts:
+                    candidates.append(stripped)
+        return any(candidate.exists() for candidate in candidates)
 
     def _expected_stage_outputs(self, stage: Stage) -> list[Path]:
         result: list[Path] = []

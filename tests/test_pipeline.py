@@ -972,7 +972,10 @@ class TestPipelineStageFactory:
             )
         )
 
-        assert paths == [str(first), str(second)]
+        # Absolute outputs under the project are recorded project-relative
+        # (normalized form); the flattening of nested dict/list outputs is
+        # unchanged.
+        assert paths == ["pipeline/nested-output-test/a.txt", "pipeline/nested-output-test/b.txt"]
 
     def test_pipeline_clean_removes_film_assembly_and_director_review_artifacts(self, tmp_path):
         config = NarrascapeConfig(
