@@ -75,7 +75,7 @@
 |---|---|---|
 | take_select 真实质量信号（VBench 式感知评分前置版） | ✅ 已落地 | `e921662` |
 | 分镜即生成条件（STAGE/DrawVideo 路径） | ✅ 已落地（opt-in `video.storyboard_conditioning: auto`：分镜面板→first_frame + 分镜绑定参考领先注入 + 指纹失效正确） | `2e6ae76` |
-| MCTS 选 take（AniMaker 路径） | ✅ 已落地（opt-in `take_select.selection_strategy: mcts`：成对 LLM 决斗 + UCT 探索/利用、mcts_budget 硬上限、确定性 tie-break 无 RNG、全量决策轨迹落盘可审查、无 LLM/全失败/无效判决三条回退路径） | 本轮（未提交） |
+| MCTS 选 take（AniMaker 路径） | ✅ 已落地（opt-in `take_select.selection_strategy: mcts`：成对 LLM 决斗 + UCT 探索/利用、mcts_budget 硬上限、确定性 tie-break 无 RNG、全量决策轨迹落盘可审查、无 LLM/全失败/无效判决三条回退路径） | `cbded8f` |
 | QA 断言维度对照 Stable cinemetrics 扩充 | ⏳ 开放 | — |
 
 ---
