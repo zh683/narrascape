@@ -46,15 +46,15 @@
 |---|---|---|
 | take_select 字节数评分 | ✅ 已修复（ffmpeg 四信号质量分：清晰度/亮度/时长保真/帧稳定性） | `e921662` |
 | `--parallel` 参数名误导 | ✅ 已修复（help 修正 + 新增 `--stage-parallel`） | `39fc4bc` |
-| compose.py 假成功 stub | ✅ 已修复（`render()` 改为 raise NotImplementedError，选择面语义保留） | 本轮（未提交） |
+| compose.py 假成功 stub | ✅ 已修复（`render()` 改为 raise NotImplementedError，选择面语义保留） | `6e6138b` |
 | 文档失真（architecture/design 与实现不符） | ✅ 已修复（各轮同步更新） | 多个 |
 | 令牌桶并发竞态（修复中发现的新问题） | ✅ 已修复 | `39fc4bc` |
-| 返工阶段链双份拷贝已漂移 | ✅ 已修复（catalog 单一事实源 REWORK_ACTION_CHAINS/REWORK_TAIL_STAGES，决策/执行两侧共同消费 + 防漂移测试） | 本轮（未提交） |
+| 返工阶段链双份拷贝已漂移 | ✅ 已修复（catalog 单一事实源 REWORK_ACTION_CHAINS/REWORK_TAIL_STAGES，决策/执行两侧共同消费 + 防漂移测试） | `6e6138b` |
 | clean 三处重复维护 | ⏳ 开放 | — |
-| prompt_safety 静默重写无日志 | ✅ 已修复（命中即 logger.warning 类别+条数，进程级事件缓冲 + 三 stage 尾部落盘 pipeline/\<project\>/prompt_safety.yaml） | 本轮（未提交） |
-| film_timeline 欠声明 take_select 依赖 | ✅ 已修复（刻意不声明硬依赖——depends_on 会拉入付费生成；改为文档化 + 多 take 无选择结果时 advisory warning） | 本轮（未提交） |
-| design_report 查找优先级不一致 | ✅ 已修复（catalog.design_report_candidates 统一为 pipeline_dir 优先，10 处旧优先级站点 + reference_plate 全部改走单一 helper） | 本轮（未提交） |
-| build 退出码含中间返工轮失败 | ✅ 已修复（final_stage_results 折叠 cycle_N.* 键，末轮结果定退出码；展示层仍保留全历史） | 本轮（未提交） |
+| prompt_safety 静默重写无日志 | ✅ 已修复（命中即 logger.warning 类别+条数，进程级事件缓冲 + 三 stage 尾部落盘 pipeline/\<project\>/prompt_safety.yaml） | `6e6138b` |
+| film_timeline 欠声明 take_select 依赖 | ✅ 已修复（刻意不声明硬依赖——depends_on 会拉入付费生成；改为文档化 + 多 take 无选择结果时 advisory warning） | `6e6138b` |
+| design_report 查找优先级不一致 | ✅ 已修复（catalog.design_report_candidates 统一为 pipeline_dir 优先，10 处旧优先级站点 + reference_plate 全部改走单一 helper） | `6e6138b` |
+| build 退出码含中间返工轮失败 | ✅ 已修复（final_stage_results 折叠 cycle_N.* 键，末轮结果定退出码；展示层仍保留全历史） | `6e6138b` |
 | CLI 单阶段命令样板/不写 state | ⏳ 开放 | — |
 | _THREAD_LOCKS 永久增长 | ⏳ 开放 | — |
 | 依赖无上界/无 lock | ⏳ 开放 | — |
