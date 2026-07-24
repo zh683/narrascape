@@ -4,11 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class CreativeReviewStage(Stage):
@@ -67,8 +64,7 @@ class CreativeReviewStage(Stage):
             "findings": findings,
             "recommendations": recommendations,
         }
-        validate_artifact("creative_review", review)
-        atomic_write_yaml(output, review)
+        write_artifact("creative_review", output, review)
         return StageResult(
             self.name,
             True,
@@ -176,6 +172,4 @@ class CreativeReviewStage(Stage):
         }
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return super()._load_yaml(path)

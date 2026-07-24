@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 import uuid
 from pathlib import Path
@@ -8,10 +7,10 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.reference_assets import build_reference_index, resolve_reference_ids
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
+from narrascape.utils.safe_io import atomic_promote_file, load_yaml_mapping
 
 
 class StoryboardSheetStage(Stage):
@@ -42,10 +41,10 @@ class StoryboardSheetStage(Stage):
         pipe_dir = config.pipeline_dir
         pipe_dir.mkdir(parents=True, exist_ok=True)
 
-        pre_production = load_yaml_mapping(pipe_dir / "pre_production.yaml")
-        director_contract = load_yaml_mapping(pipe_dir / "director_contract.yaml")
-        reference_plates = load_yaml_mapping(pipe_dir / "reference_plates.yaml")
-        design_report = load_yaml_mapping(pipe_dir / "design_report.yaml")
+        pre_production = self._load_yaml(pipe_dir / "pre_production.yaml")
+        director_contract = self._load_yaml(pipe_dir / "director_contract.yaml")
+        reference_plates = self._load_yaml(pipe_dir / "reference_plates.yaml")
+        design_report = self._load_yaml(pipe_dir / "design_report.yaml")
         image_map = load_yaml_mapping(project_dir / "image_map.yaml")
 
         reference_index = build_reference_index(
@@ -135,11 +134,10 @@ class StoryboardSheetStage(Stage):
             "findings": findings,
         }
 
-        validate_artifact("storyboard_sheet", report)
         yaml_path = pipe_dir / "storyboard_sheet.yaml"
         png_path = pipe_dir / "storyboard_sheet.png"
         pdf_path = pipe_dir / "storyboard_sheet.pdf"
-        atomic_write_yaml(yaml_path, report)
+        write_artifact("storyboard_sheet", yaml_path, report)
         self._save_page_image(page_images[0], png_path)
         self._save_pdf(page_images, pdf_path)
 
@@ -672,7 +670,7 @@ class StoryboardSheetStage(Stage):
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             page.save(tmp, format="PNG")
-            os.replace(tmp, path)
+            atomic_promote_file(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
 
@@ -688,7 +686,7 @@ class StoryboardSheetStage(Stage):
                 append_images=pdf_pages[1:],
                 resolution=144.0,
             )
-            os.replace(tmp, path)
+            atomic_promote_file(tmp, path)
         finally:
             tmp.unlink(missing_ok=True)
 

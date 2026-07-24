@@ -3,8 +3,9 @@
 ## Inputs
 
 - `scripts/script.yaml`
+- optional `director_notes.md` (curated projects; generic projects fall back to script extraction)
 - image provider configuration (`ARK_API_KEY` for Seedream reference generation; `images.provider: local` needs no key)
-- Optional LLM client for character/scene notes extraction
+- Optional LLM client for character/scene notes extraction and production direction
 
 ## Outputs
 
@@ -15,16 +16,20 @@
 
 ## Procedure
 
-1. Extract characters and scenes from the script (LLM-assisted notes extraction when a client is configured, deterministic extraction otherwise), capped by `max_characters` / `max_scenes`.
+1. Extract characters and scenes from the script (LLM-assisted notes extraction when a client is configured, deterministic extraction otherwise), capped by `max_characters` / `max_scenes`; curated `director_notes.md` takes precedence when present.
 2. Build character reference sheets (turnarounds and expressions when enabled) and environment reference images through the selected image provider.
 3. Generate the style anchor and per-segment storyboard frames when storyboard generation is enabled.
-4. With `images.provider: local`, write metadata-only references so offline verification needs no network or API key.
-5. Sanitize provider-bound prompts and persist any rewrite to the shared `pipeline/<project>/prompt_safety.yaml` audit.
-6. Write `pre_production.yaml` with `director_process` metadata; `design` loads it to enrich shot prompts, and downstream stages bind storyboard frames and reference ids from it.
+4. Reserve provider budget before reference generation and record provider tasks.
+5. With `images.provider: local`, write metadata-only references so offline verification needs no network or API key; label deterministic output as offline fallback, not production direction.
+6. Sanitize provider-bound prompts and persist any rewrite to the shared `pipeline/<project>/prompt_safety.yaml` audit.
+7. Validate references and atomically write `pre_production.yaml` with `director_process` metadata; `design` loads it to enrich shot prompts, and downstream stages bind storyboard frames and reference ids from it.
 
 ## Do Not
 
 - Do not treat local-provider metadata-only references as production visual assets.
 - Do not invent characters or scenes the script does not support.
+- Do not bypass `director_notes.md` or existing visual constraints when they exist.
+- Do not accept `llm_status: not_configured` for production video work.
 - Do not skip the prompt-safety audit when a provider-bound prompt is rewritten.
 - Do not leave storyboard frames as unbound images; `director_contract` and `reference_plate` must be able to bind them by id.
+- Do not overwrite curated references after a failed provider call.

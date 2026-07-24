@@ -24,6 +24,11 @@ import logging
 from collections import Counter
 from typing import Any
 
+from narrascape.agent.prompt_director_parsing import (
+    parse_batch_shot_designs,
+    parse_movement,
+    parse_shot_type,
+)
 from narrascape.config import DEFAULT_VISUAL_STYLE, MovementType, NarrascapeConfig, ShotType
 from narrascape.llm import OutputValidator, is_assistant_bridge_provider
 from narrascape.llm.models import PromptTemplate
@@ -268,8 +273,6 @@ class PromptDirector:
         storyboard: Any = None,
     ) -> list[Any]:
         """Batch design all shots in a single LLM call (bridge mode optimization)."""
-        from narrascape.agent.models import ShotDesign
-
         # Build segments description
         segments_desc = []
         for i, (seg, analysis) in enumerate(zip(segments, analysis_list, strict=False)):
@@ -344,122 +347,15 @@ Guidelines:
         if not isinstance(data, list):
             raise ValueError(f"Expected JSON array, got {type(data)}")
 
-        # Build ShotDesign objects from response
-        raw_designs: list[Any] = []
-        for i, item in enumerate(data):
-            seg_id = item.get("segment_id", segments[i].id if i < len(segments) else 0)
-
-            # Map shot type string to ShotType enum (with aliases)
-            shot_type_str = item.get("shot_type", "medium")
-            shot_type = self._parse_shot_type(shot_type_str)
-
-            # Map movement string to MovementType enum (with aliases)
-            movement_str = item.get("movement", "none")
-            movement = self._parse_movement_type(movement_str)
-
-            metadata = item.get("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
-            if item.get("negative_prompt"):
-                metadata["negative_prompt"] = item.get("negative_prompt", "")
-
-            design = ShotDesign(
-                segment_id=seg_id,
-                shot_type=shot_type,
-                movement=movement,
-                director_vision=item.get("director_vision", ""),
-                cinematic_format=item.get("cinematic_format", ""),
-                image_prompt=item.get("image_prompt", ""),
-                reasoning=item.get("reasoning", ""),
-                emotion=item.get("emotion", ""),
-                intensity=float(item.get("intensity", 0.5)),
-                metadata=metadata,
-                style_prefix=style_template,
-            )
-            raw_designs.append(design)
-            logger.info(f"[PromptDirector] Batch-designed shot {seg_id}: {shot_type.value}")
-
-        return raw_designs
+        return parse_batch_shot_designs(data, segments, style_template=style_template)
 
     def _parse_shot_type(self, shot_type_str: str) -> ShotType:
         """Parse shot type string to ShotType enum with aliases."""
-        aliases = {
-            "medium_shot": "MEDIUM",
-            "medium": "MEDIUM",
-            "long_shot": "WIDE_ENV",
-            "wide": "WIDE_ENV",
-            "wide_shot": "WIDE_ENV",
-            "close_up": "CLOSE_UP",
-            "close-up": "CLOSE_UP",
-            "closeup": "CLOSE_UP",
-            "extreme_close_up": "EXTREME_CLOSE_UP",
-            "extreme_closeup": "EXTREME_CLOSE_UP",
-            "extreme_close-up": "EXTREME_CLOSE_UP",
-            "ecu": "EXTREME_CLOSE_UP",
-            "insert": "INSERT",
-            "detail": "DETAIL",
-            "establishing": "ESTABLISHING",
-            "establishing_shot": "ESTABLISHING",
-            "two_shot": "TWO_SHOT",
-            "two-shot": "TWO_SHOT",
-            "over_shoulder": "OVER_SHOULDER",
-            "over-shoulder": "OVER_SHOULDER",
-            "shoulder": "OVER_SHOULDER",
-            "silhouette": "SILHOUETTE",
-            "group_shot": "GROUP_SHOT",
-            "group": "GROUP_SHOT",
-            "aerial": "AERIAL",
-            "drone": "AERIAL",
-            "black": "BLACK",
-            "wide_angle": "WIDE_ANGLE",
-            "wide-angle": "WIDE_ANGLE",
-        }
-        key = shot_type_str.lower().strip()
-        enum_name = aliases.get(key, key.upper().replace("-", "_"))
-        try:
-            return ShotType[enum_name]
-        except KeyError:
-            logger.warning(f"Unknown shot type '{shot_type_str}', defaulting to MEDIUM")
-            return ShotType.MEDIUM
+        return parse_shot_type(shot_type_str)
 
     def _parse_movement_type(self, movement_str: str) -> MovementType | None:
         """Parse movement string to MovementType enum with aliases."""
-        if not movement_str or movement_str.lower() in ("none", "", "null", "still"):
-            return None
-        aliases = {
-            "zoom_in": "ZOOM_IN",
-            "zoom_in_slow": "ZOOM_IN_SLOW",
-            "zoom_slow": "ZOOM_SLOW",
-            "zoom_out": "ZOOM_OUT",
-            "zoom_out_slow": "ZOOM_OUT_SLOW",
-            "push_in": "PUSH_IN",
-            "push-in": "PUSH_IN",
-            "pull_out": "PULL_OUT",
-            "pull-out": "PULL_OUT",
-            "pan_left": "PAN_LEFT",
-            "pan-left": "PAN_LEFT",
-            "pan_left_slow": "PAN_LEFT",
-            "pan_right": "PAN_RIGHT",
-            "pan-right": "PAN_RIGHT",
-            "pan_right_slow": "PAN_RIGHT",
-            "pan": "PAN_LEFT",
-            "dolly": "PUSH_IN",
-            "dolly_in": "PUSH_IN",
-            "dolly_out": "PULL_OUT",
-            "tracking": "PAN_LEFT",
-            "truck_left": "PAN_LEFT",
-            "truck_right": "PAN_RIGHT",
-            "crane_up": "ZOOM_OUT",
-            "crane_down": "ZOOM_IN",
-            "handheld": "ZOOM_SLOW",
-        }
-        key = movement_str.lower().strip()
-        enum_name = aliases.get(key, key.upper().replace("-", "_"))
-        try:
-            return MovementType[enum_name]
-        except KeyError:
-            logger.warning(f"Unknown movement type '{movement_str}', defaulting to None")
-            return None
+        return parse_movement(movement_str)
 
     # ── Reference Image Chains (Problem 10) ───────────────────────────
 

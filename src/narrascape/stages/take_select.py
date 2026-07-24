@@ -7,12 +7,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.take_select_mcts import PairwiseUCTSelector, fallback_trace
-from narrascape.utils.safe_io import atomic_write_yaml
 from narrascape.utils.video_quality import analyze_take
 
 logger = logging.getLogger(__name__)
@@ -106,8 +103,7 @@ class TakeSelectStage(Stage):
             "selection_process": selection_process,
             "selections": selections,
         }
-        validate_artifact("take_selection", selection)
-        atomic_write_yaml(output, selection)
+        write_artifact("take_selection", output, selection)
         return StageResult(
             self.name,
             True,
@@ -355,9 +351,7 @@ class TakeSelectStage(Stage):
         return expected
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return super()._load_yaml(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():

@@ -1,0 +1,18 @@
+schema_version: benchmark_catalog.v1
+release_gate:
+  minimum_real_projects: 10
+  minimum_success_rate: 0.8
+  minimum_average_quality: 70.0
+benchmarks:
+  - id: golden-sample
+    project_path: examples/golden-sample
+    production_type: chamber_drama
+    quality_dimensions: [story_clarity, character_continuity, edit_rhythm, audio_quality]
+  - id: documentary
+    project_path: examples/documentary
+    production_type: documentary
+    quality_dimensions: [factual_clarity, source_coverage, visual_variety, audio_quality]
+  - id: crime-and-punishment
+    project_path: examples/crime-and-punishment
+    production_type: multi_scene_drama
+    quality_dimensions: [character_continuity, location_continuity, cinematic_intent, pacing]

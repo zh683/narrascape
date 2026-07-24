@@ -35,6 +35,7 @@ from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
 from narrascape.utils.fingerprint import hash_reference, request_fingerprint
 from narrascape.utils.safe_io import (
+    atomic_write_bytes,
     atomic_write_json,
     download_to_path,
     ensure_min_free_space,
@@ -217,6 +218,14 @@ class GenerateImagesStage(Stage):
                 logger.info(
                     f"[Batch {batch_start // self.sequential_batch + 1}] {', '.join(names)} (size={size})"
                 )
+                reservations = []
+                per_image = budget_tracker.get_cost_estimate("image", 1)
+                for name in names:
+                    reservation_id = f"generate_images:{provider_name}:{name}"
+                    reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_image)
+                    if not reserved:
+                        return StageResult(self.name, False, message=reserve_msg)
+                    reservations.append(reservation_id)
                 results = self._generate_sequential(
                     prompts_text,
                     names,
@@ -226,24 +235,21 @@ class GenerateImagesStage(Stage):
                     expected_fingerprints=expected_fingerprints,
                     stored_fingerprints=fingerprints,
                 )
-                for name, r in zip(names, results, strict=True):
+                for name, reservation_id, r in zip(names, reservations, results, strict=True):
                     if r:
                         ok_count += 1
+                        done.add(name)
                         fingerprints[name] = expected_fingerprints[name]
                         if name in pre_cached:
-                            continue  # 缓存命中：未发起付费请求，不计成本
-                        # Record actual cost per successful generation in batch
-                        per_image = budget_tracker.get_cost_estimate("image", 1)
-                        spend_ok, spend_msg = budget_tracker.try_spend(
-                            per_image,
-                            kind="image",
-                            stage="generate_images",
-                            provider=provider_name,
-                        )
-                        if not spend_ok:
-                            return StageResult(self.name, False, message=spend_msg)
+                            # 缓存命中：未发起付费请求，释放预留，不计成本
+                            budget_tracker.release_reservation(reservation_id)
+                            continue
+                        committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                        if not committed:
+                            return StageResult(self.name, False, message=commit_msg)
                     else:
                         fail_count += 1
+                state["done"] = sorted(done)
                 atomic_write_json(state_path, state)
                 if batch_start + self.sequential_batch < len(targets):
                     time.sleep(2)
@@ -310,6 +316,11 @@ class GenerateImagesStage(Stage):
                 logger.info(
                     f"[{i + 1}/{len(targets)}] {pid}: {prompt_text[:70]}... (size={size}, model={seedream_model})"
                 )
+                per_image = budget_tracker.get_cost_estimate("image", 1)
+                reservation_id = f"generate_images:{provider_name}:{pid}"
+                reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_image)
+                if not reserved:
+                    return StageResult(self.name, False, message=reserve_msg)
                 if self._generate_one(
                     prompt_text,
                     pid,
@@ -327,17 +338,9 @@ class GenerateImagesStage(Stage):
                     state["done"] = list(done)
                     fingerprints[pid] = fingerprint
                     atomic_write_json(state_path, state)
-                    # Record actual cost per successful generation
-                    per_image = budget_tracker.get_cost_estimate("image", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(
-                        per_image,
-                        kind="image",
-                        stage="generate_images",
-                        provider=provider_name,
-                        detail=pid,
-                    )
-                    if not spend_ok:
-                        return StageResult(self.name, False, message=spend_msg)
+                    committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                    if not committed:
+                        return StageResult(self.name, False, message=commit_msg)
                 else:
                     fail_count += 1
                 if i < len(targets) - 1:
@@ -356,6 +359,11 @@ class GenerateImagesStage(Stage):
         return StageResult(
             self.name,
             fail_count == 0,
+            outputs=[
+                images_dir / f"{target.id}.png"
+                for target in targets
+                if (images_dir / f"{target.id}.png").exists()
+            ],
             message=f"{ok_count} OK, {fail_count} failed",
             metadata={
                 "provider_selection": provider_meta,
@@ -387,9 +395,6 @@ class GenerateImagesStage(Stage):
         if provider == "agnes":
             return max(self.sleep_between, 65.0)
         return self.sleep_between
-
-    def _json_object(self, value: Any) -> dict[str, Any]:
-        return value if isinstance(value, dict) else {}
 
     def _generate_local_placeholder(
         self, prompt: Any, out: Path, index: int, config: NarrascapeConfig
@@ -660,7 +665,7 @@ class GenerateImagesStage(Stage):
     def _write_b64_image(self, value: str, path: Path) -> None:
         raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
         try:
-            path.write_bytes(base64.b64decode(raw))
+            atomic_write_bytes(path, base64.b64decode(raw))
         except (binascii.Error, ValueError) as exc:
             raise RuntimeError("invalid base64 image response") from exc
 

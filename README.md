@@ -25,10 +25,11 @@ Every major stage writes files that can be inspected, edited, tested, and rerun.
 
 ## Current Status
 
-Narrascape is an early AI film studio prototype. The pipeline is real and
-covered by CI across Ubuntu and Windows with Python 3.10, 3.11, and 3.12, but
-final creative quality still depends on the configured LLM, media providers,
-source material, and human review.
+Narrascape `0.2.0-beta.1` is a supervised evaluation release. The pipeline is
+covered by CI across Ubuntu and Windows with Python 3.10 through 3.13, but it is
+not production-ready until at least 10 real-user production projects satisfy
+the documented benchmark gate. Final creative quality still depends on the
+configured LLM, media providers, source material, and human review.
 
 Production-oriented features already implemented:
 
@@ -62,6 +63,9 @@ Production-oriented features already implemented:
   by `visual_semantic_qa`, plus optional MCTS take selection and
   storyboard-conditioned video generation.
 - Offline deterministic providers for end-to-end tests.
+- SQLite-backed persistent jobs executed by an independent local worker.
+- Real decoded-frame and PCM audio analysis in render QA.
+- Versioned canonical artifacts with YAML/JSON historical replay.
 
 ## Production Flow
 
@@ -162,6 +166,21 @@ It exists to answer one question after every optimization:
 
 > Did the pipeline produce better controllable film material, or did it only run?
 
+## Stabilization Benchmarks
+
+The beta fixes three production baselines: `golden-sample`, `documentary`, and
+`crime-and-punishment`. Record reviewed runs and inspect the release gate with:
+
+```bash
+narrascape benchmark list
+narrascape benchmark record --help
+narrascape benchmark report
+```
+
+Each run records success, provider cost, elapsed time, manual rework count, and
+final human quality score. Offline and synthetic runs cannot satisfy the
+10-real-project gate. See [Release Readiness](docs/release-readiness.md).
+
 ## AI Director Boundary
 
 Narrascape separates three layers:
@@ -180,7 +199,8 @@ For production builds, use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`.
 
 ```bash
 narrascape init my-video
-narrascape dashboard -p my-video
+narrascape workbench -p my-video --port 8765
+narrascape dashboard -p my-video --port 8501
 narrascape research -p my-video --topic "Notre Dame"
 narrascape write -p my-video
 narrascape humanize -p my-video
@@ -197,12 +217,19 @@ narrascape reject -p my-video -s design --notes "revise faces"
 narrascape clean -p my-video --all
 ```
 
+`workbench` 启动 React/Vite 原生制作控制面，可直接运行阶段、审批、查看时间线、
+取消或恢复持久作业。`dashboard` 保留为 Streamlit 诊断台，用于检查底层状态和产物。
+
 Dashboard dependencies are optional:
 
 ```bash
 pip install -e ".[dashboard]"
-narrascape dashboard
+narrascape dashboard -p my-video --port 8501
 ```
+
+The dashboard includes an artifact-first Workbench page for production takeover:
+current stage, supervisor queue, director/review artifacts, rework loop status,
+and the exact `narrascape build` commands to continue the next stage.
 
 ## Provider Matrix
 

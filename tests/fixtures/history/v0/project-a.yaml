@@ -1,0 +1,51 @@
+project_id: historical-project-a
+artifacts:
+  asset_manifest:
+    assets: []
+  animatic:
+    status: ready
+    panels: []
+    findings: []
+  assistant_handoff:
+    project: {}
+    status: ready
+    director_decision: {}
+    assistant_contract: []
+    required_reading: []
+    artifacts: []
+    quality_gates: []
+    next_actions: []
+    commands: {}
+  continuity_bible:
+    characters: {}
+    locations: {}
+    continuity_risks: []
+  creative_review:
+    status: approved
+    findings: []
+    review_process: {}
+    recommendations: []
+  design_report:
+    project_title: Historical Project A
+    segments: []
+  director_contract:
+    compile_process: {}
+    shots: []
+  director_review:
+    status: approved
+    rework_queue: []
+  editing_review:
+    pacing: {}
+    repetition: {}
+    emotion_curve: {}
+    recommendations: []
+  film_supervisor:
+    status: approved
+    decision: {}
+    next_stages: []
+  film_timeline:
+    project: {}
+    tracks: {}
+    coverage: {}
+  pre_production:
+    project_title: Historical Project A

@@ -90,6 +90,11 @@ llm:
   base_url: ""
   temperature: 0.7
   max_tokens: 2000
+  log_enabled: true
+  log_persist: false
+  log_max_entries: 100
+  log_max_text_chars: 2000
+  log_include_parsed_output: false
 ```
 
 | Mode | Behavior |
@@ -115,6 +120,12 @@ or `ARK_API_KEY`). Prefer env references over plaintext keys: a plaintext
 by accident. Keep secrets in the environment or a git-ignored `.env` file.
 
 `llm.mode: none` is only valid with `pipeline.video_generation: auto` or `off`. A project with `pipeline.video_generation: required` must use `auto`, `ai_assistant`, `bridge`, or `api`, and the pipeline also refuses to start if no LLM client is supplied.
+
+LLM diagnostics are bounded and credential-redacted before entering memory. Disk
+persistence is opt-in through `log_persist`; when enabled, sanitized records are
+atomically stored at `.narrascape/llm-calls.json` and trimmed to
+`log_max_entries`. Parsed output is omitted by default and is only retained in
+bounded form when `log_include_parsed_output` is explicitly enabled.
 
 ## TTS
 

@@ -6,8 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from narrascape.artifacts import load_artifact_file
+from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, Script
-from narrascape.utils.safe_io import load_json_mapping, load_yaml_mapping
+from narrascape.utils.safe_io import load_json_mapping
 
 
 @dataclass
@@ -16,6 +18,10 @@ class StageContext:
 
     config: NarrascapeConfig
     script: Script
+    # Optional: remote workbench/jobs code paths construct contexts with a
+    # BuildCache; local stages and tests omit it (fingerprint caching replaced
+    # the legacy cache for paid generation stages).
+    cache: BuildCache | None = None
     state: dict[str, Any] = field(default_factory=dict)
     dry_run: bool = False
 
@@ -69,7 +75,7 @@ class Stage(ABC):
         return True, ""
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        return load_yaml_mapping(path)
+        return load_artifact_file(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path)

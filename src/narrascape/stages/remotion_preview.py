@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import (
+    atomic_copy_file,
     atomic_write_json,
     atomic_write_text,
-    atomic_write_yaml,
-    load_yaml_mapping,
 )
 
 
@@ -30,7 +28,7 @@ class RemotionPreviewStage(Stage):
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         timeline_path = config.project_dir / "film_timeline.yaml"
-        timeline = load_yaml_mapping(timeline_path)
+        timeline = self._load_yaml(timeline_path)
         visual_clips = timeline.get("tracks", {}).get("visual", [])
         if not isinstance(visual_clips, list) or not visual_clips:
             return StageResult(self.name, False, message="No visual clips in film_timeline.yaml")
@@ -97,9 +95,8 @@ class RemotionPreviewStage(Stage):
                 ),
             },
         }
-        validate_artifact("remotion_preview", report)
         report_path = config.pipeline_dir / "remotion_preview.yaml"
-        atomic_write_yaml(report_path, report)
+        write_artifact("remotion_preview", report_path, report)
 
         success = not missing_assets
         return StageResult(
@@ -149,7 +146,7 @@ class RemotionPreviewStage(Stage):
             if source_path.exists():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if not target.exists() or source_path.stat().st_size != target.stat().st_size:
-                    shutil.copy2(source_path, target)
+                    atomic_copy_file(source_path, target)
                     status = "copied"
                 else:
                     status = "reused"

@@ -6,7 +6,7 @@ from pathlib import Path
 from narrascape.config import EndingConfig, NarrascapeConfig
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_system_font, run_ffmpeg, validate_video
-from narrascape.utils.safe_io import atomic_write_text
+from narrascape.utils.safe_io import atomic_copy_file, atomic_write_text
 
 logger = logging.getLogger("narrascape.stages.concat")
 
@@ -109,13 +109,9 @@ class ConcatStage(Stage):
                 )
             else:
                 # Fallback: just body
-                import shutil
-
-                shutil.copy(str(body_video), str(final_video))
+                atomic_copy_file(body_video, final_video)
         else:
-            import shutil
-
-            shutil.copy(str(body_video), str(final_video))
+            atomic_copy_file(body_video, final_video)
 
         if validate_video(final_video):
             from narrascape.utils.ffmpeg import get_duration

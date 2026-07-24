@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from narrascape.config import (
     BudgetConfig,
@@ -36,6 +37,18 @@ class TestProjectConfig:
         cfg = ProjectConfig(name="test", title="Test Project", script_file="scripts/test.yaml")
         assert cfg.name == "test"
         assert cfg.title == "Test Project"
+
+    @pytest.mark.parametrize("name", ["..", "../outside", "bad/name", "C:\\outside"])
+    def test_project_name_rejects_paths(self, name):
+        with pytest.raises(ValidationError):
+            ProjectConfig(name=name, title="Test Project", script_file="scripts/test.yaml")
+
+    @pytest.mark.parametrize(
+        "script_file", ["../script.yaml", "/tmp/script.yaml", "C:\\script.yaml"]
+    )
+    def test_script_file_must_stay_relative_to_project(self, script_file):
+        with pytest.raises(ValidationError):
+            ProjectConfig(name="test", title="Test Project", script_file=script_file)
 
 
 class TestVisualConfig:
@@ -157,6 +170,49 @@ class TestNarrascapeConfig:
         cfg = BudgetConfig(video_estimated=0.0)
 
         assert cfg.video_estimated == 0.0
+
+    @pytest.mark.parametrize(
+        ("section", "unknown"),
+        [
+            ("project", {"unknown_typo": True}),
+            ("pipeline", {"video_generaton": "required"}),
+            ("llm", {"mod": "none"}),
+            ("video", {"takez": 3}),
+        ],
+    )
+    def test_nested_config_rejects_unknown_fields(self, section, unknown):
+        data = {
+            "project": {
+                "name": "strict-config",
+                "title": "Strict Config",
+                "script_file": "scripts/script.yaml",
+            },
+        }
+        if section == "project":
+            data["project"].update(unknown)
+        else:
+            data[section] = unknown
+
+        with pytest.raises(ValidationError, match="extra_forbidden"):
+            NarrascapeConfig(**data)
+
+    def test_load_config_expands_environment_variables(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "project:\n"
+            "  name: env-config\n"
+            "  title: Env Config\n"
+            "  script_file: scripts/script.yaml\n"
+            "llm:\n"
+            "  mode: api\n"
+            "  provider: openai\n"
+            "  model: gpt-4o\n"
+            '  api_key: "${OPENAI_API_KEY}"\n',
+            encoding="utf-8",
+        )
+
+        assert load_config(path).llm.api_key == "test-secret"
 
 
 class TestEndingConfig:

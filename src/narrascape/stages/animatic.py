@@ -3,14 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg, validate_video
 from narrascape.utils.safe_io import (
     atomic_write_text,
-    atomic_write_yaml,
     load_json_mapping,
-    load_yaml_mapping,
 )
 
 
@@ -31,8 +29,8 @@ class AnimaticStage(Stage):
 
     def run(self, context: StageContext) -> StageResult:
         config = context.config
-        reference_plates = load_yaml_mapping(config.pipeline_dir / "reference_plates.yaml")
-        pre_production = load_yaml_mapping(config.pipeline_dir / "pre_production.yaml")
+        reference_plates = self._load_yaml(config.pipeline_dir / "reference_plates.yaml")
+        pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")
         timing = load_json_mapping(config.pipeline_dir / "timing.json")
 
         plates_by_segment = self._plates_by_segment(reference_plates)
@@ -48,8 +46,7 @@ class AnimaticStage(Stage):
         }
 
         out_yaml = config.pipeline_dir / "animatic.yaml"
-        validate_artifact("animatic", report)
-        atomic_write_yaml(out_yaml, report)
+        write_artifact("animatic", out_yaml, report)
         if status != "ready":
             return StageResult(
                 self.name,

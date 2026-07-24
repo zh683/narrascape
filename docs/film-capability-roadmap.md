@@ -29,7 +29,7 @@ Implemented now:
 
 ## Film Spine
 
-`film_timeline.yaml` is the center of the future film workflow. New film-level
+`film_timeline.yaml` is the center of the film workflow. New film-level
 stages should read it, update it, or write derived reports rather than creating
 isolated handoffs.
 
@@ -42,11 +42,11 @@ The current schema records:
 - subtitle references
 - source-media/generated/missing visual coverage
 
-## Next Capability Layers
+## Remaining Capability Layers
 
-1. Scene model:
-   Add `act`, `scene`, `shot`, `take`, and `edit` concepts above script
-   segments.
+1. Scene-model depth:
+   Extend the implemented act, scene, sequence, shot, take, and timeline edit
+   artifacts with richer blocking, lens, color, and cross-scene state.
 
 2. Multi-take enhancement:
    Multi-take generation and selection are implemented; the next layer is

@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.contracts.qa_taxonomy import (
     QA_DIMENSIONS,
@@ -20,7 +18,6 @@ from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class VisualSemanticQAStage(Stage):
@@ -108,8 +105,7 @@ class VisualSemanticQAStage(Stage):
                 director_contract.get("shots", []) or [], findings
             ),
         }
-        validate_artifact("visual_semantic_report", report)
-        atomic_write_yaml(output, report)
+        write_artifact("visual_semantic_report", output, report)
         return StageResult(
             self.name,
             True,
@@ -763,10 +759,7 @@ class VisualSemanticQAStage(Stage):
         return item
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return data if isinstance(data, dict) else {}
+        return super()._load_yaml(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():

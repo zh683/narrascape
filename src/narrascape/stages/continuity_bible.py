@@ -3,12 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class ContinuityBibleStage(Stage):
@@ -99,8 +96,7 @@ class ContinuityBibleStage(Stage):
             "locations": locations,
             "continuity_risks": self._dedupe_risks(risks),
         }
-        validate_artifact("continuity_bible", bible)
-        atomic_write_yaml(output, bible)
+        write_artifact("continuity_bible", output, bible)
         return StageResult(
             self.name,
             True,
@@ -193,9 +189,7 @@ class ContinuityBibleStage(Stage):
         return deduped
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return super()._load_yaml(path)
 
     def _first_existing(self, *paths: Path) -> Path:
         for path in paths:

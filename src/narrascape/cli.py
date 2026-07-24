@@ -6,6 +6,7 @@ Narrascape Pipeline CLI — typer-based command-line interface.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from rich.table import Table
 
 from narrascape import __version__
 from narrascape.api_keys import APIKeys
+from narrascape.application import ApprovalService, PipelineRunService, validate_stage_name
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
     ImageProvider,
@@ -29,8 +31,9 @@ from narrascape.config import (
     load_script,
 )
 from narrascape.log_setup import setup_logging
-from narrascape.pipeline import Pipeline, final_stage_results
+from narrascape.pipeline import final_stage_results
 from narrascape.stages.base import Stage, StageResult
+from narrascape.utils.safe_io import atomic_copy_file, atomic_write_yaml
 
 LLMProviderName = Literal[
     "openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"
@@ -41,6 +44,8 @@ app = typer.Typer(
     help="Production-grade video pipeline for book explainer and documentary content.",
     rich_markup_mode="rich",
 )
+benchmark_app = typer.Typer(help="Record and report fixed production benchmarks.")
+app.add_typer(benchmark_app, name="benchmark")
 
 
 def _reconfigure_text_stream(stream: TextIO | Any) -> None:
@@ -67,6 +72,106 @@ PRODUCTION_OIL_PAINTING_STYLE = (
     "not photorealistic photography, not anime, not cartoon, no readable text, "
     "no watermark, no platform label."
 )
+
+
+def _benchmark_repository(catalog_path: Path, database_path: Path) -> Any:
+    from narrascape.benchmarks import BenchmarkCatalog, BenchmarkRunRepository
+
+    return BenchmarkRunRepository(database_path, BenchmarkCatalog.load(catalog_path))
+
+
+@benchmark_app.command("list")
+def benchmark_list_cmd(
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+) -> None:
+    """List the fixed production benchmarks."""
+    from narrascape.benchmarks import BenchmarkCatalog
+
+    catalog = BenchmarkCatalog.load(catalog_path)
+    table = Table("Benchmark", "Type", "Project")
+    for item in catalog.benchmarks:
+        table.add_row(item.id, item.production_type, item.project_path)
+    console.print(table)
+
+
+@benchmark_app.command("record")
+def benchmark_record_cmd(
+    benchmark_id: Annotated[str, typer.Option("--benchmark")],
+    project_id: Annotated[str, typer.Option("--project-id")],
+    operator_id: Annotated[str, typer.Option("--operator-id")],
+    cost_usd: Annotated[float, typer.Option("--cost-usd", min=0.0)],
+    elapsed_seconds: Annotated[float, typer.Option("--elapsed-seconds", min=0.0)],
+    manual_reworks: Annotated[int, typer.Option("--manual-reworks", min=0)],
+    quality_score: Annotated[float, typer.Option("--quality-score", min=0.0, max=100.0)],
+    run_mode: Annotated[
+        Literal["production", "offline", "synthetic"], typer.Option("--run-mode")
+    ] = "synthetic",
+    real_user: Annotated[bool, typer.Option("--real-user/--synthetic")] = False,
+    success: Annotated[bool, typer.Option("--success/--failed")] = False,
+    notes: Annotated[str, typer.Option("--notes")] = "",
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+    database_path: Annotated[
+        Path, typer.Option("--database", help="Benchmark SQLite database")
+    ] = Path(".narrascape/benchmarks.sqlite3"),
+) -> None:
+    """Record one completed benchmark production and its human quality score."""
+    from narrascape.benchmarks import BenchmarkRunInput
+
+    repository = _benchmark_repository(catalog_path, database_path)
+    record = repository.record(
+        BenchmarkRunInput(
+            benchmark_id=benchmark_id,
+            project_id=project_id,
+            operator_id=operator_id,
+            real_user=real_user,
+            success=success,
+            cost_usd=cost_usd,
+            elapsed_seconds=elapsed_seconds,
+            manual_reworks=manual_reworks,
+            quality_score=quality_score,
+            run_mode=run_mode,
+            notes=notes,
+        )
+    )
+    console.print(
+        f"[green]Recorded[/] {record.benchmark_id} project={record.project_id} id={record.id}"
+    )
+
+
+@benchmark_app.command("report")
+def benchmark_report_cmd(
+    catalog_path: Annotated[Path, typer.Option("--catalog", help="Benchmark catalog YAML")] = Path(
+        "benchmarks/catalog.yaml"
+    ),
+    database_path: Annotated[
+        Path, typer.Option("--database", help="Benchmark SQLite database")
+    ] = Path(".narrascape/benchmarks.sqlite3"),
+) -> None:
+    """Show aggregate production metrics and the beta release gate."""
+    report = _benchmark_repository(catalog_path, database_path).report()
+    table = Table("Benchmark", "Runs", "Success", "Cost USD", "Time s", "Reworks", "Quality")
+    for benchmark_id, metrics in report["by_benchmark"].items():
+        table.add_row(
+            benchmark_id,
+            str(metrics["run_count"]),
+            f"{metrics['success_rate']:.0%}",
+            f"{metrics['total_cost_usd']:.2f}",
+            f"{metrics['total_elapsed_seconds']:.1f}",
+            str(metrics["total_manual_reworks"]),
+            f"{metrics['average_quality_score']:.1f}",
+        )
+    console.print(table)
+    gate = report["release_gate"]
+    status = "READY" if gate["ready"] else "NOT READY"
+    console.print(
+        f"Release gate: [bold]{status}[/] | real projects "
+        f"{gate['real_project_count']}/{gate['required_real_projects']} | "
+        f"success {gate['success_rate']:.0%} | quality {gate['average_quality_score']:.1f}"
+    )
 
 
 @contextmanager
@@ -173,6 +278,13 @@ def _status_stage_names() -> list[str]:
     return [stage_cls().name for stage_cls in ALL_STAGES]
 
 
+def _validated_stage_name(stage_name: str) -> str:
+    try:
+        return validate_stage_name(stage_name)
+    except ValueError as exc:
+        raise typer.BadParameter(f"Unknown stage: {stage_name}", param_hint="--stage") from exc
+
+
 # ═══════════════════════════════════════════
 # LLM Client Factory
 # ═══════════════════════════════════════════
@@ -189,6 +301,28 @@ _LLM_PROVIDER_ENV_VARS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "volcengine": "ARK_API_KEY",
 }
+
+
+def _llm_client_config(
+    project_config: NarrascapeConfig | None,
+    **runtime_options: Any,
+) -> LLMClientConfig:
+    """Map project log-governance settings into the runtime LLM config."""
+
+    if project_config is not None:
+        logging_config = project_config.llm
+        runtime_options.update(
+            log_enabled=logging_config.log_enabled,
+            log_max_entries=logging_config.log_max_entries,
+            log_max_text_chars=logging_config.log_max_text_chars,
+            log_include_parsed_output=logging_config.log_include_parsed_output,
+            log_persist_path=(
+                project_config.project_dir / ".narrascape" / "llm-calls.json"
+                if logging_config.log_persist
+                else None
+            ),
+        )
+    return LLMClientConfig(**runtime_options)
 
 
 def _get_llm_client(
@@ -219,7 +353,8 @@ def _get_llm_client(
             console.print("[bold green]AI Assistant Mode[/] - using project-local assistant bridge")
             os.environ["NARRASCAPE_LLM_MODE"] = "ai_assistant"
             return LLMClient(
-                LLMClientConfig(
+                _llm_client_config(
+                    config,
                     provider="ai_assistant",
                     temperature=config.llm.temperature,
                     max_tokens=config.llm.max_tokens,
@@ -234,7 +369,8 @@ def _get_llm_client(
             if config.llm.timeout:
                 os.environ["NARRASCAPE_BRIDGE_TIMEOUT"] = str(config.llm.timeout)
             return LLMClient(
-                LLMClientConfig(
+                _llm_client_config(
+                    config,
                     provider="bridge",
                     temperature=config.llm.temperature,
                     max_tokens=config.llm.max_tokens,
@@ -286,7 +422,8 @@ def _get_llm_client(
                 )
                 os.environ["NARRASCAPE_LLM_MODE"] = "ai_assistant"
                 return LLMClient(
-                    LLMClientConfig(
+                    _llm_client_config(
+                        config,
                         provider="ai_assistant",
                         temperature=config.llm.temperature,
                         max_tokens=config.llm.max_tokens,
@@ -302,7 +439,8 @@ def _get_llm_client(
     if os.environ.get("NARRASCAPE_LLM_MODE", "").lower() == "ai_assistant":
         console.print("[bold green]AI Assistant Mode[/] - using project-local assistant bridge")
         return LLMClient(
-            LLMClientConfig(
+            _llm_client_config(
+                config,
                 provider="ai_assistant",
                 temperature=0.7,
                 max_tokens=4000,
@@ -316,7 +454,8 @@ def _get_llm_client(
     if os.environ.get("NARRASCAPE_LLM_MODE", "").lower() == "bridge":
         console.print("[bold cyan]Bridge Mode[/] — delegating to AI assistant via file tasks")
         return LLMClient(
-            LLMClientConfig(
+            _llm_client_config(
+                config,
                 provider="bridge",
                 temperature=0.7,
                 max_tokens=4000,
@@ -330,7 +469,8 @@ def _get_llm_client(
     key = explicit_api_key or APIKeys.openai()
     if key:
         return LLMClient(
-            LLMClientConfig(
+            _llm_client_config(
+                config,
                 provider="openai",
                 model="gpt-4o",
                 api_key=key,
@@ -348,7 +488,8 @@ def _get_llm_client(
         base = os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
         model = os.environ.get("ARK_MODEL_ID", "doubao-pro-32k")
         return LLMClient(
-            LLMClientConfig(
+            _llm_client_config(
+                config,
                 provider="openai",
                 model=model,
                 api_key=key,
@@ -363,6 +504,23 @@ def _get_llm_client(
 
     # Auto-detect from environment (defaults to AI Assistant mode if no API keys)
     client = LLMClient.from_env(allow_bridge=True)
+    if config is not None:
+        governed_config = _llm_client_config(
+            config,
+            provider=client.config.provider,
+            model=client.config.model,
+            api_key=client.config.api_key,
+            base_url=client.config.base_url,
+            temperature=client.config.temperature,
+            max_tokens=client.config.max_tokens,
+            top_p=client.config.top_p,
+            timeout=client.config.timeout,
+            max_retries=client.config.max_retries,
+            retry_delay=client.config.retry_delay,
+            system_prompt=client.config.system_prompt,
+            json_mode=client.config.json_mode,
+        )
+        client = LLMClient(governed_config)
     if client and client.config.provider == "ai_assistant":
         console.print(
             "[bold green]AI Assistant Mode[/] - using project-local assistant bridge (no API keys needed)"
@@ -399,8 +557,6 @@ def init_cmd(
     ] = "scripts/script.yaml",
 ) -> None:
     """Initialize a new narrascape project with scaffolding."""
-    import yaml
-
     project_dir = Path(project_name).resolve()
     project_slug = project_dir.name
     if project_dir.exists():
@@ -442,9 +598,7 @@ def init_cmd(
             "takes": 1,
         },
     }
-    (project_dir / "config.yaml").write_text(
-        yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    atomic_write_yaml(project_dir / "config.yaml", config)
 
     script = {
         "title": title or project_name,
@@ -456,9 +610,7 @@ def init_cmd(
             }
         ],
     }
-    (project_dir / "scripts" / "script.yaml").write_text(
-        yaml.safe_dump(script, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    atomic_write_yaml(project_dir / "scripts" / "script.yaml", script)
 
     console.print(f"[bold green]Project initialized:[/] {project_dir}")
     console.print("  - config.yaml")
@@ -475,50 +627,69 @@ def init_cmd(
 
 @app.command("dashboard")
 def dashboard_cmd(
-    port: Annotated[int, typer.Option("--port", "-p", help="Streamlit server port")] = 8501,
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
+    ] = Path("."),
+    port: Annotated[int, typer.Option("--port", help="Streamlit server port")] = 8501,
     host: Annotated[str, typer.Option("--host", "-h", help="Bind address")] = "127.0.0.1",
 ) -> None:
     """Launch the interactive web-based control panel."""
-    import importlib.util
-    import subprocess
-    import sys
+    from narrascape.cli_runtime import OptionalRuntimeError, launch_streamlit_diagnostics
 
     dashboard_path = Path(__file__).parent / "dashboard.py"
-    if not dashboard_path.exists():
-        console.print(f"[bold red]Error:[/] Dashboard file not found: {dashboard_path}")
-        raise typer.Exit(1)
-    if importlib.util.find_spec("streamlit") is None:
-        console.print(
-            "[bold red]Error:[/] Streamlit is not installed. "
-            'Install it with: pip install -e ".[dashboard]"'
-        )
+    config_path = project_dir / "config.yaml"
+    if not config_path.exists():
+        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
         raise typer.Exit(1)
 
+    project_dir = project_dir.resolve()
     console.print(f"[bold green]Launching Narrascape Dashboard[/] at http://{host}:{port}")
+    console.print(f"[dim]Project:[/] {project_dir}")
     console.print("Press [bold]Ctrl+C[/] to stop.")
     try:
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "streamlit",
-                "run",
-                str(dashboard_path),
-                "--server.port",
-                str(port),
-                "--server.address",
-                host,
-                "--browser.serverAddress",
-                host,
-                "--theme.base",
-                "dark",
-            ],
-            check=True,
+        launch_streamlit_diagnostics(
+            project_dir,
+            dashboard_path=dashboard_path,
+            host=host,
+            port=port,
         )
     except KeyboardInterrupt:
         console.print("[bold yellow]Dashboard stopped.")
-    except Exception as e:
+    except (OptionalRuntimeError, OSError, subprocess.SubprocessError) as e:
         console.print(f"[bold red]Failed to launch dashboard:[/] {e}")
+        raise typer.Exit(1)
+
+
+@app.command("workbench")
+def workbench_cmd(
+    project_dir: Annotated[
+        Path,
+        typer.Option(
+            "--project", "-p", help="Project directory", exists=True, file_okay=False, dir_okay=True
+        ),
+    ] = Path("."),
+    port: Annotated[int, typer.Option("--port", help="Workbench server port")] = 8765,
+    host: Annotated[str, typer.Option("--host", help="Bind address")] = "127.0.0.1",
+) -> None:
+    """Launch the native React production workflow control plane."""
+    from narrascape.cli_runtime import OptionalRuntimeError, launch_native_workbench
+
+    config_path = project_dir / "config.yaml"
+    if not config_path.exists():
+        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
+        raise typer.Exit(1)
+    project_dir = project_dir.resolve()
+    console.print(f"[bold green]Narrascape 制作工作台[/] http://{host}:{port}")
+    console.print(f"[dim]项目：[/] {project_dir}")
+    try:
+        launch_native_workbench(project_dir, host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("[bold yellow]制作工作台已停止。[/]")
+    except OptionalRuntimeError as exc:
+        console.print(f"[bold red]Error:[/] {exc}")
         raise typer.Exit(1)
 
 
@@ -687,6 +858,7 @@ def approve_cmd(
     """
     if stage:
         # Stage approval
+        stage = _validated_stage_name(stage)
         config_path = project_dir / "config.yaml"
         if not config_path.exists():
             console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
@@ -696,10 +868,7 @@ def approve_cmd(
         except Exception as e:
             console.print(f"[bold red]Config error:[/] {e}")
             raise typer.Exit(1)
-        from narrascape.pipeline_approval import PipelineApproval
-
-        approval = PipelineApproval(config.pipeline_dir)
-        approval.approve(stage, reviewer="human", notes=notes or "")
+        ApprovalService(config).approve(stage, reviewer="human", notes=notes or "")
         console.print(f"[bold green]Stage '{stage}' approved[/]")
         console.print(
             f"[dim]  You can now continue the pipeline: narrascape build -p {project_dir}[/]"
@@ -716,9 +885,7 @@ def approve_cmd(
         console.print(f"[bold red]Error:[/] Script not found: {script_path}")
         raise typer.Exit(1)
 
-    import shutil
-
-    shutil.copy(script_path, approved_path)
+    atomic_copy_file(script_path, approved_path)
 
     if marker_path.exists():
         marker_path.unlink()
@@ -880,9 +1047,7 @@ def design_cmd(
     marker_path = project_dir / ".approval_pending"
     if marker_path.exists() and not approved_path.exists():
         if auto_approve:
-            import shutil
-
-            shutil.copy(script_path, approved_path)
+            atomic_copy_file(script_path, approved_path)
             marker_path.unlink()
             console.print("[bold green]✅ Auto-approved script[/]")
         else:
@@ -1024,18 +1189,19 @@ def build_cmd(
         )
 
     with _temporary_env("NARRASCAPE_KENBURNS_WORKERS", str(parallel)):
-        pipeline = Pipeline(
+        results = PipelineRunService(
             config,
-            dry_run=dry_run,
-            force=force,
-            interactive=interactive,
-            auto_approve=auto_approve,
-            console=console,
-            llm_client=_get_llm_client(config=config),
-            minimax_api_key=APIKeys.minimax(),
-            max_workers=stage_parallel or None,
-        )
-        results = pipeline.run(stages)
+            pipeline_options={
+                "dry_run": dry_run,
+                "force": force,
+                "interactive": interactive,
+                "auto_approve": auto_approve,
+                "console": console,
+                "llm_client": _get_llm_client(config=config),
+                "minimax_api_key": APIKeys.minimax(),
+                "max_workers": stage_parallel or None,
+            },
+        ).run(stages)
 
     # Print summary
     table = Table(title="Build Results")
@@ -1178,23 +1344,13 @@ def clean_cmd(
         raise typer.Exit(1)
 
     if all:
-        import shutil
-
-        if config.pipeline_dir.exists():
-            shutil.rmtree(config.pipeline_dir)
+        PipelineRunService(config).clean_all()
         console.print("[bold green]✅ Cleaned all pipeline artifacts[/]")
     elif stage:
-        stage_dir = config.pipeline_dir / stage
-        if stage_dir.exists():
-            import shutil
-
-            shutil.rmtree(stage_dir)
-        elif stage == ".cache":
-            cache_dir = config.pipeline_dir / ".cache"
-            if cache_dir.exists():
-                import shutil
-
-                shutil.rmtree(cache_dir)
+        if stage == ".cache":
+            PipelineRunService(config).clean_cache()
+        else:
+            PipelineRunService(config).clean_stage(_validated_stage_name(stage))
         console.print(f"[bold green]✅ Cleaned {stage}[/]")
     else:
         console.print("[bold yellow]Use --all or --stage <name>[/]")
@@ -1212,6 +1368,7 @@ def reject_cmd(
     notes: Annotated[str | None, typer.Option("--notes", "-n", help="Rejection notes")] = None,
 ) -> None:
     """Reject a pipeline stage. Requires fixing and re-running."""
+    stage = _validated_stage_name(stage)
     config_path = project_dir / "config.yaml"
     if not config_path.exists():
         console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
@@ -1223,10 +1380,7 @@ def reject_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.pipeline_approval import PipelineApproval
-
-    approval = PipelineApproval(config.pipeline_dir)
-    approval.reject(stage, reviewer="human", notes=notes or "")
+    ApprovalService(config).reject(stage, reviewer="human", notes=notes or "")
     console.print(f"[bold red]❌ Stage '{stage}' rejected[/]")
     console.print(
         f"[dim]  Fix the issue, then run: narrascape build -p . --stage {stage} --force[/]"
@@ -1245,6 +1399,7 @@ def skip_cmd(
     notes: Annotated[str | None, typer.Option("--notes", "-n", help="Skip notes")] = None,
 ) -> None:
     """Skip a pipeline stage (mark as approved without review)."""
+    stage = _validated_stage_name(stage)
     config_path = project_dir / "config.yaml"
     if not config_path.exists():
         console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
@@ -1256,10 +1411,7 @@ def skip_cmd(
         console.print(f"[bold red]Config error:[/] {e}")
         raise typer.Exit(1)
 
-    from narrascape.pipeline_approval import PipelineApproval
-
-    approval = PipelineApproval(config.pipeline_dir)
-    approval.skip(stage, reviewer="human", notes=notes or "")
+    ApprovalService(config).skip(stage, reviewer="human", notes=notes or "")
     console.print(f"[bold dim]⏭️ Stage '{stage}' skipped[/]")
     console.print("[dim]  You can now continue the pipeline: narrascape build -p .[/]")
 

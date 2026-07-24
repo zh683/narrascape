@@ -107,7 +107,7 @@ class GenerateMusicStage(Stage):
             return StageResult(
                 self.name,
                 True,
-                outputs=[],
+                outputs=[state_path],
                 message="no BGM zones configured",
                 metadata={"mode": "skipped", "provider_selection": provider_meta},
             )
@@ -205,6 +205,16 @@ class GenerateMusicStage(Stage):
                     "is_instrumental": True,
                 },
             )
+            cached_output = music_dir / f"{zone.id}.mp3"
+            fingerprint_ok = bgm_state.get("fingerprints", {}).get(zone.id) == fingerprint
+            if zone.id in bgm_state.get("done", []) and cached_output.exists() and fingerprint_ok:
+                generated.append(cached_output)
+                continue
+            per_zone = budget_tracker.get_cost_estimate("music", 1)
+            reservation_id = f"generate_music:{selection.tool.provider}:{zone.id}"
+            reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_zone)
+            if not reserved:
+                return StageResult(self.name, False, message=reserve_msg)
             result = self._generate_one(
                 zone, dur, music_cfg, bgm_state, music_dir, fingerprint=fingerprint
             )
@@ -214,17 +224,9 @@ class GenerateMusicStage(Stage):
                 if zone.id not in bgm_state.get("done", []):
                     bgm_state.setdefault("done", []).append(zone.id)
                 atomic_write_json(bgm_state_path, bgm_state)
-                # Record actual cost per successful zone generation
-                per_zone = budget_tracker.get_cost_estimate("music", 1)
-                spend_ok, spend_msg = budget_tracker.try_spend(
-                    per_zone,
-                    kind="music",
-                    stage="generate_music",
-                    provider=selection.tool.provider,
-                    detail=zone.id,
-                )
-                if not spend_ok:
-                    return StageResult(self.name, False, message=spend_msg)
+                committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
+                if not committed:
+                    return StageResult(self.name, False, message=commit_msg)
             else:
                 logger.error("FAILED - stopping")
                 record_provider_failure(
@@ -250,6 +252,7 @@ class GenerateMusicStage(Stage):
         return StageResult(
             self.name,
             True,
+            outputs=generated,
             message=f"{len(generated)}/{len(zones)} OK, {total_dur:.0f}s",
             metadata={"provider_selection": provider_meta, "total_seconds": total_dur},
         )

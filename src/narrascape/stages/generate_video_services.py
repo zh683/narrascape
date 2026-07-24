@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.prompt_compiler import provider_negative_prompt, provider_prompt
 from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import (
@@ -18,7 +18,7 @@ from narrascape.reference_assets import (
     is_reference_uri,
     resolve_reference_assets_for_shot,
 )
-from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, update_json_mapping
+from narrascape.utils.safe_io import load_json_mapping, update_json_mapping
 
 
 def _to_int(value: Any) -> int | None:
@@ -195,8 +195,9 @@ class VideoPromptQualityReporter:
             "assessments": assessments,
             "findings": findings,
         }
-        validate_artifact("video_prompt_quality", report)
-        atomic_write_yaml(config.pipeline_dir / "video_prompt_quality.yaml", report)
+        write_artifact(
+            "video_prompt_quality", config.pipeline_dir / "video_prompt_quality.yaml", report
+        )
         return report
 
 

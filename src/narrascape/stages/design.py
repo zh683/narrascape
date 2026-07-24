@@ -18,6 +18,7 @@ import yaml
 from narrascape.agent import PromptDirector
 from narrascape.agent.analyzer import ScriptAnalyzer
 from narrascape.agent.models import BGMZoneSuggestion, DesignReport, SegmentAnalysis, ShotDesign
+from narrascape.artifacts import write_artifact
 from narrascape.config import (
     DEFAULT_VISUAL_STYLE,
     NarrascapeConfig,
@@ -286,12 +287,13 @@ class DesignStage(Stage):
             if hasattr(report, "to_design_report")
             else report.model_dump()
         )
+        report_dict["schema_version"] = "design_report.v1"
         director_process = self._director_process(
             director_steps,
             "prompt_director" if self.llm_client else "local_deterministic_design",
         )
         report_dict["director_process"] = director_process
-        atomic_write_yaml(report_path, report_dict)
+        write_artifact("design_report", report_path, report_dict)
         logger.info(f"[design] Wrote {report_path}")
 
         # Validate design quality

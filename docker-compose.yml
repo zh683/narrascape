@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: production
     image: narrascape:latest
     container_name: narrascape-pipeline
     volumes:
@@ -32,7 +33,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: narrascape:latest
+      target: development
+    image: narrascape:dev
     container_name: narrascape-dev
     volumes:
       - .:/app
@@ -42,6 +44,6 @@ services:
       - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
       - ARK_API_KEY=${ARK_API_KEY:-}
     working_dir: /app
-    command: ["pytest", "-v", "tests/"]
+    command: ["pytest", "-q", "--tb=short", "--no-cov"]
     profiles:
       - dev

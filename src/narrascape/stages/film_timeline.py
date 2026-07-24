@@ -6,11 +6,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract, DirectorShot, FilmTimeline
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
+from narrascape.utils.safe_io import load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.film_timeline")
 
@@ -217,8 +217,7 @@ class FilmTimelineStage(Stage):
         }
         # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
         FilmTimeline.model_validate(timeline)
-        validate_artifact("film_timeline", timeline)
-        atomic_write_yaml(output_path, timeline)
+        write_artifact("film_timeline", output_path, timeline)
 
         return StageResult(
             self.name,
@@ -233,9 +232,7 @@ class FilmTimelineStage(Stage):
         )
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path or not path.exists():
-            return {}
-        return load_yaml_mapping(path, default={})
+        return super()._load_yaml(path)
 
     def _load_json(self, path: Path) -> dict[str, Any]:
         return load_json_mapping(path, default={})

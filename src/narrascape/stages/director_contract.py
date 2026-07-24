@@ -4,15 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract
 from narrascape.contracts.qa_taxonomy import QA_DIMENSIONS, normalize_assertions
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml
 
 
 class DirectorContractStage(Stage):
@@ -94,8 +91,7 @@ class DirectorContractStage(Stage):
         }
         # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
         DirectorContract.model_validate(contract)
-        validate_artifact("director_contract", contract)
-        atomic_write_yaml(output, contract)
+        write_artifact("director_contract", output, contract)
         return StageResult(
             self.name,
             True,
@@ -683,9 +679,7 @@ class DirectorContractStage(Stage):
         return ""
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return super()._load_yaml(path)
 
     def _segment_ids_from_queue(self, path: Path) -> set[int]:
         if not path.exists():

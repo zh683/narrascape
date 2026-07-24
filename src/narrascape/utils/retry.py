@@ -73,8 +73,11 @@ def retry_with_backoff(
     for attempt in range(max_retries + 1):
         try:
             return func()
-        except retryable_exceptions as e:
-            if retryable_if is not None and not retryable_if(e):
+        except Exception as e:
+            if retryable_if is not None:
+                if not retryable_if(e):
+                    raise
+            elif not isinstance(e, retryable_exceptions):
                 raise
             if attempt >= max_retries:
                 logger.error(f"All {max_retries} retries exhausted. Last error: {e}")
@@ -92,3 +95,26 @@ def retry_with_backoff(
             (time.sleep if sleeper is None else sleeper)(delay)
 
     raise RuntimeError("retry_with_backoff: unreachable")
+
+
+RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
+
+
+def is_retryable_provider_error(error: Exception) -> bool:
+    """Classify transport/provider errors without retrying permanent failures."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in RETRYABLE_HTTP_STATUS
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+    if status_code is not None:
+        try:
+            return int(status_code) in RETRYABLE_HTTP_STATUS
+        except (TypeError, ValueError):
+            return False
+    if isinstance(error, urllib.error.URLError):
+        return True
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return True
+    error_name = type(error).__name__.lower()
+    return "timeout" in error_name or "connection" in error_name

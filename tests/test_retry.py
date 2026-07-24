@@ -10,7 +10,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from narrascape.utils.retry import is_retryable_http_error, retry_with_backoff
+from narrascape.utils.retry import (
+    is_retryable_http_error,
+    is_retryable_provider_error,
+    retry_with_backoff,
+)
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -194,3 +198,67 @@ class TestRetryableIfPredicate:
 
         assert result == "ok"
         assert mock.call_count == 2
+
+
+class TestIsRetryableProviderError:
+    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+    def test_retryable_provider_http_statuses(self, status):
+        error = urllib.error.HTTPError("https://provider.test", status, "failed", {}, None)
+
+        assert is_retryable_provider_error(error) is True
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+    def test_permanent_provider_http_statuses_are_not_retryable(self, status):
+        error = urllib.error.HTTPError("https://provider.test", status, "failed", {}, None)
+
+        assert is_retryable_provider_error(error) is False
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            TimeoutError("timeout"),
+            urllib.error.URLError(TimeoutError("timeout")),
+            ConnectionError("connection reset"),
+        ],
+    )
+    def test_network_failures_are_retryable(self, error):
+        assert is_retryable_provider_error(error) is True
+
+    def test_retry_predicate_stops_on_permanent_error(self):
+        permanent = urllib.error.HTTPError("https://provider.test", 401, "unauthorized", {}, None)
+        mock = MagicMock(side_effect=permanent)
+
+        with pytest.raises(urllib.error.HTTPError):
+            retry_with_backoff(
+                mock,
+                max_retries=3,
+                base_delay=0,
+                retryable_if=is_retryable_provider_error,
+            )
+
+        assert mock.call_count == 1
+
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [(429, True), (503, True), (401, False), (422, False)],
+    )
+    def test_provider_sdk_status_code_is_classified(self, status, expected):
+        class SDKError(Exception):
+            def __init__(self):
+                self.status_code = status
+
+        assert is_retryable_provider_error(SDKError()) is expected
+
+    def test_provider_sdk_response_status_is_classified(self):
+        class Response:
+            status_code = 429
+
+        class SDKError(Exception):
+            response = Response()
+
+        assert is_retryable_provider_error(SDKError()) is True
+
+    def test_provider_sdk_timeout_error_name_is_retryable(self):
+        APITimeoutError = type("APITimeoutError", (Exception,), {})
+
+        assert is_retryable_provider_error(APITimeoutError("timed out")) is True

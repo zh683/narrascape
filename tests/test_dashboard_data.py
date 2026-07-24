@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
 
-from narrascape.dashboard_data import load_rework_loop_summary, load_timeline_dashboard
+from narrascape.dashboard_data import (
+    load_rework_loop_summary,
+    load_stage_dashboard,
+    load_timeline_dashboard,
+)
 
 
 def test_load_timeline_dashboard_summarizes_timeline_and_remotion_preview(tmp_path: Path):
@@ -89,6 +94,43 @@ def test_load_timeline_dashboard_summarizes_timeline_and_remotion_preview(tmp_pa
     assert data["remotion"]["status"] == "missing_assets"
     assert data["remotion"]["commands"]["studio"] == "npx remotion studio"
     assert data["remotion"]["missing"][0]["clip_id"] == "v_002"
+
+
+def test_load_stage_dashboard_uses_pipeline_state_and_registry(tmp_path: Path):
+    project_dir = tmp_path / "project"
+    pipeline_dir = project_dir / "pipeline" / "project"
+    pipeline_dir.mkdir(parents=True)
+    (project_dir / "assets" / "images").mkdir(parents=True)
+    image = project_dir / "assets" / "images" / "img_01.png"
+    image.write_bytes(b"image")
+    (pipeline_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "version": "2.0",
+                "stages": {"generate_images": "completed", "design": "failed"},
+                "segments": {},
+                "stage_outputs": {"generate_images": [image.as_posix()]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (pipeline_dir / "approvals").mkdir()
+    (pipeline_dir / "approvals" / "generate_images.approved").write_text(
+        "stage: generate_images\nstatus: approved\n",
+        encoding="utf-8",
+    )
+
+    data = load_stage_dashboard(project_dir, pipeline_dir)
+
+    assert data["total"] == 36
+    assert data["completed"] == 1
+    assert data["stage_by_name"]["generate_images"]["done"] is True
+    assert data["stage_by_name"]["generate_images"]["approval"] == "approved"
+    assert data["stage_by_name"]["generate_images"]["output_count"] == 1
+    assert data["stage_by_name"]["generate_images"]["output_files"][0]["name"] == "img_01.png"
+    assert data["stage_by_name"]["design"]["status"] == "failed"
+    assert data["current_stage"]["name"] == "design"
+    assert "director_contract" in data["stage_by_name"]
 
 
 def test_load_timeline_dashboard_handles_missing_timeline(tmp_path: Path):

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from narrascape.artifacts import validate_artifact
+from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
-from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
 
 
 class ReferencePlateStage(Stage):
@@ -25,8 +24,8 @@ class ReferencePlateStage(Stage):
     def run(self, context: StageContext) -> StageResult:
         config = context.config
         design = self._load_design(config)
-        pre_production = load_yaml_mapping(config.pipeline_dir / "pre_production.yaml")
-        director_contract = load_yaml_mapping(config.pipeline_dir / "director_contract.yaml")
+        pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")
+        director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         design_by_segment = self._design_by_segment(design)
 
         plates: list[dict[str, Any]] = []
@@ -64,9 +63,8 @@ class ReferencePlateStage(Stage):
             "plates": plates,
             "findings": findings,
         }
-        validate_artifact("reference_plates", report)
         out_path = config.pipeline_dir / "reference_plates.yaml"
-        atomic_write_yaml(out_path, report)
+        write_artifact("reference_plates", out_path, report)
         return StageResult(
             self.name,
             not blocking,
@@ -83,7 +81,7 @@ class ReferencePlateStage(Stage):
     def _load_design(self, config: Any) -> dict[str, Any]:
         for path in design_report_candidates(config):
             if path.exists():
-                return load_yaml_mapping(path)
+                return self._load_yaml(path)
         return {}
 
     def _design_by_segment(self, design: dict[str, Any]) -> dict[int, dict[str, Any]]:
