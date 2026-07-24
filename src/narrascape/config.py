@@ -843,6 +843,49 @@ def _interpolate_env_value(value: Any, field_path: str) -> Any:
     return value
 
 
+# YAML 1.1 parses bare off/on/yes/no as booleans. Enum string fields that
+# legitimately use "off" (e.g. video_generation: off) therefore arrive as
+# False. Normalize booleans back to the enum string for exactly these
+# declared fields — never globally, or real boolean fields
+# (design_overwrite, strict_director) would be corrupted. Fields whose enum
+# contains "on" automatically accept True as "on".
+_YAML11_ENUM_FIELDS: dict[str, tuple[str, ...]] = {
+    "pipeline.video_generation": ("auto", "required", "off"),
+    "video.storyboard_conditioning": ("off", "auto"),
+}
+
+
+def _normalize_yaml11_bool_enums(value: Any, field_path: str) -> Any:
+    """Map YAML 1.1 booleans back to enum strings for declared fields.
+
+    Bare ``off``/``on``/``yes``/``no`` in config.yaml parse as booleans
+    under YAML 1.1. For the exact enum string fields listed in
+    ``_YAML11_ENUM_FIELDS``, convert False/True to "off"/"on" when the
+    candidate is a valid enum value; otherwise raise a clear error listing
+    the valid values. All other values pass through untouched.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _normalize_yaml11_bool_enums(
+                item, f"{field_path}.{key}" if field_path else str(key)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_yaml11_bool_enums(item, field_path) for item in value]
+    if isinstance(value, bool) and field_path in _YAML11_ENUM_FIELDS:
+        allowed = _YAML11_ENUM_FIELDS[field_path]
+        candidate = "on" if value else "off"
+        if candidate in allowed:
+            return candidate
+        raise ValueError(
+            f"config.yaml field '{field_path}' received boolean {value} "
+            "(YAML 1.1 parses bare on/off/yes/no as booleans). Its valid values are "
+            f"{', '.join(repr(v) for v in allowed)} — write one of those instead."
+        )
+    return value
+
+
 def load_config(path: Path) -> NarrascapeConfig:
     """Load and validate config.yaml from a project directory or file path.
 
@@ -862,6 +905,7 @@ def load_config(path: Path) -> NarrascapeConfig:
     if isinstance(raw_llm, dict):
         raw_api_key = str(raw_llm.get("api_key") or "")
     data = _interpolate_env_value(data, "")
+    data = _normalize_yaml11_bool_enums(data, "")
     cfg = NarrascapeConfig(**data)
     if cfg.llm.api_key and raw_api_key and not _ENV_REF_FULLMATCH.match(raw_api_key):
         logger.warning(

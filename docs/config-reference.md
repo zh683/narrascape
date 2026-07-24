@@ -61,6 +61,12 @@ pipeline:
 
 `video_generation: required` is an AI-film production policy. It rejects `llm.mode: none` during config validation because required generated-video workflows need an AI Director client for script breakdown, director contract, take selection, semantic QA, and rework decisions.
 
+`video_generation` is a string enum, but a bare `off` needs no quotes: YAML 1.1
+parses it as a boolean and `load_config` normalizes it back to `"off"` before
+validation. The same applies to `video.storyboard_conditioning`. A bare `on`
+(or `yes`/`no`) is rejected with a message listing the valid values, because
+neither enum includes `"on"`.
+
 Use `strict_director: true` when a production run must prove that the director
 chain used configured LLM paths instead of local templates. The pipeline checks
 `pre_production.yaml`, `design_report.yaml`, `director_contract.yaml`,
@@ -194,7 +200,8 @@ Ledger, fingerprint, 429-exemption, exactly-once accounting, and crash
 resume semantics are unchanged; a resumed task that terminates failed is
 re-created on the next run rather than in the same one.
 
-`storyboard_conditioning: auto` (default `off`) opts into
+`storyboard_conditioning: auto` (default `off`, bare `off` needs no quotes —
+the YAML 1.1 boolean parse is normalized back to the enum string) opts into
 storyboard-as-generation-condition: each shot's
 `director_contract.storyboard_binding` is resolved to a physical panel
 (`assets/storyboard/<frame_id>.<ext>`) that becomes the video `first_frame`,
