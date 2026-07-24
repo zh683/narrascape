@@ -589,3 +589,69 @@ def test_supervisor_stages_are_registered_and_llm_client_is_injected(tmp_path):
     pipeline = Pipeline(_config(tmp_path), llm_client=llm)
     assert pipeline._create_stage(CreativeReviewStage).llm_client is llm
     assert pipeline._create_stage(VisualSemanticQAStage).llm_client is llm
+
+
+def test_rework_execute_marks_assistant_handoff_pending(tmp_path):
+    """Execution side must mark the full rework tail — including the handoff
+    packet — pending, so an interrupted run knows assistant_handoff needs a
+    refresh after rework (previously the execution-side chain drifted and
+    dropped it)."""
+    from narrascape.stages.rework_execute import ReworkExecuteStage
+
+    config = _config(tmp_path)
+    result = ReworkExecuteStage().run(_context(config))
+
+    assert result.success
+    state = json.loads((config.pipeline_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["stages"]["assistant_handoff"] == "pending"
+    assert state["stages"]["film_supervisor"] == "pending"
+
+
+def test_rework_chains_single_source_of_truth(tmp_path):
+    """film_supervisor (decision) and rework_execute (execution) derive their
+    rerun chains from the same catalog constants: identical triggers must
+    produce identical chains (modulo the leading rework_execute entry)."""
+    from narrascape.stages.film_supervisor import FilmSupervisorStage
+    from narrascape.stages.rework_execute import ReworkExecuteStage
+
+    actions = [
+        {"segment_id": 3, "action": "regenerate_video"},
+        {"segment_id": 2, "action": "recut"},
+    ]
+    supervisor_stages = FilmSupervisorStage()._next_stages(actions, [], [], [])
+    execute_stages = ReworkExecuteStage()._stages_to_rerun(
+        contract_rewrite_queue=[],
+        regen_queue=[actions[0]],
+        recut_queue=[actions[1]],
+        replacement_queue=[],
+    )
+
+    assert supervisor_stages[0] == "rework_execute"
+    assert supervisor_stages[1:] == execute_stages
+    assert execute_stages[-2:] == ["film_supervisor", "assistant_handoff"]
+
+    # Blocking errors alone trigger rework_execute but no upstream chain.
+    from narrascape.catalog import REWORK_TAIL_STAGES
+
+    assert FilmSupervisorStage()._next_stages([], [], [], ["boom"]) == ["rework_execute"] + list(
+        REWORK_TAIL_STAGES
+    )
+
+
+def test_rework_chain_constants_are_complete_and_registered():
+    from narrascape.catalog import REWORK_ACTION_CHAINS, REWORK_TAIL_STAGES
+
+    assert set(REWORK_ACTION_CHAINS) == {
+        "rewrite_director_contract",
+        "regenerate_video",
+        "replace_source_media",
+        "recut",
+    }
+    assert REWORK_TAIL_STAGES[-2:] == ["film_supervisor", "assistant_handoff"]
+
+    stage_map = get_stage_map()
+    for chain in REWORK_ACTION_CHAINS.values():
+        for stage in chain:
+            assert stage in stage_map, f"unregistered stage in rework chain: {stage}"
+    for stage in REWORK_TAIL_STAGES:
+        assert stage in stage_map, f"unregistered stage in rework tail: {stage}"

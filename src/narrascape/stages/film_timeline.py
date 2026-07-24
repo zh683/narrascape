@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract, DirectorShot, FilmTimeline
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, load_yaml_mapping
@@ -24,10 +25,7 @@ class FilmTimelineStage(Stage):
         config = context.config
         if not config.script_path.exists():
             return False, f"Script not found: {config.script_path}"
-        design_path = self._first_existing(
-            config.project_dir / "design_report.yaml",
-            config.pipeline_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(config))
         if not design_path.exists():
             return False, "design_report.yaml not found"
         return True, ""
@@ -36,18 +34,14 @@ class FilmTimelineStage(Stage):
         config = context.config
         output_path = config.project_dir / "film_timeline.yaml"
         timing = self._load_json(config.pipeline_dir / "timing.json")
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         image_map = self._load_yaml(config.project_dir / "image_map.yaml")
         footage_timeline = self._load_yaml(config.project_dir / "footage_timeline.yaml")
         asset_manifest = self._load_yaml(config.project_dir / "asset_manifest.yaml")
         director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         video_state = self._load_json(config.pipeline_dir / "video_gen_state.json")
         take_selection = self._load_yaml(config.pipeline_dir / "take_selection.yaml")
+        self._warn_if_multi_take_without_selection(config)
 
         script_segments = list(context.script.segments)
         design_by_segment = self._items_by_int_key(design.get("segments", []), "segment_id")
@@ -292,6 +286,31 @@ class FilmTimelineStage(Stage):
                 continue
             videos[segment_id] = path
         return videos
+
+    def _warn_if_multi_take_without_selection(self, config: Any) -> None:
+        """Advisory warning: multi-take videos exist but take_select never ran.
+
+        film_timeline deliberately does NOT declare a dependency on
+        take_select / generate_video: ``depends_on`` would pull those stages
+        into execution (including paid video generation) when someone runs
+        ``--stage film_timeline`` alone. Reads tolerate the missing artifact,
+        but silently ignoring take files can pick the wrong clip, so we
+        surface the situation instead of failing.
+        """
+        if (config.pipeline_dir / "take_selection.yaml").exists():
+            return
+        videos_dir = config.project_dir / "assets" / "videos"
+        if not videos_dir.exists():
+            return
+        takes = sorted(videos_dir.glob("vid_*_take_*.mp4"))
+        if not takes:
+            return
+        logger.warning(
+            f"found {len(takes)} multi-take video(s) in {videos_dir} but "
+            f"take_selection.yaml is missing; take files (e.g. {takes[0].name}) "
+            f"are ignored by the fallback glob, which only uses base vid_NN.mp4 "
+            f"files — run the take_select stage first to choose takes explicitly"
+        )
 
     def _parse_contract(self, director_contract: dict[str, Any]) -> DirectorContract | None:
         """Typed parse of director_contract.yaml; None means "fall back to raw dicts".

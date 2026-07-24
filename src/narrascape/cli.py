@@ -29,7 +29,7 @@ from narrascape.config import (
     load_script,
 )
 from narrascape.log_setup import setup_logging
-from narrascape.pipeline import Pipeline
+from narrascape.pipeline import Pipeline, final_stage_results
 
 LLMProviderName = Literal[
     "openai", "anthropic", "deepseek", "volcengine", "local", "bridge", "ai_assistant"
@@ -1096,14 +1096,18 @@ def build_cmd(
 
     console.print(table)
 
-    if all(r.success for r in results.values()):
+    # Success judgment uses the FINAL result per logical stage: a stage that
+    # failed in an early rework cycle but was fixed later counts as succeeded.
+    # The summary table above still shows every cycle's history.
+    final_results = final_stage_results(results)
+    if all(r.success for r in final_results.values()):
         console.print("[bold green]✅ Build complete[/]")
         for stage_name, result in results.items():
             if isinstance(result.outputs, dict):
                 for key, path in result.outputs.items():
                     console.print(f"  [dim]{key}:[/] {path}")
     else:
-        failed = [name for name, r in results.items() if not r.success]
+        failed = [name for name, r in final_results.items() if not r.success]
         console.print(f"[bold red]❌ Build stopped:[/] {', '.join(failed)}")
         console.print("[dim]  Review pending approvals: narrascape status -p .[/]")
         raise typer.Exit(1)

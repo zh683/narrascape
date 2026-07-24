@@ -246,6 +246,22 @@ def _resolve_dependency_levels(
     return levels
 
 
+def final_stage_results(results: dict[str, StageResult]) -> dict[str, StageResult]:
+    """Collapse rework-cycle keys (``cycle_N.<stage>``) into final per-stage results.
+
+    Base results are inserted first, then cycle results in cycle order, so the
+    last entry per logical stage wins: a stage that failed in an early cycle
+    but succeeded after rework counts as succeeded. Display layers keep the
+    full ``results`` dict; this collapse is only for success/exit-code
+    judgment.
+    """
+    final: dict[str, StageResult] = {}
+    for name, result in results.items():
+        logical = name.split(".", 1)[1] if name.startswith("cycle_") else name
+        final[logical] = result
+    return final
+
+
 # ═══════════════════════════════════════════
 # Pipeline State
 # ═══════════════════════════════════════════

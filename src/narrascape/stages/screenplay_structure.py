@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
 
@@ -20,10 +21,7 @@ class ScriptSceneDirectorStage(Stage):
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         if not context.config.script_path.exists():
             return False, f"Script not found: {context.config.script_path}"
-        design_path = self._first_existing(
-            context.config.project_dir / "design_report.yaml",
-            context.config.pipeline_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(context.config))
         if not design_path.exists():
             return False, "design_report.yaml not found"
         return True, ""
@@ -33,12 +31,7 @@ class ScriptSceneDirectorStage(Stage):
         output = config.pipeline_dir / "screenplay_structure.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
 
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         timing = self._load_json(config.pipeline_dir / "timing.json")
         design_by_segment = {
             int(item.get("segment_id")): item

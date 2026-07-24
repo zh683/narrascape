@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 CORE_ARTIFACT_TEMPLATES: dict[str, str] = {
     "script": "scripts/script.yaml",
@@ -56,6 +57,51 @@ STAGE_DOC_PATHS: dict[str, str] = {
     "visual_semantic_qa": "docs/agent-stages/visual_semantic_qa.md",
 }
 
+# ───────────────────────────────────────────
+# Rework chains (single source of truth)
+# ───────────────────────────────────────────
+#
+# Consumed by BOTH film_supervisor._next_stages (decision: what the supervisor
+# asks the pipeline to rerun) and rework_execute._stages_to_rerun (execution:
+# which stages are marked pending). The two must never drift again — extend
+# these constants, do not fork the lists.
+
+# Rework action type -> upstream chain to rerun for that action.
+REWORK_ACTION_CHAINS: dict[str, list[str]] = {
+    "rewrite_director_contract": [
+        "director_contract",
+        "reference_plate",
+        "generate_images",
+        "animatic",
+        "generate_video",
+        "take_select",
+        "film_timeline",
+    ],
+    "regenerate_video": ["generate_video", "take_select", "film_timeline"],
+    "replace_source_media": ["source_media", "film_timeline"],
+    "recut": ["film_timeline", "remotion_preview", "film_assemble"],
+}
+
+# Tail appended whenever any rework reruns: re-render, re-review, re-decide,
+# and refresh the assistant takeover packet. assistant_handoff is part of the
+# chain (the film_supervisor decision is authoritative): after any rework the
+# handoff packet must reflect the reworked state.
+REWORK_TAIL_STAGES: list[str] = [
+    "remotion_preview",
+    "film_assemble",
+    "audio",
+    "subtitles",
+    "qa",
+    "continuity_bible",
+    "editing_review",
+    "director_review",
+    "rework_plan",
+    "creative_review",
+    "visual_semantic_qa",
+    "film_supervisor",
+    "assistant_handoff",
+]
+
 STAGE_INTENTS: dict[str, str] = {
     "rework_execute": "apply queued regeneration, recut, or media replacement actions",
     "director_contract": "rewrite executable shot contracts",
@@ -104,6 +150,21 @@ def stage_doc_paths(stage_names: list[str]) -> list[str]:
 
 def stage_intent(stage_name: str) -> str:
     return STAGE_INTENTS.get(stage_name, f"run {stage_name}")
+
+
+def design_report_candidates(config: Any) -> list[Path]:
+    """Lookup order for ``design_report.yaml``: pipeline dir first, project dir second.
+
+    The design stage writes the report to ``pipeline/<name>/design_report.yaml``
+    (see ``stages/design.py``); a file at the project dir root is a stale copy
+    left by older versions. Readers must prefer the pipeline-dir copy — the
+    opposite order can silently pick up an outdated design. Keep every reader
+    on this single ordering.
+    """
+    return [
+        config.pipeline_dir / "design_report.yaml",
+        config.project_dir / "design_report.yaml",
+    ]
 
 
 def repo_relative_doc_label(path: str) -> str:

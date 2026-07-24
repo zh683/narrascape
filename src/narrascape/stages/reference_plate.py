@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml, load_yaml_mapping
@@ -80,10 +81,7 @@ class ReferencePlateStage(Stage):
         )
 
     def _load_design(self, config: Any) -> dict[str, Any]:
-        for path in (
-            config.pipeline_dir / "design_report.yaml",
-            config.project_dir / "design_report.yaml",
-        ):
+        for path in design_report_candidates(config):
             if path.exists():
                 return load_yaml_mapping(path)
         return {}

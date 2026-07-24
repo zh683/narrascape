@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -23,10 +24,7 @@ class DirectorContractStage(Stage):
         self.llm_client = llm_client
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
-        design_path = self._first_existing(
-            context.config.project_dir / "design_report.yaml",
-            context.config.pipeline_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(context.config))
         if not design_path.exists():
             return False, f"design_report.yaml not found: {design_path}"
         return True, ""
@@ -35,12 +33,7 @@ class DirectorContractStage(Stage):
         config = context.config
         output = config.pipeline_dir / "director_contract.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         structure = self._load_yaml(config.pipeline_dir / "screenplay_structure.yaml")
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
         pre_production = self._load_yaml(config.pipeline_dir / "pre_production.yaml")

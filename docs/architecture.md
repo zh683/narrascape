@@ -134,6 +134,17 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 
 `_resolve_dependencies()` expands requested targets with transitive dependencies and performs a topological sort.
 
+> **Why `film_timeline` does not declare `take_select` / `generate_video`:**
+> a declared dependency is *pulled into execution* — running
+> `--stage film_timeline` alone would then trigger `generate_video` (paid
+> generation) and `take_select` as a side effect. Instead the stage reads
+> `video_gen_state.json` / `take_selection.yaml` tolerantly (missing files are
+> fine: the run falls back to base `vid_NN.mp4` globs, then source media,
+> then generated images) and emits an **advisory warning** when multi-take
+> videos (`vid_*_take_*.mp4`) exist but `take_selection.yaml` is missing,
+> since take files are invisible to the fallback glob. In full builds the
+> registry order already runs `take_select` before `film_timeline`.
+
 `_resolve_dependency_levels()` groups the same closure into topological levels
 (registry order within a level, deterministic) for the optional layered
 parallel scheduler.

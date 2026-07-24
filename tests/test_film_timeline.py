@@ -363,3 +363,85 @@ def test_film_timeline_ignores_invalid_external_segment_ids(tmp_path):
 
     assert result.success is False
     assert "missing visuals for segments: [1]" in result.message
+
+
+def test_film_timeline_warns_when_multi_take_videos_lack_selection(tmp_path, caplog):
+    """Multi-take videos without take_selection.yaml: keep running (tolerant
+    reads) but surface an advisory warning, because take files are invisible
+    to the fallback glob."""
+    import logging
+
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.project_dir / "assets" / "videos" / "vid_01_take_1.mp4").write_bytes(b"take 1")
+    (config.project_dir / "assets" / "videos" / "vid_01_take_2.mp4").write_bytes(b"take 2")
+
+    with caplog.at_level(logging.WARNING, logger="narrascape.stages.film_timeline"):
+        result = FilmTimelineStage().run(_context(config))
+
+    assert result.success
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "take_selection.yaml is missing" in r.getMessage() and "take_select" in r.getMessage()
+        for r in warnings
+    ), [r.getMessage() for r in warnings]
+
+
+def test_film_timeline_no_warning_when_take_selection_exists(tmp_path, caplog):
+    import logging
+
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.project_dir / "assets" / "videos" / "vid_01_take_1.mp4").write_bytes(b"take 1")
+    (config.project_dir / "assets" / "videos" / "vid_01_take_2.mp4").write_bytes(b"take 2")
+    (config.pipeline_dir / "take_selection.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "take_selection.v1",
+                "selections": [
+                    {
+                        "segment_id": 1,
+                        "selected_path": "assets/videos/vid_01_take_2.mp4",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="narrascape.stages.film_timeline"):
+        result = FilmTimelineStage().run(_context(config))
+
+    assert result.success
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "take_selection.yaml is missing" in r.getMessage()
+    ]
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
+    segment_1 = [c for c in timeline["tracks"]["visual"] if c.get("segment_id") == 1]
+    assert segment_1[0]["asset_ref"] == "vid_01_take_2"
+
+
+def test_film_timeline_no_warning_without_take_files(tmp_path, caplog):
+    import logging
+
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    (config.project_dir / "assets" / "videos" / "vid_01.mp4").write_bytes(b"base video")
+
+    with caplog.at_level(logging.WARNING, logger="narrascape.stages.film_timeline"):
+        result = FilmTimelineStage().run(_context(config))
+
+    assert result.success
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "take_selection" in r.getMessage()
+    ]

@@ -176,3 +176,20 @@ def test_composition_runtime_selects_ffmpeg_by_default(tmp_path):
 
     assert runtime.name == "ffmpeg"
     assert "ffmpeg" in registry.support_envelope()
+
+
+def test_ffmpeg_composition_runtime_render_is_not_implemented(tmp_path):
+    """The selection surface must not fake a successful render: calling
+    render() before an execution path is wired in fails loudly."""
+    import pytest
+
+    from narrascape.compose import CompositionPlan, CompositionRuntimeRegistry
+
+    registry = CompositionRuntimeRegistry.default()
+    plan = CompositionPlan(
+        project="project", runtime="auto", inputs=[], output=tmp_path / "out.mp4"
+    )
+    runtime = registry.select(plan)
+
+    with pytest.raises(NotImplementedError, match="selection surface only"):
+        runtime.render(plan)

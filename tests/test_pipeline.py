@@ -1137,3 +1137,58 @@ class TestPipelineStageFactory:
 
         assert calls == ["fake", "fake"]
         assert results["fake"].success is True
+
+
+class TestFinalStageResults:
+    """final_stage_results collapses cycle_N.<stage> keys so build success /
+    exit code reflect the FINAL result per logical stage, not intermediate
+    rework-cycle failures."""
+
+    def test_cycle_success_overrides_base_failure(self):
+        from narrascape.pipeline import final_stage_results
+
+        results = {
+            "design": StageResult("design", True),
+            "generate_video": StageResult("generate_video", False, message="boom"),
+            "cycle_1.rework_execute": StageResult("rework_execute", True),
+            "cycle_1.generate_video": StageResult("generate_video", True),
+        }
+        final = final_stage_results(results)
+
+        assert set(final) == {"design", "generate_video", "rework_execute"}
+        assert final["generate_video"].success is True
+        assert all(r.success for r in final.values())
+
+    def test_cycle_failure_overrides_base_success(self):
+        from narrascape.pipeline import final_stage_results
+
+        results = {
+            "qa": StageResult("qa", True),
+            "cycle_1.qa": StageResult("qa", False, message="still broken"),
+        }
+        final = final_stage_results(results)
+
+        assert final["qa"].success is False
+
+    def test_later_cycle_wins_over_earlier_cycle(self):
+        from narrascape.pipeline import final_stage_results
+
+        results = {
+            "generate_video": StageResult("generate_video", False),
+            "cycle_1.generate_video": StageResult("generate_video", False),
+            "cycle_2.generate_video": StageResult("generate_video", True),
+        }
+        final = final_stage_results(results)
+
+        assert final["generate_video"].success is True
+
+    def test_non_cycle_keys_pass_through_unchanged(self):
+        from narrascape.pipeline import final_stage_results
+
+        results = {
+            "design": StageResult("design", True),
+            "qa": StageResult("qa", False),
+        }
+        final = final_stage_results(results)
+
+        assert final == results

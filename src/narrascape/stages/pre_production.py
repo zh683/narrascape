@@ -37,7 +37,7 @@ from narrascape.agent.models import (
 )
 from narrascape.api_keys import APIKeys
 from narrascape.config import DEFAULT_VISUAL_STYLE, NarrascapeConfig, Script, load_script
-from narrascape.prompt_safety import sanitize_prompt_for_provider
+from narrascape.prompt_safety import sanitize_prompt_for_provider, write_sanitize_audit
 from narrascape.providers import select_provider
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.stages.generate_images import GenerateImagesStage
@@ -258,6 +258,7 @@ class PreProductionStage(Stage):
         self.report_writer.write(report_path, report_dict)
         logger.info(f"[pre_production] Wrote {report_path}")
 
+        write_sanitize_audit(pipe_dir, self.name)
         return StageResult(
             stage_name=self.name,
             success=True,

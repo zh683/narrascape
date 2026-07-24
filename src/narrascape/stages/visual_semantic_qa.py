@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -34,12 +35,7 @@ class VisualSemanticQAStage(Stage):
         output = config.pipeline_dir / "visual_semantic_report.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
         render_report = self._load_yaml(config.pipeline_dir / "render_report.yaml")
         director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")

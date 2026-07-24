@@ -21,7 +21,7 @@ from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_image_prompts
-from narrascape.prompt_safety import sanitize_prompt_for_provider
+from narrascape.prompt_safety import sanitize_prompt_for_provider, write_sanitize_audit
 from narrascape.providers import (
     record_provider_failure,
     record_provider_success,
@@ -352,6 +352,7 @@ class GenerateImagesStage(Stage):
                 selection.tool.name,
                 f"{fail_count}/{len(targets)} image generations failed",
             )
+        write_sanitize_audit(config.pipeline_dir, self.name)
         return StageResult(
             self.name,
             fail_count == 0,

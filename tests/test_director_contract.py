@@ -1419,3 +1419,38 @@ def test_director_contract_stage_is_registered_before_generate_video():
     assert "animatic" in stage_map
     assert order.index("reference_plate") < order.index("animatic")
     assert order.index("animatic") < order.index("generate_video")
+
+
+def test_design_report_candidates_prefers_pipeline_dir(tmp_path):
+    from narrascape.catalog import design_report_candidates
+
+    config = _config(tmp_path)
+
+    assert design_report_candidates(config) == [
+        config.pipeline_dir / "design_report.yaml",
+        config.project_dir / "design_report.yaml",
+    ]
+
+
+def test_director_contract_reads_pipeline_dir_design_report_when_both_exist(tmp_path):
+    """The design stage writes design_report.yaml into the pipeline dir; the
+    project-dir copy is a stale leftover. When both exist, readers must use
+    the fresh pipeline-dir version."""
+    from narrascape.stages.director_contract import DirectorContractStage
+
+    config = _config(tmp_path)
+    config.pipeline_dir.mkdir(parents=True, exist_ok=True)
+    fresh = yaml.safe_load((config.project_dir / "design_report.yaml").read_text(encoding="utf-8"))
+    fresh["segments"][0]["director_vision"] = "Fresh pipeline-dir design wins."
+    (config.pipeline_dir / "design_report.yaml").write_text(
+        yaml.safe_dump(fresh, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = DirectorContractStage().run(_context(config))
+
+    assert result.success
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    assert contract["shots"][0]["story_reason"] == "Fresh pipeline-dir design wins."

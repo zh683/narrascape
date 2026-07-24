@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from narrascape.artifacts import validate_artifact
+from narrascape.catalog import design_report_candidates
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
 
@@ -27,12 +28,7 @@ class ContinuityBibleStage(Stage):
         output = config.pipeline_dir / "continuity_bible.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         structure = self._load_yaml(config.pipeline_dir / "screenplay_structure.yaml")
         design_by_segment = {
             int(item.get("segment_id")): item

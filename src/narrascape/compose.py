@@ -32,9 +32,15 @@ class FFmpegCompositionRuntime:
     available = True
 
     def render(self, plan: CompositionPlan) -> bool:
-        # Existing stages still perform rendering; this runtime is the selection
-        # surface future compose stages can call into.
-        return True
+        # Existing stages still perform rendering; this runtime is only the
+        # selection surface future compose stages can call into. There is no
+        # execution path behind it yet, so fail loudly instead of pretending
+        # a render happened.
+        raise NotImplementedError(
+            "FFmpegCompositionRuntime is a selection surface only: rendering is "
+            "still performed by the film_assemble stage, and no compose-stage "
+            "execution path is wired into this runtime yet"
+        )
 
 
 class UnavailableCompositionRuntime:

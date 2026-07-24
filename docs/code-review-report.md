@@ -37,6 +37,8 @@
 | P1-12 | 契约无强类型 | ✅ 已修复（三大核心契约 pydantic 化，写点 fail-fast） | `46457a8` |
 
 > 状态更新（2026-07-24 二更）：P1 已 **12/12 全部清零**。当前 HEAD：`7a50f62`，pytest 527 passed。
+>
+> 状态更新（三更，未提交工作区）：P2 本轮再清 6 项（compose stub / 返工链漂移 / prompt_safety 静默重写 / film_timeline 依赖 / design_report 优先级 / build 退出码），P2 已 **10/15 修复**。pytest 547 passed，ruff/black/mypy 全绿。
 
 ### P2 — 部分解决
 
@@ -44,15 +46,15 @@
 |---|---|---|
 | take_select 字节数评分 | ✅ 已修复（ffmpeg 四信号质量分：清晰度/亮度/时长保真/帧稳定性） | `e921662` |
 | `--parallel` 参数名误导 | ✅ 已修复（help 修正 + 新增 `--stage-parallel`） | `39fc4bc` |
-| compose.py 假成功 stub | ⏳ 开放（`compose.py:37` 仍 `return True`，属死代码待清理） | — |
+| compose.py 假成功 stub | ✅ 已修复（`render()` 改为 raise NotImplementedError，选择面语义保留） | 本轮（未提交） |
 | 文档失真（architecture/design 与实现不符） | ✅ 已修复（各轮同步更新） | 多个 |
 | 令牌桶并发竞态（修复中发现的新问题） | ✅ 已修复 | `39fc4bc` |
-| 返工阶段链双份拷贝已漂移 | ⏳ 开放 | — |
+| 返工阶段链双份拷贝已漂移 | ✅ 已修复（catalog 单一事实源 REWORK_ACTION_CHAINS/REWORK_TAIL_STAGES，决策/执行两侧共同消费 + 防漂移测试） | 本轮（未提交） |
 | clean 三处重复维护 | ⏳ 开放 | — |
-| prompt_safety 静默重写无日志 | ⏳ 开放 | — |
-| film_timeline 欠声明 take_select 依赖 | ⏳ 开放 | — |
-| design_report 查找优先级不一致 | ⏳ 开放 | — |
-| build 退出码含中间返工轮失败 | ⏳ 开放 | — |
+| prompt_safety 静默重写无日志 | ✅ 已修复（命中即 logger.warning 类别+条数，进程级事件缓冲 + 三 stage 尾部落盘 pipeline/\<project\>/prompt_safety.yaml） | 本轮（未提交） |
+| film_timeline 欠声明 take_select 依赖 | ✅ 已修复（刻意不声明硬依赖——depends_on 会拉入付费生成；改为文档化 + 多 take 无选择结果时 advisory warning） | 本轮（未提交） |
+| design_report 查找优先级不一致 | ✅ 已修复（catalog.design_report_candidates 统一为 pipeline_dir 优先，10 处旧优先级站点 + reference_plate 全部改走单一 helper） | 本轮（未提交） |
+| build 退出码含中间返工轮失败 | ✅ 已修复（final_stage_results 折叠 cycle_N.* 键，末轮结果定退出码；展示层仍保留全历史） | 本轮（未提交） |
 | CLI 单阶段命令样板/不写 state | ⏳ 开放 | — |
 | _THREAD_LOCKS 永久增长 | ⏳ 开放 | — |
 | 依赖无上界/无 lock | ⏳ 开放 | — |
@@ -145,13 +147,13 @@ Narrascape 不是一个"一键文生视频"工具，而是一条 **以文件契�
 
 ### P2 — 改进项（节选，完整见各分项审计）
 
-- `film_supervisor.py:77-124` 与 `rework_execute.py:161-204` 的返工阶段链是两份拷贝，**已发生漂移**（前者含 `assistant_handoff`，后者不含）
+- `film_supervisor.py:77-124` 与 `rework_execute.py:161-204` 的返工阶段链是两份拷贝，**已发生漂移**（前者含 `assistant_handoff`，后者不含） —— **已修复**：两链迁入 `catalog.py` 的 `REWORK_ACTION_CHAINS` / `REWORK_TAIL_STAGES` 单一事实源（以 film_supervisor 决策侧为准，tail 含 `assistant_handoff`），两侧共同消费并有防漂移测试
 - `take_select.py:122-127` 确定性评分 = **文件字节数**，与画质无关 —— **已修复**：确定性评分升级为 ffmpeg 抽帧质量信号组合（sharpness/brightness/duration/stability，见 `utils/video_quality.py` 与 `docs/agent-stages/take_select.md`），失败时按段回退字节数并 warning
-- `compose.py:30-37` `FFmpegCompositionRuntime.render()` 直接 `return True` 假装成功
-- `prompt_safety.py:7-66` 静默重写 prompt（blood→dark mark 等），无日志不入产物，导演层无法感知
-- `film_timeline.py:42-44` 读 `take_selection.yaml` 但不声明 `take_select` 依赖，正确性依赖注册顺序的隐式约定
-- `design_report` 查找优先级在不同阶段不一致（reference_plate 先查 pipeline_dir，其余先查 project_dir）
-- build 退出码把所有返工 cycle 结果取 and：中间轮失败但后续修复成功，退出码仍为 1（CI 误报）
+- `compose.py:30-37` `FFmpegCompositionRuntime.render()` 直接 `return True` 假装成功 —— **已修复**：`render()` 改为 `raise NotImplementedError`（选择面未接执行路径，调用即显式失败），`available=True` 与 select 语义不变
+- `prompt_safety.py:7-66` 静默重写 prompt（blood→dark mark 等），无日志不入产物，导演层无法感知 —— **已修复**：sanitize 命中即 `logger.warning`（provider + 条数 + 类别，不含 prompt 本体）；新增线程安全的进程级事件缓冲 `drain_sanitize_events()` 与 `write_sanitize_audit()`，pre_production / generate_images / generate_video（含 pipelined 路径）的 `run()` 尾部把事件落盘到 `pipeline/<project>/prompt_safety.yaml`（`prompt_safety.v1`，按 stage 标注、追加写）
+- `film_timeline.py:42-44` 读 `take_selection.yaml` 但不声明 `take_select` 依赖，正确性依赖注册顺序的隐式约定 —— **已修复**：刻意不声明硬依赖（depends_on 会把 generate_video 付费生成拉进 `--stage film_timeline` 单跑），docs/architecture.md 依赖表下补充说明；stage 新增 advisory warning（存在 `vid_*_take_*.mp4` 但无 take_selection.yaml 时提示先跑 take_select）
+- `design_report` 查找优先级在不同阶段不一致（reference_plate 先查 pipeline_dir，其余先查 project_dir） —— **已修复**：design 阶段实际写到 `pipeline/<name>/design_report.yaml`，project_dir 根目录的是陈旧副本，故正确优先级为 **pipeline_dir 优先**；新增 `catalog.design_report_candidates()` 单一事实源，continuity_bible / director_contract / film_timeline / generate_video / screenplay_structure / visual_semantic_qa 的 10 处旧优先级站点与 reference_plate 的手写循环全部改走该 helper（storyboard_sheet 只读 pipeline_dir 无回退，语义本就正确，未动）
+- build 退出码把所有返工 cycle 结果取 and：中间轮失败但后续修复成功，退出码仍为 1（CI 误报） —— **已修复**：新增 `pipeline.final_stage_results()` 把 `cycle_N.<stage>` 键折叠为每逻辑阶段的最终结果（后写覆盖先写），CLI 退出码改用它判定；汇总表仍展示全部 cycle 历史
 - `cli.py:461-955` 五个单阶段命令重复 30 行样板且绕开 Pipeline 不写 state.json，`narrascape status` 看不到
 - `safe_io.py:22-33` `_THREAD_LOCKS` 字典永久增长；崩溃残留锁需等 600s
 - 依赖全部 `>=` 无上界、无 lock 文件，CI 可复现性弱

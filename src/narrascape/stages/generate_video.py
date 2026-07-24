@@ -33,8 +33,9 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
+from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract
-from narrascape.prompt_safety import sanitize_prompt_for_provider
+from narrascape.prompt_safety import sanitize_prompt_for_provider, write_sanitize_audit
 from narrascape.providers import (
     record_provider_failure,
     record_provider_success,
@@ -145,10 +146,7 @@ class GenerateVideoStage(Stage):
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
         selection = select_provider(config, "video_generation", intent="creative")
-        design_path = self._first_existing(
-            config.project_dir / "design_report.yaml",
-            config.pipeline_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(config))
         images_dir = config.images_dir
         if not design_path.exists():
             return False, f"design_report.yaml not found: {design_path}"
@@ -195,10 +193,7 @@ class GenerateVideoStage(Stage):
         )
 
         # Load design report
-        design_path = self._first_existing(
-            project_dir / "design_report.yaml",
-            pipe_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(config))
         design = self._load_design_report(design_path)
         segments = design.get("segments", [])
         if not segments:
@@ -423,6 +418,7 @@ class GenerateVideoStage(Stage):
                 selection.tool.name,
                 f"{fail_count}/{len(segments)} video generations failed",
             )
+        write_sanitize_audit(config.pipeline_dir, self.name)
         return StageResult(
             self.name,
             fail_count == 0,
@@ -2017,6 +2013,7 @@ class GenerateVideoStage(Stage):
                 selection.tool.name,
                 f"{fail_count}/{len(segments)} video generations failed",
             )
+        write_sanitize_audit(config.pipeline_dir, self.name)
         return StageResult(
             self.name,
             fail_count == 0,
