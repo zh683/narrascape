@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import write_artifact
+from narrascape.catalog import REWORK_ACTION_CHAINS, REWORK_TAIL_STAGES
+from narrascape.contracts import FilmSupervisorReport
 from narrascape.stages.base import Stage, StageContext, StageResult
 
 
@@ -61,6 +63,8 @@ class FilmSupervisorStage(Stage):
                 "render_report": (config.pipeline_dir / "render_report.yaml").as_posix(),
             },
         }
+        # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
+        FilmSupervisorReport.model_validate(report)
         write_artifact("film_supervisor", output, report)
         return StageResult(
             self.name,
@@ -81,42 +85,19 @@ class FilmSupervisorStage(Stage):
         if actions or creative_recommendations or visual_findings or blocking_errors:
             stages.append("rework_execute")
         all_actions = actions + creative_recommendations
-        if any(item.get("action") == "rewrite_director_contract" for item in all_actions):
-            stages.extend(
-                [
-                    "director_contract",
-                    "reference_plate",
-                    "generate_images",
-                    "animatic",
-                    "generate_video",
-                    "take_select",
-                    "film_timeline",
-                ]
-            )
-        if any(item.get("action") == "regenerate_video" for item in all_actions) or visual_findings:
-            stages.extend(["generate_video", "take_select", "film_timeline"])
-        if any(item.get("action") == "replace_source_media" for item in all_actions):
-            stages.extend(["source_media", "film_timeline"])
-        if any(item.get("action") == "recut" for item in all_actions):
-            stages.extend(["film_timeline", "remotion_preview", "film_assemble"])
+        for action_type in (
+            "rewrite_director_contract",
+            "regenerate_video",
+            "replace_source_media",
+            "recut",
+        ):
+            triggered = any(item.get("action") == action_type for item in all_actions)
+            if action_type == "regenerate_video":
+                triggered = triggered or bool(visual_findings)
+            if triggered:
+                stages.extend(REWORK_ACTION_CHAINS[action_type])
         if stages:
-            stages.extend(
-                [
-                    "remotion_preview",
-                    "film_assemble",
-                    "audio",
-                    "subtitles",
-                    "qa",
-                    "continuity_bible",
-                    "editing_review",
-                    "director_review",
-                    "rework_plan",
-                    "creative_review",
-                    "visual_semantic_qa",
-                    "film_supervisor",
-                    "assistant_handoff",
-                ]
-            )
+            stages.extend(REWORK_TAIL_STAGES)
         return self._dedupe(stages)
 
     def _dedupe(self, stages: list[str]) -> list[str]:

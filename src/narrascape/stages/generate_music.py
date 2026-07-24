@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +26,11 @@ from narrascape.providers import (
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.health import health_store_for_project
+from narrascape.providers.http_client import ProviderHttpClient
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
+from narrascape.utils.fingerprint import request_fingerprint
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_music")
@@ -53,6 +55,7 @@ class GenerateMusicStage(Stage):
     ):
         self.api_key = api_key or APIKeys.minimax()
         self.base_url = base_url
+        self._http = ProviderHttpClient("minimax_music")
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -80,6 +83,12 @@ class GenerateMusicStage(Stage):
         pipe_dir.mkdir(parents=True, exist_ok=True)
         selection = select_provider(config, "music", intent=self._intent_for_config(config))
         provider_meta = selection_metadata(selection)
+        rpm = config.audio.music.requests_per_minute
+        self._http.configure(
+            rate_per_second=rpm / 60.0 if rpm > 0 else 0.0,
+            health_store=health_store_for_project(config.project_dir),
+            health_key=selection.tool.name,
+        )
 
         music_cfg = config.audio.music
         zones = config.bgm_map.zones
@@ -183,8 +192,22 @@ class GenerateMusicStage(Stage):
             logger.info(
                 f"[{i + 1}/{len(zones)}] {zone.id} ({label}) · seg {start_id}-{end_id} · target {dur:.0f}s"
             )
+            # 请求级指纹：时长量化到整秒，避免浮点抖动导致缓存失效
+            fingerprint = request_fingerprint(
+                provider=selection.tool.provider,
+                model=music_cfg.model,
+                prompt=zone.prompt,
+                params={
+                    "duration": int(round(dur)),
+                    "sample_rate": music_cfg.sample_rate,
+                    "bitrate": music_cfg.bitrate,
+                    "format": "mp3",
+                    "is_instrumental": True,
+                },
+            )
             cached_output = music_dir / f"{zone.id}.mp3"
-            if zone.id in bgm_state.get("done", []) and cached_output.exists():
+            fingerprint_ok = bgm_state.get("fingerprints", {}).get(zone.id) == fingerprint
+            if zone.id in bgm_state.get("done", []) and cached_output.exists() and fingerprint_ok:
                 generated.append(cached_output)
                 continue
             per_zone = budget_tracker.get_cost_estimate("music", 1)
@@ -192,12 +215,15 @@ class GenerateMusicStage(Stage):
             reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_zone)
             if not reserved:
                 return StageResult(self.name, False, message=reserve_msg)
-            result = self._generate_one(zone, dur, music_cfg, bgm_state, music_dir)
+            result = self._generate_one(
+                zone, dur, music_cfg, bgm_state, music_dir, fingerprint=fingerprint
+            )
             if result:
                 generated.append(result)
+                bgm_state.setdefault("fingerprints", {})[zone.id] = fingerprint
                 if zone.id not in bgm_state.get("done", []):
                     bgm_state.setdefault("done", []).append(zone.id)
-                    atomic_write_json(bgm_state_path, bgm_state)
+                atomic_write_json(bgm_state_path, bgm_state)
                 committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
                 if not committed:
                     return StageResult(self.name, False, message=commit_msg)
@@ -295,11 +321,15 @@ class GenerateMusicStage(Stage):
         music_cfg: Any,
         state: dict[str, Any],
         music_dir: Path,
+        fingerprint: str | None = None,
     ) -> Path | None:
         zid = zone.id
         out = music_dir / f"{zid}.mp3"
-        if zid in state.get("done", []) and out.exists():
-            logger.info("    skip (cached in state)")
+        fingerprint_ok = (
+            fingerprint is None or state.get("fingerprints", {}).get(zid) == fingerprint
+        )
+        if zid in state.get("done", []) and out.exists() and fingerprint_ok:
+            logger.info("    skip (cached, fingerprint match)")
             return out
 
         prompt = zone.prompt
@@ -319,15 +349,15 @@ class GenerateMusicStage(Stage):
             },
         }
 
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.base_url}/v1/music_generation", data=data, method="POST"
-        )
-        req.add_header("Authorization", f"Bearer {self.api_key}")
-        req.add_header("Content-Type", "application/json")
-
         try:
-            r = json.loads(urllib.request.urlopen(req, timeout=360).read().decode())
+            r = self._http.post_json(
+                f"{self.base_url}/v1/music_generation",
+                payload,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=360,
+                max_retries=3,
+                base_delay=2.0,
+            )
         except Exception as e:
             logger.error(f"    HTTP/API error: {e}")
             return None

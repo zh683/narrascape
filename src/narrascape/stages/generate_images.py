@@ -21,16 +21,19 @@ from pydantic import ValidationError
 
 from narrascape.api_keys import APIKeys
 from narrascape.config import NarrascapeConfig, load_image_prompts
-from narrascape.prompt_safety import sanitize_prompt_for_provider
+from narrascape.prompt_safety import sanitize_prompt_for_provider, write_sanitize_audit
 from narrascape.providers import (
     record_provider_failure,
     record_provider_success,
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.health import health_store_for_project
+from narrascape.providers.http_client import ProviderHttpClient, retry_after_hint
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.ffmpeg import run_ffmpeg_raw
+from narrascape.utils.fingerprint import hash_reference, request_fingerprint
 from narrascape.utils.safe_io import (
     atomic_write_bytes,
     atomic_write_json,
@@ -77,6 +80,7 @@ class GenerateImagesStage(Stage):
         self.sleep_between = sleep_between
         self.default_sample_strength = default_sample_strength
         self.uploader = ImageUploader(backend=uploader_backend)
+        self._http = ProviderHttpClient("image_generation")
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -109,6 +113,12 @@ class GenerateImagesStage(Stage):
         )
         provider_meta = selection_metadata(selection)
         provider_name = selection.tool.provider
+        rpm = config.images.requests_per_minute
+        self._http.configure(
+            rate_per_second=rpm / 60.0 if rpm > 0 else 0.0,
+            health_store=health_store_for_project(config.project_dir),
+            health_key=selection.tool.name,
+        )
 
         # Load prompts
         try:
@@ -178,6 +188,7 @@ class GenerateImagesStage(Stage):
 
         if self.sequential_batch > 0 and provider_name != "agnes":
             # Batch mode
+            fingerprints = state.setdefault("fingerprints", {})
             for batch_start in range(0, len(targets), self.sequential_batch):
                 batch = targets[batch_start : batch_start + self.sequential_batch]
                 prompts_text = [p.description.replace("\n", " ").strip() for p in batch]
@@ -185,6 +196,25 @@ class GenerateImagesStage(Stage):
                 shot_type = batch[0].shot_type.value
                 manual_size = batch[0].size
                 size = self._derive_size(shot_type, manual_size)
+                # 请求级指纹（批模式粒度=单张）：文件存在 + state 指纹匹配才跳过
+                expected_fingerprints = {
+                    name: request_fingerprint(
+                        provider=provider_name,
+                        model=self.model,
+                        prompt=text,
+                        params={"size": size, "mode": "sequential"},
+                        reference_hashes=(
+                            [hash_reference(self.ref_image)] if self.ref_image else []
+                        ),
+                    )
+                    for name, text in zip(names, prompts_text, strict=True)
+                }
+                pre_cached = {
+                    name
+                    for name in names
+                    if (images_dir / f"{name}.png").exists()
+                    and fingerprints.get(name) == expected_fingerprints[name]
+                }
                 logger.info(
                     f"[Batch {batch_start // self.sequential_batch + 1}] {', '.join(names)} (size={size})"
                 )
@@ -197,12 +227,23 @@ class GenerateImagesStage(Stage):
                         return StageResult(self.name, False, message=reserve_msg)
                     reservations.append(reservation_id)
                 results = self._generate_sequential(
-                    prompts_text, names, size, ref_image_b64, images_dir
+                    prompts_text,
+                    names,
+                    size,
+                    ref_image_b64,
+                    images_dir,
+                    expected_fingerprints=expected_fingerprints,
+                    stored_fingerprints=fingerprints,
                 )
-                for name, reservation_id, r in zip(names, reservations, results, strict=False):
+                for name, reservation_id, r in zip(names, reservations, results, strict=True):
                     if r:
                         ok_count += 1
                         done.add(name)
+                        fingerprints[name] = expected_fingerprints[name]
+                        if name in pre_cached:
+                            # 缓存命中：未发起付费请求，释放预留，不计成本
+                            budget_tracker.release_reservation(reservation_id)
+                            continue
                         committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
                         if not committed:
                             return StageResult(self.name, False, message=commit_msg)
@@ -214,12 +255,9 @@ class GenerateImagesStage(Stage):
                     time.sleep(2)
         else:
             # Single mode - with per-prompt model and reference support
+            fingerprints = state.setdefault("fingerprints", {})
             for i, p in enumerate(targets):
                 pid = p.id
-                if pid in done and (images_dir / f"{pid}.png").exists():
-                    logger.info(f"[{i + 1}/{len(targets)}] {pid} skip (cached)")
-                    ok_count += 1
-                    continue
                 prompt_text = p.description.replace("\n", " ").strip()
                 shot_type = p.shot_type.value
                 size = self._derive_size(shot_type, p.size)
@@ -231,11 +269,38 @@ class GenerateImagesStage(Stage):
                     getattr(p, "seedream_sample_strength", None) or self.default_sample_strength
                 )
 
-                # Check for per-prompt reference images (multi-reference support)
-                prompt_ref_image = ref_image_b64
+                # Raw reference inputs (pre-upload) for fingerprinting
                 per_prompt_ref = getattr(p, "reference_image_url", None)
                 per_prompt_refs = getattr(p, "reference_images", [])
+                if per_prompt_refs:
+                    raw_refs = [str(ref) for ref in per_prompt_refs]
+                elif per_prompt_ref:
+                    raw_refs = [str(per_prompt_ref)]
+                elif self.ref_image:
+                    raw_refs = [self.ref_image]
+                else:
+                    raw_refs = []
 
+                # 请求级指纹：文件存在 + state 指纹匹配才允许跳过付费生成
+                fingerprint = request_fingerprint(
+                    provider=provider_name,
+                    model=seedream_model,
+                    prompt=prompt_text,
+                    negative_prompt=negative_prompt,
+                    params={"size": size, "sample_strength": sample_strength, "seed": None},
+                    reference_hashes=[hash_reference(ref) for ref in raw_refs],
+                )
+                if (
+                    pid in done
+                    and (images_dir / f"{pid}.png").exists()
+                    and fingerprints.get(pid) == fingerprint
+                ):
+                    logger.info(f"[{i + 1}/{len(targets)}] {pid} skip (cached, fingerprint match)")
+                    ok_count += 1
+                    continue
+
+                # Resolve per-prompt reference images (multi-reference support)
+                prompt_ref_image = ref_image_b64
                 if per_prompt_refs:
                     # Multi-reference: upload all and pass as array
                     uploaded_refs = []
@@ -266,10 +331,12 @@ class GenerateImagesStage(Stage):
                     model=seedream_model,
                     sample_strength=sample_strength,
                     provider=provider_name,
+                    allow_existing=False,
                 ):
                     ok_count += 1
                     done.add(pid)
                     state["done"] = list(done)
+                    fingerprints[pid] = fingerprint
                     atomic_write_json(state_path, state)
                     committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
                     if not committed:
@@ -288,6 +355,7 @@ class GenerateImagesStage(Stage):
                 selection.tool.name,
                 f"{fail_count}/{len(targets)} image generations failed",
             )
+        write_sanitize_audit(config.pipeline_dir, self.name)
         return StageResult(
             self.name,
             fail_count == 0,
@@ -327,9 +395,6 @@ class GenerateImagesStage(Stage):
         if provider == "agnes":
             return max(self.sleep_between, 65.0)
         return self.sleep_between
-
-    def _json_object(self, value: Any) -> dict[str, Any]:
-        return value if isinstance(value, dict) else {}
 
     def _generate_local_placeholder(
         self, prompt: Any, out: Path, index: int, config: NarrascapeConfig
@@ -407,9 +472,10 @@ class GenerateImagesStage(Stage):
         sample_strength: float | None = None,
         seed: int | None = None,
         provider: str = "seedream",
+        allow_existing: bool = True,
     ) -> bool:
         out_png = images_dir / f"{out_name}.png"
-        if out_png.exists():
+        if allow_existing and out_png.exists():
             return True
 
         # Use per-prompt model or default
@@ -488,14 +554,32 @@ class GenerateImagesStage(Stage):
         finally:
             tmp.unlink(missing_ok=True)
 
-            logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
+            if out_png.exists():
+                logger.info(f"OK {out_png.stat().st_size / 1024:.0f}KB")
         return True
 
     def _post_image_request(self, req: urllib.request.Request, *, provider: str) -> dict[str, Any]:
-        _ = provider
-        return self._json_object(
-            json.loads(urllib.request.urlopen(req, timeout=180).read().decode())
-        )
+        """Compatibility shell: provider-specific retry policy, HTTP via middleware."""
+        if provider == "agnes":
+            return self._http.execute_request(
+                req,
+                timeout=180,
+                max_retries=4,
+                base_delay=65.0,
+                max_delay=75.0,
+                on_retry=self._log_agnes_retry,
+            )
+        return self._http.execute_request(req, timeout=180, max_retries=3, base_delay=2.0)
+
+    def _log_agnes_retry(self, exc: Exception, attempt: int, delay: float) -> None:
+        retry_delay = delay
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+            retry_delay = max(delay, self._retry_after_from_http_error(exc))
+        logger.warning(f"Agnes retry {attempt} after {retry_delay:.1f}s: {exc}")
+
+    def _retry_after_from_http_error(self, exc: urllib.error.HTTPError) -> float:
+        hint = retry_after_hint(exc, default_for_429=65.0)
+        return hint if hint is not None else 65.0
 
     def _build_image_payload(
         self,
@@ -592,11 +676,20 @@ class GenerateImagesStage(Stage):
         size: str,
         ref_image: str | list[str] | None,
         images_dir: Path,
+        expected_fingerprints: dict[str, str] | None = None,
+        stored_fingerprints: dict[str, Any] | None = None,
     ) -> list[bool]:
-        results = [False] * len(names)
-        to_gen_idx = [i for i, n in enumerate(names) if not (images_dir / f"{n}.png").exists()]
+        def _is_cached(name: str) -> bool:
+            if not (images_dir / f"{name}.png").exists():
+                return False
+            if expected_fingerprints is None or stored_fingerprints is None:
+                return True  # 直接调用（无指纹上下文）：保持旧的"文件存在即跳过"
+            return stored_fingerprints.get(name) == expected_fingerprints.get(name)
+
+        results = [_is_cached(n) for n in names]
+        to_gen_idx = [i for i, n in enumerate(names) if not results[i]]
         if not to_gen_idx:
-            return [True] * len(names)
+            return results
 
         combined_parts = [f"Image {i + 1}: {prompts[i]}" for i in to_gen_idx]
         combined_prompt = ". ".join(combined_parts)
@@ -623,9 +716,7 @@ class GenerateImagesStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = self._json_object(
-                json.loads(urllib.request.urlopen(req, timeout=300).read().decode())
-            )
+            r = self._http.execute_request(req, timeout=300, max_retries=3, base_delay=2.0)
         except Exception as e:
             logger.error(f"HTTP/API error: {e}")
             return results

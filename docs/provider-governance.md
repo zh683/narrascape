@@ -61,6 +61,26 @@ projects. The registry still contains Agnes compatibility entries for older
 configs, but the supported production route is `seedream -> seedance` with
 `ARK_API_KEY`.
 
+## HTTP Middleware
+
+All paid provider HTTP traffic goes through
+`narrascape.providers.http_client.ProviderHttpClient`. The middleware provides:
+
+- JSON GET/POST with mandatory timeouts and dict-shaped responses.
+- Retry via `utils.retry.retry_with_backoff`; a 429 response's `Retry-After`
+  (header, or an Agnes-style "N minute" body) overrides the computed backoff
+  for the *actual* sleep — server backpressure is honored, not just logged.
+- Per-provider token-bucket rate limiting, process-local, configured per
+  stage via `requests_per_minute` (default `0` = unlimited; see
+  docs/config-reference.md).
+- Circuit-breaker classification: only transport errors, 5xx, and persistent
+  429 are recorded into `ProviderHealthStore`. Client 4xx (auth/params) and
+  business failures (HTTP 200 with a provider error body, judged by the
+  calling stage) never count against provider health.
+- Video polling treats 429 as backpressure rather than failure: it waits per
+  `Retry-After` and does not consume the consecutive-error budget that would
+  otherwise abandon an already-paid task.
+
 ## Canonical Artifacts
 
 `narrascape.artifacts` validates lightweight canonical artifacts. The current

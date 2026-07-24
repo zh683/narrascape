@@ -11,6 +11,16 @@ Usage:
     # AI assistant reads task file, writes response file
     # System reads response and continues
 
+Protocol conventions:
+    - Response writers MUST write response files atomically (write a tmp
+      file, then rename over ``completed/response_<id>.json``). A response
+      file that does not parse is treated as still-being-written: the client
+      keeps waiting until timeout instead of failing on a partial read.
+    - The bridge lock (``.bridge.lock``) is backed by
+      ``safe_io.file_lock`` with mtime-age stale recovery: locks abandoned
+      by a crashed process self-recover after ``_BRIDGE_LOCK_STALE_AFTER``
+      seconds instead of deadlocking every subsequent run.
+
 Environment:
     NARRASCAPE_BRIDGE_DIR - Directory for task/response files
     NARRASCAPE_BRIDGE_TIMEOUT - Max seconds to wait for response (default: 300)
@@ -29,33 +39,39 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.llm.models import LLMResponse, Message, PromptTemplate
-from narrascape.utils.safe_io import atomic_promote_file, atomic_write_text
+from narrascape.utils.safe_io import atomic_promote_file, atomic_write_text, file_lock
 
 logger = logging.getLogger("narrascape.llm.bridge")
+
+# Bridge critical sections are sub-second (an atomic write or two renames),
+# so a lock older than this almost certainly belongs to a crashed process.
+# safe_io's global default is 600s; the bridge uses a tighter bound so a
+# crashed run self-heals within a minute instead of ten.
+_BRIDGE_LOCK_STALE_AFTER = 60.0
 
 
 @contextmanager
 def _bridge_lock(lock_path: Path, timeout: float) -> Iterator[None]:
-    """Acquire a simple cross-process lock using atomic file creation."""
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    start = time.monotonic()
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(f"pid={os.getpid()}\ncreated={time.time()}\n")
-            break
-        except FileExistsError:
-            if time.monotonic() - start >= timeout:
-                raise RuntimeError(f"Bridge lock timeout: {lock_path}")
-            time.sleep(0.05)
+    """Cross-process bridge lock backed by ``safe_io.file_lock``.
+
+    Staleness is mtime-age based, aligned with safe_io: locks older than
+    ``_BRIDGE_LOCK_STALE_AFTER`` are reclaimed. No pid-liveness probe is used
+    — on Windows ``os.kill(pid, 0)`` terminates the target process, so the
+    safe_io pattern deliberately avoids it. Lock-file *content* is never
+    parsed, which keeps legacy lock files (any format) compatible: they are
+    simply subject to the same age rule.
+    """
+    target = lock_path.with_name(lock_path.stem)  # .bridge.lock -> .bridge
     try:
-        yield
-    finally:
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
+        with file_lock(target, timeout=timeout, stale_after=_BRIDGE_LOCK_STALE_AFTER):
+            yield
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Bridge lock timeout: {lock_path}. Another narrascape process may be "
+            f"holding the lock, or a previous run crashed; abandoned locks "
+            f"self-recover after {_BRIDGE_LOCK_STALE_AFTER:.0f}s, or delete the "
+            "lock file manually."
+        ) from exc
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -136,21 +152,34 @@ class BridgeLLMClient:
         # Wait for response
         response_file = self.completed_dir / f"response_{task_id}.json"
         start = time.monotonic()
+        wait_state = {"incomplete_seen": False, "incomplete_logged": False}
 
-        existing_response = self._read_response(task_id, task_file, response_file)
+        existing_response = self._read_response(task_id, task_file, response_file, wait_state)
         if existing_response:
             return existing_response
 
         while time.monotonic() - start < self.timeout:
-            response = self._read_response(task_id, task_file, response_file)
+            response = self._read_response(task_id, task_file, response_file, wait_state)
             if response:
                 return response
             time.sleep(1)
 
         # Timeout
+        incomplete_note = (
+            "\nAn incomplete/unparseable response file was observed during the wait: "
+            "the assistant may still be writing it. Response files must be written "
+            "atomically (tmp file + rename) — see docs/BRIDGE_MODE.md."
+            if wait_state["incomplete_seen"]
+            else ""
+        )
         raise RuntimeError(
             f"Bridge timeout: AI assistant did not respond within {self.timeout}s.\n"
+            f"Task id: {task_id}\n"
+            f"Waited: {self.timeout}s\n"
             f"Task file: {task_file}\n"
+            f"Response file: {response_file}\n"
+            f"Incomplete response observed: {wait_state['incomplete_seen']}"
+            f"{incomplete_note}\n"
             f"Please ask your AI assistant to process this task and write the response "
             f"to {self.completed_dir}/response_{task_id}.json"
         )
@@ -176,8 +205,16 @@ class BridgeLLMClient:
         task_id: str,
         task_file: Path,
         response_file: Path,
+        wait_state: dict[str, bool] | None = None,
     ) -> LLMResponse | None:
-        """Read and archive a completed response if it exists."""
+        """Read and archive a completed response if it exists.
+
+        A response file that does not parse is treated as still-being-written
+        (returns None so the caller keeps waiting until timeout; logged once
+        per task at debug level). A parseable response whose ``content`` is
+        missing or not a string is a semantic error and keeps the historical
+        fail-fast behavior.
+        """
         if not response_file.exists():
             return None
         if response_file.name.startswith(".") or response_file.suffix != ".json":
@@ -186,8 +223,20 @@ class BridgeLLMClient:
             with _bridge_lock(self.lock_path, min(float(self.timeout), 5.0)):
                 if not response_file.exists():
                     return None
-                data = json.loads(response_file.read_text(encoding="utf-8"))
-                if not isinstance(data.get("content"), str):
+                try:
+                    data = json.loads(response_file.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+                    if wait_state is not None:
+                        wait_state["incomplete_seen"] = True
+                        if not wait_state.get("incomplete_logged"):
+                            wait_state["incomplete_logged"] = True
+                            logger.debug(
+                                "[bridge] Response file not fully written yet (%s); waiting: %s",
+                                exc,
+                                response_file,
+                            )
+                    return None
+                if not isinstance(data, dict) or not isinstance(data.get("content"), str):
                     raise KeyError("content must be a string")
                 if task_file.exists():
                     atomic_promote_file(task_file, self.archive_dir / task_file.name, lock=False)
@@ -202,7 +251,7 @@ class BridgeLLMClient:
                 usage=data.get("usage", {}),
                 raw=data,
             )
-        except (json.JSONDecodeError, KeyError) as e:
+        except KeyError as e:
             logger.error(f"[bridge] Invalid response file: {e}")
             raise RuntimeError(
                 f"AI assistant response file is invalid. Please ensure the response "
@@ -246,6 +295,9 @@ Please respond in the following format:
 2. Generate the best possible creative response
 3. Write your response to:
    `{self.completed_dir}/response_{task_id}.json`
+4. Write the response file ATOMICALLY: write a temporary file first, then
+   rename it over the response path. A partially written (unparseable)
+   response is ignored until it parses or the task times out.
 
 The JSON file must have this structure:
 ```json

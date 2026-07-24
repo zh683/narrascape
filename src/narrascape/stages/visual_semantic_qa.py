@@ -5,6 +5,15 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import write_artifact
+from narrascape.catalog import design_report_candidates
+from narrascape.contracts.qa_taxonomy import (
+    QA_DIMENSIONS,
+    assertion_dimension_for_value,
+    dimension_for_risk_type,
+    dimension_summary,
+    is_known_dimension,
+    normalize_assertions,
+)
 from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -31,12 +40,7 @@ class VisualSemanticQAStage(Stage):
         output = config.pipeline_dir / "visual_semantic_report.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
         render_report = self._load_yaml(config.pipeline_dir / "render_report.yaml")
         director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
@@ -81,6 +85,9 @@ class VisualSemanticQAStage(Stage):
             )
             status = "needs_rework" if findings else "approved"
 
+        findings = [
+            self._with_dimension(finding) for finding in findings if isinstance(finding, dict)
+        ]
         report = {
             "schema_version": "visual_semantic_report.v1",
             "project": {"name": config.project.name, "title": config.project.title},
@@ -94,6 +101,9 @@ class VisualSemanticQAStage(Stage):
             },
             "reference_checks": visual_evidence,
             "findings": findings,
+            "dimension_summary": dimension_summary(
+                director_contract.get("shots", []) or [], findings
+            ),
         }
         write_artifact("visual_semantic_report", output, report)
         return StageResult(
@@ -121,6 +131,7 @@ class VisualSemanticQAStage(Stage):
             "director_contract": director_contract,
             "continuity_risks": continuity.get("continuity_risks", []),
             "qa_checks": render_report.get("checks", {}),
+            "assertion_checklist": self._assertion_checklist(director_contract),
         }
         prompt = (
             "You are a visual semantic QA director. "
@@ -129,9 +140,13 @@ class VisualSemanticQAStage(Stage):
             "For each generated video or source footage clip, compare extracted frame paths against the "
             "style, character, and scene reference image paths. Flag identity drift, wardrobe drift, "
             "scene mismatch, style mismatch, and composition mismatch. Use provided file paths as evidence handles. "
+            "Review per QA dimension using the assertion_checklist (dimension-tagged acceptance "
+            f"checks per shot). Dimension definitions: {json.dumps(QA_DIMENSIONS, ensure_ascii=False)}. "
+            "Attribute every finding to exactly one of those dimension ids via a "
+            '"dimension" field (use the dimension whose assertion was violated). '
             "Return only JSON.\n\n"
             f"{json.dumps(payload, ensure_ascii=False)}\n\n"
-            'Return JSON only: {"status":"approved|needs_rework","findings":[{"segment_id":1,"risk_type":"...","severity":"low|medium|high","evidence":"..."}]}.'
+            'Return JSON only: {"status":"approved|needs_rework","findings":[{"segment_id":1,"risk_type":"...","dimension":"...","severity":"low|medium|high","evidence":"..."}]}.'
         )
         response = self.llm_client.complete(prompt, json_mode=True)
         if hasattr(response, "extract_json_safe"):
@@ -141,6 +156,33 @@ class VisualSemanticQAStage(Stage):
         if not isinstance(data, dict):
             raise ValueError("LLM returned non-object JSON")
         return data
+
+    def _assertion_checklist(self, director_contract: dict[str, Any]) -> list[dict[str, Any]]:
+        """Per-shot dimension-tagged acceptance checks for the LLM reviewer."""
+        checklist: list[dict[str, Any]] = []
+        for shot in director_contract.get("shots", []) or []:
+            if not isinstance(shot, dict):
+                continue
+            qa = shot.get("qa", {}) if isinstance(shot.get("qa"), dict) else {}
+            checklist.append(
+                {
+                    "segment_id": shot.get("segment_id"),
+                    "assertions": normalize_assertions(qa.get("assertions")),
+                }
+            )
+        return checklist
+
+    def _with_dimension(self, finding: dict[str, Any]) -> dict[str, Any]:
+        """Attach a stable QA dimension to a finding (additive key).
+
+        Precedence: a valid dimension label already on the finding (from the
+        LLM) > risk_type mapping > uncategorized. No existing keys are removed,
+        so legacy consumers of findings keep working unchanged.
+        """
+        dimension = finding.get("dimension")
+        if not is_known_dimension(dimension):
+            dimension = dimension_for_risk_type(finding.get("risk_type"))
+        return {**finding, "dimension": dimension}
 
     def _fallback_findings(
         self,
@@ -351,6 +393,7 @@ class VisualSemanticQAStage(Stage):
                         "risk_type": "contract_must_show_missing",
                         "severity": "high",
                         "evidence": f"contract requires {value!r}, but timeline metadata does not contain it",
+                        "dimension": assertion_dimension_for_value(str(value), contract),
                     }
                 )
         for value in contract.get("qa", {}).get("must_not_show", []) or []:
@@ -363,6 +406,7 @@ class VisualSemanticQAStage(Stage):
                         "risk_type": "contract_must_not_show_present",
                         "severity": "high",
                         "evidence": f"contract forbids {value!r}, but timeline metadata contains it",
+                        "dimension": assertion_dimension_for_value(str(value), contract),
                     }
                 )
         return findings

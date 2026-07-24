@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-from narrascape.cache import BuildCache
 from narrascape.config import NarrascapeConfig, ProjectConfig, Script
 from narrascape.pipeline import _resolve_dependencies, get_stage_map
 from narrascape.stages.base import StageContext
@@ -96,7 +95,6 @@ def test_source_media_stage_builds_asset_manifest_from_local_library(tmp_path):
     context = StageContext(
         config=config,
         script=Script.model_construct(segments=[]),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
     )
 
     result = SourceMediaStage().run(context)
@@ -178,3 +176,20 @@ def test_composition_runtime_selects_ffmpeg_by_default(tmp_path):
 
     assert runtime.name == "ffmpeg"
     assert "ffmpeg" in registry.support_envelope()
+
+
+def test_ffmpeg_composition_runtime_render_is_not_implemented(tmp_path):
+    """The selection surface must not fake a successful render: calling
+    render() before an execution path is wired in fails loudly."""
+    import pytest
+
+    from narrascape.compose import CompositionPlan, CompositionRuntimeRegistry
+
+    registry = CompositionRuntimeRegistry.default()
+    plan = CompositionPlan(
+        project="project", runtime="auto", inputs=[], output=tmp_path / "out.mp4"
+    )
+    runtime = registry.select(plan)
+
+    with pytest.raises(NotImplementedError, match="selection surface only"):
+        runtime.render(plan)

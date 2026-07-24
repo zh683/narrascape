@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from narrascape.artifacts import write_artifact
+from narrascape.catalog import design_report_candidates
+from narrascape.contracts import DirectorContract, DirectorShot, FilmTimeline
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import load_json_mapping
+
+logger = logging.getLogger("narrascape.stages.film_timeline")
 
 
 class FilmTimelineStage(Stage):
@@ -18,10 +25,7 @@ class FilmTimelineStage(Stage):
         config = context.config
         if not config.script_path.exists():
             return False, f"Script not found: {config.script_path}"
-        design_path = self._first_existing(
-            config.project_dir / "design_report.yaml",
-            config.pipeline_dir / "design_report.yaml",
-        )
+        design_path = self._first_existing(*design_report_candidates(config))
         if not design_path.exists():
             return False, "design_report.yaml not found"
         return True, ""
@@ -30,23 +34,22 @@ class FilmTimelineStage(Stage):
         config = context.config
         output_path = config.project_dir / "film_timeline.yaml"
         timing = self._load_json(config.pipeline_dir / "timing.json")
-        design = self._load_yaml(
-            self._first_existing(
-                config.project_dir / "design_report.yaml",
-                config.pipeline_dir / "design_report.yaml",
-            )
-        )
+        design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         image_map = self._load_yaml(config.project_dir / "image_map.yaml")
         footage_timeline = self._load_yaml(config.project_dir / "footage_timeline.yaml")
         asset_manifest = self._load_yaml(config.project_dir / "asset_manifest.yaml")
         director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
         video_state = self._load_json(config.pipeline_dir / "video_gen_state.json")
         take_selection = self._load_yaml(config.pipeline_dir / "take_selection.yaml")
+        self._warn_if_multi_take_without_selection(config)
 
         script_segments = list(context.script.segments)
         design_by_segment = self._items_by_int_key(design.get("segments", []), "segment_id")
-        contract_by_segment = self._items_by_int_key(
-            director_contract.get("shots", []), "segment_id"
+        contract_model = self._parse_contract(director_contract)
+        contract_by_segment = (
+            {shot.segment_id: shot for shot in contract_model.shots}
+            if contract_model is not None
+            else self._items_by_int_key(director_contract.get("shots", []), "segment_id")
         )
         image_map_by_segment = self._items_by_int_key(image_map.get("segments", []), "id")
         footage_by_segment = self._items_by_int_key(
@@ -212,6 +215,8 @@ class FilmTimelineStage(Stage):
                 "subtitles": self._subtitle_track(config),
             },
         }
+        # 字段级 schema 门：漂移在写点即 fail-fast（pydantic ValidationError）
+        FilmTimeline.model_validate(timeline)
         write_artifact("film_timeline", output_path, timeline)
 
         return StageResult(
@@ -279,6 +284,49 @@ class FilmTimelineStage(Stage):
             videos[segment_id] = path
         return videos
 
+    def _warn_if_multi_take_without_selection(self, config: Any) -> None:
+        """Advisory warning: multi-take videos exist but take_select never ran.
+
+        film_timeline deliberately does NOT declare a dependency on
+        take_select / generate_video: ``depends_on`` would pull those stages
+        into execution (including paid video generation) when someone runs
+        ``--stage film_timeline`` alone. Reads tolerate the missing artifact,
+        but silently ignoring take files can pick the wrong clip, so we
+        surface the situation instead of failing.
+        """
+        if (config.pipeline_dir / "take_selection.yaml").exists():
+            return
+        videos_dir = config.project_dir / "assets" / "videos"
+        if not videos_dir.exists():
+            return
+        takes = sorted(videos_dir.glob("vid_*_take_*.mp4"))
+        if not takes:
+            return
+        logger.warning(
+            f"found {len(takes)} multi-take video(s) in {videos_dir} but "
+            f"take_selection.yaml is missing; take files (e.g. {takes[0].name}) "
+            f"are ignored by the fallback glob, which only uses base vid_NN.mp4 "
+            f"files — run the take_select stage first to choose takes explicitly"
+        )
+
+    def _parse_contract(self, director_contract: dict[str, Any]) -> DirectorContract | None:
+        """Typed parse of director_contract.yaml; None means "fall back to raw dicts".
+
+        Legacy artifacts that predate the typed schema (or drifted from it)
+        keep working through the legacy `.get()` path — reads are advisory,
+        only writes are fail-fast.
+        """
+        if not director_contract:
+            return None
+        try:
+            return DirectorContract.model_validate(director_contract)
+        except ValidationError as exc:
+            logger.warning(
+                f"director_contract.yaml failed typed validation; "
+                f"falling back to legacy raw access: {exc}"
+            )
+            return None
+
     def _continuity_fields(self, design_item: dict[str, Any]) -> dict[str, Any]:
         metadata = (
             design_item.get("metadata", {}) if isinstance(design_item.get("metadata"), dict) else {}
@@ -292,50 +340,82 @@ class FilmTimelineStage(Stage):
     def _semantic_fields(
         self,
         design_item: dict[str, Any],
-        contract_item: dict[str, Any],
+        contract_item: Any,
     ) -> dict[str, Any]:
-        continuity = (
-            contract_item.get("continuity_constraints", {})
-            if isinstance(contract_item.get("continuity_constraints"), dict)
-            else {}
-        )
-        binding = (
-            contract_item.get("storyboard_binding", {})
-            if isinstance(contract_item.get("storyboard_binding"), dict)
-            else {}
-        )
-        film_language = (
-            contract_item.get("film_language", {})
-            if isinstance(contract_item.get("film_language"), dict)
-            else {}
-        )
+        """Merge design + director-contract semantics for one timeline clip.
+
+        ``contract_item`` is a typed ``DirectorShot`` when the contract
+        validated; otherwise the legacy raw-dict path applies (byte-identical
+        to the pre-schema behavior).
+        """
+        if isinstance(contract_item, DirectorShot):
+            continuity = contract_item.continuity_constraints
+            binding = contract_item.storyboard_binding
+            film_language = contract_item.film_language
+            c_characters: Any = continuity.characters
+            c_location: Any = continuity.location
+            c_wardrobe: Any = continuity.wardrobe
+            c_lighting: Any = continuity.lighting
+            b_scene_ref: Any = binding.scene_ref
+            b_wardrobe_lock: Any = binding.wardrobe_lock
+            b_comp_reqs: list[Any] = list(binding.composition_requirements)
+            b_frame_ids: list[Any] = list(binding.storyboard_frame_ids)
+            b_positions: list[Any] = list(binding.character_positions)
+            fl_lighting: Any = film_language.lighting
+            fl_composition: Any = film_language.composition
+        else:
+            raw = contract_item if isinstance(contract_item, dict) else {}
+            continuity_raw = (
+                raw.get("continuity_constraints", {})
+                if isinstance(raw.get("continuity_constraints"), dict)
+                else {}
+            )
+            binding_raw = (
+                raw.get("storyboard_binding", {})
+                if isinstance(raw.get("storyboard_binding"), dict)
+                else {}
+            )
+            film_language_raw = (
+                raw.get("film_language", {}) if isinstance(raw.get("film_language"), dict) else {}
+            )
+            c_characters = continuity_raw.get("characters")
+            c_location = continuity_raw.get("location")
+            c_wardrobe = continuity_raw.get("wardrobe")
+            c_lighting = continuity_raw.get("lighting")
+            b_scene_ref = binding_raw.get("scene_ref")
+            b_wardrobe_lock = binding_raw.get("wardrobe_lock")
+            b_comp_reqs = list(binding_raw.get("composition_requirements") or [])
+            b_frame_ids = list(binding_raw.get("storyboard_frame_ids") or [])
+            b_positions = list(binding_raw.get("character_positions") or [])
+            fl_lighting = film_language_raw.get("lighting")
+            fl_composition = film_language_raw.get("composition")
+
         fields = self._continuity_fields(design_item)
-        character_ids = design_item.get("character_ids") or continuity.get("characters") or []
-        composition_requirements = list(binding.get("composition_requirements") or [])
+        character_ids = design_item.get("character_ids") or c_characters or []
         return {
             "character_ids": character_ids,
             "location_id": self._first_value(
                 design_item.get("location_id"),
-                continuity.get("location"),
-                binding.get("scene_ref"),
+                c_location,
+                b_scene_ref,
             ),
             "wardrobe": self._first_value(
                 fields.get("wardrobe"),
-                continuity.get("wardrobe"),
-                binding.get("wardrobe_lock"),
+                c_wardrobe,
+                b_wardrobe_lock,
             ),
             "lighting_scheme": self._first_value(
                 fields.get("lighting_scheme"),
-                continuity.get("lighting"),
-                film_language.get("lighting"),
+                c_lighting,
+                fl_lighting,
             ),
             "screen_axis": fields.get("screen_axis"),
-            "storyboard_frame_ids": list(binding.get("storyboard_frame_ids") or []),
-            "character_positions": list(binding.get("character_positions") or []),
+            "storyboard_frame_ids": b_frame_ids,
+            "character_positions": b_positions,
             "composition": self._first_value(
                 design_item.get("composition"),
-                film_language.get("composition"),
-                composition_requirements[0] if composition_requirements else None,
+                fl_composition,
+                b_comp_reqs[0] if b_comp_reqs else None,
             ),
         }
 

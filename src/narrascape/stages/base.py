@@ -18,7 +18,10 @@ class StageContext:
 
     config: NarrascapeConfig
     script: Script
-    cache: BuildCache
+    # Optional: remote workbench/jobs code paths construct contexts with a
+    # BuildCache; local stages and tests omit it (fingerprint caching replaced
+    # the legacy cache for paid generation stages).
+    cache: BuildCache | None = None
     state: dict[str, Any] = field(default_factory=dict)
     dry_run: bool = False
 

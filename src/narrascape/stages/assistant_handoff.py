@@ -41,6 +41,11 @@ class AssistantHandoffStage(Stage):
         production_readiness = self._load_yaml(config.pipeline_dir / "production_readiness.yaml")
         state = load_json_mapping(config.pipeline_dir / "state.json", default={})
 
+        # Refresh the cost report so the handoff packet sees current spending.
+        from narrascape.utils.budget import write_cost_report
+
+        cost_report_path = write_cost_report(config)
+
         next_stages = [str(item) for item in supervisor.get("next_stages", []) or []]
         handoff = {
             "schema_version": "assistant_handoff.v1",
@@ -71,7 +76,7 @@ class AssistantHandoffStage(Stage):
         return StageResult(
             self.name,
             True,
-            outputs=[output_yaml, output_md],
+            outputs=[output_yaml, output_md, cost_report_path],
             message=f"assistant handoff: {handoff['status']}",
             metadata={"status": handoff["status"], "next_stages": next_stages},
         )

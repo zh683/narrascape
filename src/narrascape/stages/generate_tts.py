@@ -6,11 +6,11 @@ Generates timing.json for downstream stages.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
+import threading
 import time
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +22,11 @@ from narrascape.providers import (
     select_provider,
     selection_metadata,
 )
+from narrascape.providers.health import health_store_for_project
+from narrascape.providers.http_client import ProviderHttpClient
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_duration
+from narrascape.utils.fingerprint import request_fingerprint
 from narrascape.utils.safe_io import atomic_write_bytes, atomic_write_json, load_json_mapping
 
 logger = logging.getLogger("narrascape.stages.generate_tts")
@@ -48,6 +51,7 @@ class GenerateTTSStage(Stage):
     ):
         self.api_key = api_key or APIKeys.minimax()
         self.base_url = base_url
+        self._http = ProviderHttpClient("minimax_tts")
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         config = context.config
@@ -72,6 +76,12 @@ class GenerateTTSStage(Stage):
         pipe_dir.mkdir(parents=True, exist_ok=True)
         selection = select_provider(config, "tts", intent=self._intent_for_config(config))
         provider_meta = selection_metadata(selection)
+        rpm = config.tts.requests_per_minute
+        self._http.configure(
+            rate_per_second=rpm / 60.0 if rpm > 0 else 0.0,
+            health_store=health_store_for_project(config.project_dir),
+            health_key=selection.tool.name,
+        )
 
         tts_cfg = config.tts
         segments = script.segments
@@ -134,24 +144,16 @@ class GenerateTTSStage(Stage):
 
         global_dict = list(tts_cfg.pronunciation_dict) if tts_cfg.pronunciation_dict else []
 
+        # Phase 1 (serial, main thread): build payloads + fingerprints and
+        # evaluate cache skips. All of this is pure / read-only.
+        todo: list[dict[str, Any]] = []
         for seg in segments:
             sid = seg.id
             out = tts_dir / f"seg_{sid:02d}.mp3"
 
-            if sid in done and out.exists():
-                logger.info(f"  [{sid:02d}/{ns}] skip (cached)")
-                continue
-
             text = seg.text.replace("\n", " ").strip()
             text = self._apply_pauses(text, seg, tts_cfg)
             merged_tone = self._merge_pronunciations(global_dict, seg.pronunciation)
-
-            logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
-            per_tts = budget_tracker.get_cost_estimate("tts", 1)
-            reservation_id = f"generate_tts:{selection.tool.provider}:{sid}"
-            reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_tts)
-            if not reserved:
-                return StageResult(self.name, False, message=reserve_msg)
 
             payload = {
                 "model": tts_cfg.model,
@@ -181,18 +183,65 @@ class GenerateTTSStage(Stage):
             if merged_tone:
                 payload["pronunciation_dict"] = {"tone": merged_tone}
 
-            try:
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(f"{self.base_url}/v1/t2a_v2", data=data, method="POST")
-                req.add_header("Authorization", f"Bearer {self.api_key}")
-                req.add_header("Content-Type", "application/json")
+            # 请求级指纹：文件存在 + state 指纹匹配才允许跳过付费生成
+            fingerprint = request_fingerprint(
+                provider=selection.tool.provider,
+                model=str(payload["model"]),
+                prompt=str(payload["text"]),
+                params={k: v for k, v in payload.items() if k not in ("model", "text")},
+            )
+            fingerprints = state.setdefault("fingerprints", {})
+            if sid in done and out.exists() and fingerprints.get(str(sid)) == fingerprint:
+                logger.info(f"  [{sid:02d}/{ns}] skip (cached, fingerprint match)")
+                continue
 
-                r = json.loads(urllib.request.urlopen(req, timeout=120).read().decode())
+            logger.info(f"  [{sid:02d}/{ns}] {len(text)} chars ...")
+            todo.append({"sid": sid, "out": out, "payload": payload, "fingerprint": fingerprint})
+
+        # Phase 2: generate. Serial by default; per-asset concurrency is opt-in
+        # via tts.max_concurrency. Shared state mutations are lock-guarded, and
+        # the per-provider token bucket (rate limit) still applies per request.
+        state_lock = threading.Lock()
+        budget_failure: list[str] = []
+
+        def _generate_one(item: dict[str, Any]) -> None:
+            sid = item["sid"]
+            out: Path = item["out"]
+            payload = item["payload"]
+            fingerprint = item["fingerprint"]
+            per_tts = budget_tracker.get_cost_estimate("tts", 1)
+            reservation_id = f"generate_tts:{selection.tool.provider}:seg_{sid}"
+            reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_tts)
+            if not reserved:
+                with state_lock:
+                    if not budget_failure:
+                        budget_failure.append(reserve_msg)
+                return
+            try:
+                r = self._http.post_json(
+                    f"{self.base_url}/v1/t2a_v2",
+                    payload,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=120,
+                    max_retries=3,
+                    base_delay=2.0,
+                )
 
                 if r["base_resp"]["status_code"] != 0:
                     logger.error(f"FAIL: {r['base_resp']}")
-                    state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                    with state_lock:
+                        state["errors"].append(f"seg_{sid}: {r['base_resp']}")
+                        atomic_write_json(state_path, state)
+                    # 请求已到达服务端并被处理（HTTP 200 + 业务失败）：按估计成本记账
                     budget_tracker.release_reservation(reservation_id)
+                    budget_tracker.record_actual(
+                        per_tts,
+                        kind="tts",
+                        status="failed",
+                        stage="generate_tts",
+                        provider=selection.tool.provider,
+                        detail=f"seg_{sid}",
+                    )
                 else:
                     raw_hex = (
                         r["data"]["audio"]
@@ -203,18 +252,54 @@ class GenerateTTSStage(Stage):
                     )
                     raw = bytes.fromhex(raw_hex)
                     atomic_write_bytes(out, raw)
-                    done.add(sid)
-                    state["done"] = list(done)
+                    with state_lock:
+                        done.add(sid)
+                        state["done"] = list(done)
+                        state.setdefault("fingerprints", {})[str(sid)] = fingerprint
+                        atomic_write_json(state_path, state)
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
-                    committed, commit_msg = budget_tracker.commit_reservation(reservation_id)
-                    if not committed:
-                        return StageResult(self.name, False, message=commit_msg)
+                    budget_tracker.release_reservation(reservation_id)
+                    budget_tracker.record_actual(
+                        per_tts,
+                        kind="tts",
+                        stage="generate_tts",
+                        provider=selection.tool.provider,
+                        detail=f"seg_{sid}",
+                    )
             except Exception as e:
                 logger.error(f"FAIL: {e}")
-                state["errors"].append(f"seg_{sid}: {e}")
-
-            atomic_write_json(state_path, state)
+                with state_lock:
+                    state["errors"].append(f"seg_{sid}: {e}")
+                    atomic_write_json(state_path, state)
+                # 网络层失败（请求未到达服务端）：不计费，仅记 zero-cost 条目
+                budget_tracker.release_reservation(reservation_id)
+                budget_tracker.record_actual(
+                    0.0,
+                    kind="tts",
+                    status="network_error",
+                    stage="generate_tts",
+                    provider=selection.tool.provider,
+                    detail=f"seg_{sid}",
+                )
             time.sleep(0.3)
+
+        max_concurrency = max(1, min(8, int(tts_cfg.max_concurrency)))
+        if max_concurrency <= 1 or len(todo) <= 1:
+            for item in todo:
+                _generate_one(item)
+                if budget_failure:
+                    return StageResult(self.name, False, message=budget_failure[0])
+        else:
+            logger.info(f"TTS: generating {len(todo)} segments, max_concurrency={max_concurrency}")
+            with ThreadPoolExecutor(
+                max_workers=max_concurrency, thread_name_prefix="narrascape-tts"
+            ) as pool:
+                futures = [pool.submit(_generate_one, item) for item in todo]
+                for future in as_completed(futures):
+                    future.result()  # workers record all failures into state
+            # 并发语义：超预算时已在飞行的请求跑完后才中止（串行为立即中止）。
+            if budget_failure:
+                return StageResult(self.name, False, message=budget_failure[0])
 
         # Generate timing.json
         logger.info("  Measuring durations...")
@@ -250,11 +335,6 @@ class GenerateTTSStage(Stage):
         return StageResult(
             self.name,
             len(errors) == 0,
-            outputs=[
-                *(tts_dir / f"seg_{seg.id:02d}.mp3" for seg in segments),
-                pipe_dir / "timing.json",
-                state_path,
-            ],
             message=f"{len(done)}/{ns} OK, {len(errors)} errors, total {total:.0f}s",
             metadata={
                 "provider_selection": provider_meta,

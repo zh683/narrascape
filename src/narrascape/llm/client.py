@@ -66,6 +66,10 @@ class LLMClient:
         self._logs: list[LLMCallLog] = []
         self._provider = self._init_provider()
         self._bridge: BridgeLLMClient | None = None
+        # Optional callback(usage, model, estimated) invoked after each successful
+        # chat() call so callers (e.g. the pipeline) can account token usage.
+        # Kept as a plain attribute to avoid any llm/ -> pipeline dependency.
+        self.on_usage: Callable[[dict[str, int], str, bool], None] | None = None
 
     @classmethod
     def from_env(cls, allow_bridge: bool = True) -> LLMClient:
@@ -206,17 +210,45 @@ class LLMClient:
 
         # Bridge-backed assistant modes create task files; retrying creates duplicates.
         if is_assistant_bridge_provider(self.config.provider):
-            return _call()
+            resp = _call()
+        else:
+            resp = retry_with_backoff(
+                _call,
+                max_retries=config.max_retries,
+                base_delay=config.retry_delay,
+                retryable_exceptions=(Exception,),
+                retryable_if=is_retryable_provider_error,
+                on_retry=lambda e, attempt, delay: logger.warning(
+                    f"LLM retry {attempt}/{config.max_retries} after {delay:.1f}s: {e}"
+                ),
+            )
+        self._report_usage(resp, messages)
+        return resp
 
-        return retry_with_backoff(
-            _call,
-            max_retries=config.max_retries,
-            base_delay=config.retry_delay,
-            retry_if=is_retryable_provider_error,
-            on_retry=lambda e, attempt, delay: logger.warning(
-                f"LLM retry {attempt}/{config.max_retries} after {delay:.1f}s: {e}"
-            ),
-        )
+    def _report_usage(self, resp: LLMResponse, messages: list[Message]) -> None:
+        """Invoke the usage callback with actual or estimated token usage.
+
+        Providers that do not return usage get a chars/4 estimate so token
+        accounting never silently drops a call. Callback failures are logged
+        and never break the LLM call itself.
+        """
+        callback = self.on_usage
+        if callback is None:
+            return
+        usage = dict(resp.usage or {})
+        estimated = False
+        if not usage.get("prompt_tokens"):
+            estimated = True
+            prompt_chars = sum(len(m.content) for m in messages)
+            usage = {
+                "prompt_tokens": max(1, prompt_chars // 4),
+                "completion_tokens": max(1, len(resp.content) // 4),
+            }
+            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+        try:
+            callback(usage, resp.model or self.config.model, estimated)
+        except Exception as exc:
+            logger.warning(f"LLM usage callback failed: {exc}")
 
     def run_template(self, template: PromptTemplate, **variables: Any) -> LLMResponse:
         """Run a structured prompt template and return response."""

@@ -42,6 +42,15 @@ Narrascape 目前已经具备一个早期 AI film studio prototype 的骨架：
 - Source Media：支持真实素材扫描、素材清单和 footage timeline。
 - QA：检查文件可播放性、黑帧、静音、字幕、时长偏差、镜头覆盖、缺失片段、重复镜头、占位图残留、连续性风险和叙事节奏风险。
 - Rework Loop：把 QA 和导演审查转成 `rework_plan.yaml`，再由 `rework_execute` 执行重生成、重剪或换素材队列。
+- 审批门工作流：每个阶段默认完成后停下等待人工 approve / reject，支持 `--interactive` 当场审片和 `--approve` 自动放行。
+- 成本治理：付费动作逐笔记入 `budget_state.json`（失败也记账），LLM token 按模型计价，`assistant_handoff` 汇总为 `cost_report.yaml`，`budget.mode: cap` 可硬封顶。
+- 可靠性工程：`video_tasks.json` 任务台账记录每个付费视频任务，崩溃后重跑续传不重复扣费；付费阶段按请求指纹缓存，指纹不变就复用产物。
+- 并行执行：`--stage-parallel` 按依赖层并行跑阶段，`tts` / `video` 支持 `max_concurrency` 资产级并发。
+- 更聪明的选 take：`take_select` 默认用四信号质量评分加 LLM 裁判，可选 MCTS 策略并输出完整决策轨迹。
+- QA 六维度：导演契约的 `qa.assertions` 按身份连续性、台词归属、镜头语言、运动合理性、场景一致性、技术质量六个维度打标，`visual_semantic_qa` 按维度评审并给出逐维度汇总。
+- 分镜首帧条件：`video.storyboard_conditioning: auto` 让分镜面板直接作为视频生成的首帧输入，分镜绑定的参考图排在参考列表最前。
+- 提示词安全审计：发往 provider 的提示词统一经过改写过滤，改写记录落到 `prompt_safety.yaml`。
+- 密钥安全：配置值支持 `${VAR}` 环境变量插值，`llm.mode: api` 缺 key 直接报错，明文 key 会在启动时告警。
 
 默认视觉优先级是：
 
@@ -109,8 +118,8 @@ Narrascape 仍然是早期原型。它已经具备完整制作管线、导演合
 ## 路线图
 
 - 更强的视觉语义 QA：让模型真正检查角色脸、衣服、场景和构图是否符合导演合同。
-- 更成熟的 multi-take 选择：结合 QA、LLM 判断和人工偏好选择最佳镜头。
-- 更完整的 continuity bible：跨场景追踪角色、服装、灯光、轴线、地点状态。
+- 更成熟的 multi-take 选择：在现有质量评分、LLM 裁判和 MCTS 决策树之上，接入感知质量模型与人工偏好学习。
+- 更完整的 continuity bible：从"事后报告漂移"升级为"生成时强制约束"，并纳入镜头、色彩与风格规则。
 - 更强的 source media 剪辑：让真实素材纪录片工作流更接近专业剪辑。
 - 更丰富的 provider 接入：扩展视频、图像、声音、音乐和后期 provider。
 - 更好的创作者界面：在 dashboard 中查看时间线、QA、返工队列和生产状态。
@@ -162,6 +171,23 @@ continuity locks, QA assertions, and rework queues.
   coverage, missing clips, repeated shots, placeholder residue, continuity risk,
   and pacing risk.
 - Executable rework loop through `rework_plan.yaml` and `rework_execute`.
+- Per-stage approval gates with `approve` / `reject`, `--interactive` review,
+  and `--approve` for CI.
+- Cost governance: a budget ledger that records even failed paid actions,
+  per-model LLM token pricing, and an aggregated `cost_report.yaml`.
+- Reliability: the `video_tasks.json` paid task ledger resumes after crashes
+  without double-charging, and request fingerprints gate cache reuse.
+- Opt-in parallelism via `--stage-parallel` and `tts`/`video`
+  `max_concurrency`.
+- Take selection with deterministic quality scoring plus an LLM judge, and an
+  opt-in MCTS strategy with a full decision trace.
+- Six-dimension QA assertion taxonomy reviewed per dimension by
+  `visual_semantic_qa`.
+- Optional storyboard-conditioned video generation
+  (`video.storyboard_conditioning`).
+- Prompt safety audit (`prompt_safety.yaml`) for provider-bound prompts.
+- API key hygiene: `${VAR}` interpolation, hard errors for missing keys in
+  `llm.mode: api`, and plaintext-key warnings.
 
 The default visual priority is:
 

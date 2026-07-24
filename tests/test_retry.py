@@ -3,13 +3,42 @@
 
 from __future__ import annotations
 
+import io
 import time
 import urllib.error
 from unittest.mock import MagicMock
 
 import pytest
 
-from narrascape.utils.retry import is_retryable_provider_error, retry_with_backoff
+from narrascape.utils.retry import (
+    is_retryable_http_error,
+    is_retryable_provider_error,
+    retry_with_backoff,
+)
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("https://api.example.com/x", code, "error", {}, io.BytesIO(b""))
+
+
+class TestIsRetryableHttpError:
+    @pytest.mark.parametrize("code", [400, 401, 403, 404, 422])
+    def test_permanent_4xx_not_retryable(self, code):
+        assert is_retryable_http_error(_http_error(code)) is False
+
+    @pytest.mark.parametrize("code", [408, 429, 500, 502, 503])
+    def test_transient_status_retryable(self, code):
+        assert is_retryable_http_error(_http_error(code)) is True
+
+    def test_non_http_errors_retryable(self):
+        assert is_retryable_http_error(urllib.error.URLError("boom")) is True
+        assert is_retryable_http_error(TimeoutError("boom")) is True
+        assert is_retryable_http_error(ConnectionError("boom")) is True
+
+    def test_http_error_is_also_url_error(self):
+        # HTTPError subclasses URLError; the predicate must distinguish by code.
+        assert isinstance(_http_error(404), urllib.error.URLError)
+        assert is_retryable_http_error(_http_error(404)) is False
 
 
 class TestRetryWithBackoff:
@@ -107,6 +136,71 @@ class TestRetryWithBackoff:
         assert result is None
         assert mock.call_count == 1
 
+
+class TestRetryableIfPredicate:
+    HTTP_EXCEPTIONS = (urllib.error.URLError, urllib.error.HTTPError)
+
+    @pytest.mark.parametrize("code", [400, 401, 403, 404, 422])
+    def test_permanent_4xx_fails_immediately_without_retry(self, code):
+        mock = MagicMock(side_effect=_http_error(code))
+
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            retry_with_backoff(
+                mock,
+                max_retries=3,
+                base_delay=0.01,
+                retryable_exceptions=self.HTTP_EXCEPTIONS,
+                retryable_if=is_retryable_http_error,
+            )
+
+        assert excinfo.value.code == code
+        assert mock.call_count == 1
+
+    @pytest.mark.parametrize("code", [408, 429, 500, 503])
+    def test_transient_http_status_is_retried(self, code):
+        mock = MagicMock(side_effect=[_http_error(code), _http_error(code), "ok"])
+
+        result = retry_with_backoff(
+            mock,
+            max_retries=3,
+            base_delay=0.01,
+            retryable_exceptions=self.HTTP_EXCEPTIONS,
+            retryable_if=is_retryable_http_error,
+        )
+
+        assert result == "ok"
+        assert mock.call_count == 3
+
+    def test_url_error_still_retried_with_predicate(self):
+        mock = MagicMock(side_effect=[urllib.error.URLError("boom"), "ok"])
+
+        result = retry_with_backoff(
+            mock,
+            max_retries=3,
+            base_delay=0.01,
+            retryable_exceptions=self.HTTP_EXCEPTIONS,
+            retryable_if=is_retryable_http_error,
+        )
+
+        assert result == "ok"
+        assert mock.call_count == 2
+
+    def test_without_predicate_http_error_retried_as_before(self):
+        # Existing callers that do not pass retryable_if keep the old behavior.
+        mock = MagicMock(side_effect=[_http_error(400), "ok"])
+
+        result = retry_with_backoff(
+            mock,
+            max_retries=3,
+            base_delay=0.01,
+            retryable_exceptions=self.HTTP_EXCEPTIONS,
+        )
+
+        assert result == "ok"
+        assert mock.call_count == 2
+
+
+class TestIsRetryableProviderError:
     @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
     def test_retryable_provider_http_statuses(self, status):
         error = urllib.error.HTTPError("https://provider.test", status, "failed", {}, None)
@@ -139,7 +233,7 @@ class TestRetryWithBackoff:
                 mock,
                 max_retries=3,
                 base_delay=0,
-                retry_if=is_retryable_provider_error,
+                retryable_if=is_retryable_provider_error,
             )
 
         assert mock.call_count == 1

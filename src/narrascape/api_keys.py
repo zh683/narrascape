@@ -1,28 +1,39 @@
 """API key and credential management.
 
-Reads API keys from environment variables or .env file.
+Reads API keys from environment variables or the .env file in the current
+working directory.
 Supports: MINIMAX_API_KEY, ARK_API_KEY (Volcengine), AGNES_API_KEY, OPENAI_API_KEY, etc.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def find_env_file(start: Path | None = None) -> Path | None:
+    """Return the .env file for the working directory, if present.
+
+    The search is deliberately limited to the working directory itself:
+    the previous upward walk (two parent levels) silently loaded unrelated
+    .env files when commands ran from a different directory.
+    """
+    cwd = start or Path.cwd()
+    candidate = cwd / ".env"
+    return candidate if candidate.is_file() else None
 
 
 def load_env_file(path: Path | None = None) -> dict[str, str]:
     """Load .env file as key-value dict."""
     env: dict[str, str] = {}
     if path is None:
-        # Search upward from cwd
-        cwd = Path.cwd()
-        for p in [cwd, cwd.parent, cwd.parent.parent]:
-            ep = p / ".env"
-            if ep.exists():
-                path = ep
-                break
+        path = find_env_file()
     if path is None or not path.exists():
         return env
+    logger.debug("Loading environment overrides from %s", path)
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -36,11 +47,18 @@ class APIKeys:
     """Centralized API key management."""
 
     _env_cache: dict[str, str] | None = None
+    _env_cache_key: tuple[str, float] | None = None
 
     @classmethod
     def _env(cls) -> dict[str, str]:
-        if cls._env_cache is None:
-            cls._env_cache = load_env_file()
+        # Cache is keyed by (resolved .env path, mtime) so a long-lived
+        # process picks up edits and working-directory changes without an
+        # explicit reset_cache() call.
+        path = find_env_file()
+        cache_key = (str(path), path.stat().st_mtime) if path else ("", 0.0)
+        if cls._env_cache is None or cls._env_cache_key != cache_key:
+            cls._env_cache = load_env_file(path)
+            cls._env_cache_key = cache_key
         return dict(cls._env_cache)
 
     @classmethod
@@ -82,3 +100,4 @@ class APIKeys:
     @classmethod
     def reset_cache(cls) -> None:
         cls._env_cache = None
+        cls._env_cache_key = None

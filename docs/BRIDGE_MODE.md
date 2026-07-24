@@ -64,6 +64,13 @@ The assistant writes:
 .narrascape/bridge/completed/response_<id>.json
 ```
 
+**Write it atomically**: write a temporary file first, then rename (move) it
+over the response path. Narrascape polls the response path while waiting; a
+partially written (unparseable) response file is treated as still-in-progress
+and the wait continues until timeout instead of failing on the partial read.
+A parseable response whose `content` field is missing or not a string is a
+semantic error and fails immediately.
+
 Format:
 
 ```json
@@ -111,7 +118,21 @@ Check:
 - The response has a `content` field.
 - `content` contains valid JSON if the task requested JSON.
 
+The timeout error reports the task id, the wait duration, the response file
+path, and whether an incomplete (still-being-written) response file was
+observed — use that to distinguish "assistant never responded" from
+"assistant wrote the file non-atomically".
+
 Then rerun the command.
+
+### Bridge lock timeout
+
+The bridge serializes task/response file exchanges with a `.bridge.lock`
+file in the bridge directory. If a narrascape process crashes while holding
+it, the leftover lock self-recovers after 60 seconds (stale-lock reclaim) —
+just rerun the command. To recover immediately, delete
+`.narrascape/bridge/.bridge.lock` manually. A *fresh* lock means another
+narrascape process is actively running; let it finish instead of deleting.
 
 ### Expected JSON array/object
 

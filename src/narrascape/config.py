@@ -6,6 +6,7 @@ Replaces raw YAML dicts with validated, typed, auto-completed configs.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from enum import Enum
@@ -13,6 +14,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_VISUAL_STYLE = (
     "Oil painting style, painterly cinematic frames, visible brush texture, "
@@ -235,6 +238,15 @@ class PipelineConfig(StrictConfigModel):
             "or fallback_after_error LLM status."
         ),
     )
+    max_workers: int = Field(
+        1,
+        ge=1,
+        le=16,
+        description=(
+            "Orchestration-level parallelism: stages in the same dependency layer run "
+            "concurrently. 1 (default) keeps the classic strictly-serial scheduler."
+        ),
+    )
     production_quality_gates: bool = Field(
         False,
         description=(
@@ -281,6 +293,15 @@ class TTSConfig(StrictConfigModel):
     continuous_sound: bool = Field(True, description="Clause-level smoothing (MiniMax 2.8+)")
     text_normalization: bool = Field(True, description="Normalize numbers and punctuation")
     language_boost: str = Field("Chinese", description="Language hint for TTS engine")
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="TTS API rate limit (0 = unlimited, process-local token bucket)"
+    )
+    max_concurrency: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description="Max concurrent TTS segment generations (1 = serial; rate limit still applies)",
+    )
     add_pauses: bool = Field(False, description="Auto-insert pause markers at sentence boundaries")
     pronunciation_dict: list[str] = Field(
         default_factory=list, description="Pronunciation overrides"
@@ -303,6 +324,9 @@ class ImageConfig(StrictConfigModel):
     width: int = Field(2560, ge=640, le=8192)
     height: int = Field(1440, ge=480, le=8192)
     count: int | None = Field(None, description="Number of images (auto-detected)")
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Image API rate limit (0 = unlimited, process-local token bucket)"
+    )
 
 
 class VideoConfig(StrictConfigModel):
@@ -319,6 +343,80 @@ class VideoConfig(StrictConfigModel):
         ge=1,
         le=8,
         description="Generated-video candidates per shot. Values above 1 create multi-take clips for take_select.",
+    )
+    max_poll_time: float = Field(
+        900.0,
+        gt=0,
+        description=(
+            "Maximum seconds to poll a single video generation task before giving up. "
+            "720p jobs regularly exceed 5 minutes; on timeout the paid task stays "
+            "recorded in video_tasks.json and is resumed on the next run."
+        ),
+    )
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Video API rate limit (0 = unlimited, process-local token bucket)"
+    )
+    max_concurrency: int = Field(
+        1,
+        ge=1,
+        le=8,
+        description=(
+            "Max concurrent video task submissions (1 = serial per-take lifecycle). "
+            "Values above 1 enable submit-all -> poll-all pipelining: tasks are "
+            "created up front and polled in one unified loop."
+        ),
+    )
+    storyboard_conditioning: Literal["off", "auto"] = Field(
+        "off",
+        description=(
+            "Opt-in storyboard-as-generation-condition. 'auto' resolves each shot's "
+            "director_contract storyboard_binding to a physical panel "
+            "(assets/storyboard/<frame_id>.<ext>) used as the video first_frame, and "
+            "lets storyboard-bound reference images (binding.reference_image_ids) lead "
+            "the reference list ahead of auto-derived refs; missing panels or ids fall "
+            "back to the default inputs without blocking. 'off' keeps legacy behavior."
+        ),
+    )
+
+
+# ───────────────────────────────────────────
+# Take selection
+# ───────────────────────────────────────────
+
+
+class TakeSelectConfig(BaseModel):
+    """Multi-take selection strategy configuration."""
+
+    selection_strategy: Literal["auto", "mcts"] = Field(
+        "auto",
+        description=(
+            "Take-selection strategy. 'auto' keeps the legacy single-pass LLM judge "
+            "(one completion per segment, zero behavior change). 'mcts' opts into an "
+            "MCTS-style UCT search: pairwise LLM duels between candidate takes within "
+            "a hard per-segment evaluation budget, with the full decision trace "
+            "persisted to take_selection.yaml for human review."
+        ),
+    )
+    mcts_budget: int = Field(
+        5,
+        ge=1,
+        le=50,
+        description=(
+            "Hard cap on LLM pairwise evaluations per segment when "
+            "selection_strategy='mcts'. Every evaluation is one complete() call, so "
+            "this bounds LLM cost per multi-take segment; attempts that error also "
+            "count against the cap."
+        ),
+    )
+    mcts_exploration: float = Field(
+        1.414,
+        gt=0.0,
+        le=10.0,
+        description=(
+            "UCT exploration constant c in win_rate + c*sqrt(ln(total)/visits). "
+            "Higher values favor rarely-compared takes (exploration); lower values "
+            "exploit the current duel leader."
+        ),
     )
 
 
@@ -404,6 +502,9 @@ class MusicAudioConfig(StrictConfigModel):
     narration_lufs: int = Field(-16, ge=-70, le=0)
     target_lufs: int = Field(-14, ge=-70, le=0)
     fade_out_seconds: int = Field(5, ge=0, le=30)
+    requests_per_minute: float = Field(
+        0.0, ge=0.0, description="Music API rate limit (0 = unlimited, process-local token bucket)"
+    )
 
 
 class AudioConfig(StrictConfigModel):
@@ -486,6 +587,25 @@ class EndingConfig(StrictConfigModel):
 # ───────────────────────────────────────────
 
 
+class LLMTokenRate(BaseModel):
+    """USD price per million tokens for one LLM model."""
+
+    input_per_million_usd: float = Field(5.0, ge=0.0)
+    output_per_million_usd: float = Field(15.0, ge=0.0)
+
+
+def _default_llm_rates() -> dict[str, LLMTokenRate]:
+    return {
+        "gpt-4o": LLMTokenRate(input_per_million_usd=2.5, output_per_million_usd=10.0),
+        "gpt-4o-mini": LLMTokenRate(input_per_million_usd=0.15, output_per_million_usd=0.6),
+        "deepseek-chat": LLMTokenRate(input_per_million_usd=0.27, output_per_million_usd=1.1),
+        "claude-3-sonnet-20240229": LLMTokenRate(
+            input_per_million_usd=3.0, output_per_million_usd=15.0
+        ),
+        "doubao-pro-32k": LLMTokenRate(input_per_million_usd=0.8, output_per_million_usd=2.0),
+    }
+
+
 class BudgetConfig(StrictConfigModel):
     """Cost estimation and budget controls."""
 
@@ -497,6 +617,14 @@ class BudgetConfig(StrictConfigModel):
     total_estimated: float | None = Field(None)
     mode: Literal["observe", "warn", "cap"] = Field("warn")
     per_action_threshold: float = Field(0.5, ge=0.0)
+    llm_rates: dict[str, LLMTokenRate] = Field(
+        default_factory=_default_llm_rates,
+        description="USD per million tokens keyed by model name; overrides defaults.",
+    )
+    llm_default_rate: LLMTokenRate = Field(
+        default_factory=LLMTokenRate,
+        description="Conservative fallback token price for models not in llm_rates.",
+    )
 
 
 # ───────────────────────────────────────────
@@ -513,6 +641,7 @@ class NarrascapeConfig(StrictConfigModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     images: ImageConfig = Field(default_factory=ImageConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
+    take_select: TakeSelectConfig = Field(default_factory=TakeSelectConfig)
     visual: VisualConfig = Field(default_factory=VisualConfig)
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -747,28 +876,131 @@ class ImageMap(BaseModel):
 # Loader helpers
 # ───────────────────────────────────────────
 
+# ${VAR} / ${VAR:-default} references inside config string values.
+_ENV_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_ENV_REF_FULLMATCH = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$")
+
+# Credential fields where an unresolved ${VAR} reference must fail fast:
+# a literal "${VAR}" would otherwise be sent to providers as the secret.
+_STRICT_INTERPOLATION_FIELDS = {"llm.api_key"}
+
+
+def _interpolate_env_value(value: Any, field_path: str) -> Any:
+    """Expand ${VAR} / ${VAR:-default} references in config string values.
+
+    Only the ``${...}`` pattern is touched; every other byte is preserved.
+    Unresolved references in credential fields (``llm.api_key``) raise
+    ``ValueError``; elsewhere they are kept verbatim with a debug log.
+    """
+    if isinstance(value, str):
+
+        def _replace(match: re.Match[str]) -> str:
+            var_name = match.group(1)
+            default = match.group(2)
+            env_value = os.environ.get(var_name)
+            if env_value is not None:
+                return env_value
+            if default is not None:
+                return default
+            if field_path in _STRICT_INTERPOLATION_FIELDS:
+                raise ValueError(
+                    f"config.yaml field '{field_path}' references environment variable "
+                    f"'{var_name}', which is not set. Export {var_name} (or add it to "
+                    f".env), write ${{{var_name}:-fallback}} to provide a default, or "
+                    "remove the reference. See docs/quickstart.md and "
+                    "docs/config-reference.md."
+                )
+            logger.debug(
+                "Leaving unresolved ${%s} placeholder in config field '%s'",
+                var_name,
+                field_path or "<root>",
+            )
+            return match.group(0)
+
+        return _ENV_REF_PATTERN.sub(_replace, value)
+    if isinstance(value, dict):
+        return {
+            key: _interpolate_env_value(item, f"{field_path}.{key}" if field_path else str(key))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_interpolate_env_value(item, field_path) for item in value]
+    return value
+
+
+# YAML 1.1 parses bare off/on/yes/no as booleans. Enum string fields that
+# legitimately use "off" (e.g. video_generation: off) therefore arrive as
+# False. Normalize booleans back to the enum string for exactly these
+# declared fields — never globally, or real boolean fields
+# (design_overwrite, strict_director) would be corrupted. Fields whose enum
+# contains "on" automatically accept True as "on".
+_YAML11_ENUM_FIELDS: dict[str, tuple[str, ...]] = {
+    "pipeline.video_generation": ("auto", "required", "off"),
+    "video.storyboard_conditioning": ("off", "auto"),
+}
+
+
+def _normalize_yaml11_bool_enums(value: Any, field_path: str) -> Any:
+    """Map YAML 1.1 booleans back to enum strings for declared fields.
+
+    Bare ``off``/``on``/``yes``/``no`` in config.yaml parse as booleans
+    under YAML 1.1. For the exact enum string fields listed in
+    ``_YAML11_ENUM_FIELDS``, convert False/True to "off"/"on" when the
+    candidate is a valid enum value; otherwise raise a clear error listing
+    the valid values. All other values pass through untouched.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _normalize_yaml11_bool_enums(
+                item, f"{field_path}.{key}" if field_path else str(key)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_yaml11_bool_enums(item, field_path) for item in value]
+    if isinstance(value, bool) and field_path in _YAML11_ENUM_FIELDS:
+        allowed = _YAML11_ENUM_FIELDS[field_path]
+        candidate = "on" if value else "off"
+        if candidate in allowed:
+            return candidate
+        raise ValueError(
+            f"config.yaml field '{field_path}' received boolean {value} "
+            "(YAML 1.1 parses bare on/off/yes/no as booleans). Its valid values are "
+            f"{', '.join(repr(v) for v in allowed)} — write one of those instead."
+        )
+    return value
+
 
 def load_config(path: Path) -> NarrascapeConfig:
-    """Load and validate config.yaml from a project directory or file path."""
+    """Load and validate config.yaml from a project directory or file path.
+
+    String values support ``${VAR}`` / ``${VAR:-default}`` environment
+    interpolation, expanded before validation. A plaintext ``llm.api_key``
+    (not an env reference) logs a warning recommending environment-based
+    secrets; the loaded config object itself is never logged.
+    """
     from narrascape.utils.safe_io import load_yaml_mapping
 
     # If path is a directory, look for config.yaml inside it
     if path.is_dir():
         path = path / "config.yaml"
-    data = _expand_environment_values(load_yaml_mapping(path))
+    data = load_yaml_mapping(path)
+    raw_llm = data.get("llm")
+    raw_api_key = ""
+    if isinstance(raw_llm, dict):
+        raw_api_key = str(raw_llm.get("api_key") or "")
+    data = _interpolate_env_value(data, "")
+    data = _normalize_yaml11_bool_enums(data, "")
     cfg = NarrascapeConfig(**data)
+    if cfg.llm.api_key and raw_api_key and not _ENV_REF_FULLMATCH.match(raw_api_key):
+        logger.warning(
+            "config.yaml (%s) contains a plaintext llm.api_key. Prefer an environment "
+            'reference such as api_key: "${OPENAI_API_KEY}" and keep the secret in the '
+            "environment or .env so it cannot be committed. See docs/quickstart.md.",
+            path,
+        )
     cfg.project_dir = path.parent
     return cfg
-
-
-def _expand_environment_values(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _expand_environment_values(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_expand_environment_values(item) for item in value]
-    if isinstance(value, str):
-        return os.path.expandvars(value)
-    return value
 
 
 def load_script(path: Path) -> Script:

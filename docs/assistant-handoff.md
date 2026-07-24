@@ -52,6 +52,7 @@ Before this stage, an assistant could inspect many files, but it had to infer:
 | `blocking_items` | QA errors or production-readiness findings |
 | `state_summary` | compact stage-state counts |
 | `commands` | status, build, production build, and refresh commands |
+| `cost_report` | side output, not a packet field: the stage refreshes `pipeline/<project>/cost_report.yaml` from the budget ledger before writing the packet, so every takeover sees current spending |
 
 ## Standard AI Assistant Flow
 

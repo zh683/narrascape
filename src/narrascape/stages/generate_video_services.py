@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import write_artifact
 from narrascape.prompt_compiler import provider_negative_prompt, provider_prompt
 from narrascape.prompt_quality import video_prompt_quality_assessment
-from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
+from narrascape.reference_assets import (
+    IMAGE_EXTENSIONS,
+    is_reference_uri,
+    resolve_reference_assets_for_shot,
+)
+from narrascape.utils.safe_io import load_json_mapping, update_json_mapping
 
 
 def _to_int(value: Any) -> int | None:
@@ -301,6 +309,46 @@ class VideoReferenceResolver:
             item["url"] = url
         return item
 
+    def find_storyboard_panel(self, project_dir: Path, contract: dict[str, Any]) -> Path | None:
+        """First existing physical storyboard panel among the shot's bound frames.
+
+        Panels live at ``assets/storyboard/<frame_id>.<ext>``. pre_production
+        creates the directory but rendering panels is opt-in, so ``None`` (no
+        panel) is the common case — callers must fall back gracefully.
+        """
+        binding = contract.get("storyboard_binding", {}) if isinstance(contract, dict) else {}
+        frame_ids = [str(value) for value in binding.get("storyboard_frame_ids", []) or []]
+        storyboard_dir = project_dir / "assets" / "storyboard"
+        for frame_id in frame_ids:
+            for ext in IMAGE_EXTENSIONS:
+                candidate = storyboard_dir / f"{frame_id}{ext}"
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def prioritize_storyboard_references(
+        self,
+        assets: list[dict[str, Any]],
+        contract: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Stable-partition reference assets so storyboard-bound ids lead.
+
+        The director's per-frame curation
+        (``storyboard_binding.reference_image_ids``) is narrative intent and
+        outranks the auto-derived style/character/scene references.
+        """
+        binding = contract.get("storyboard_binding", {}) if isinstance(contract, dict) else {}
+        storyboard_ids = {str(value) for value in binding.get("reference_image_ids", []) or []}
+        if not storyboard_ids:
+            return assets
+        leading = [
+            asset for asset in assets if str(asset.get("requested_id") or "") in storyboard_ids
+        ]
+        trailing = [
+            asset for asset in assets if str(asset.get("requested_id") or "") not in storyboard_ids
+        ]
+        return leading + trailing
+
     def resolve_first_frame(self, seg: dict[str, Any], images_dir: Path, img_id: str) -> str | None:
         ref_url = seg.get("reference_image_url", "")
         if ref_url:
@@ -382,3 +430,266 @@ class VideoReferenceResolver:
         if image_path.exists():
             return str(self.uploader.upload(image_path))
         return None
+
+
+# ───────────────────────────────────────────
+# Paid video task ledger
+# ───────────────────────────────────────────
+
+VIDEO_TASK_LEDGER_VERSION = "1.0"
+
+# Ledger statuses that mean "the provider may still be working on this paid
+# task" — such records must be resumed instead of creating a new paid task.
+RESUMABLE_TASK_STATUSES = frozenset({"submitting", "submitted", "polling"})
+
+_LEDGER_HISTORY_LIMIT = 5
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def video_task_prompt_hash(*, provider: str, model: str, resolution: str, prompt: str) -> str:
+    """Hash the parameters that define a paid video generation task.
+
+    Two invocations with the same hash are considered parameter-equivalent:
+    resuming the recorded task yields the requested output. Any prompt,
+    model, resolution, or provider change produces a different hash and
+    therefore a new task.
+    """
+    payload = json.dumps(
+        {
+            "provider": provider,
+            "model": model,
+            "resolution": resolution,
+            "prompt": prompt,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _take_number_from_out_name(out_name: str) -> int:
+    match = re.search(r"_take_(\d+)$", out_name)
+    return int(match.group(1)) if match else 1
+
+
+class VideoTaskLedger:
+    """Crash-safe ledger of paid video generation tasks.
+
+    Persisted to pipeline/{name}/video_tasks.json. A record is written the
+    moment a task_id is obtained from the provider, so a crashed or timed-out
+    process can resume polling the already-paid task on the next run instead
+    of creating (and paying for) a duplicate. All writes go through the
+    file-locked atomic JSON update helpers in utils.safe_io.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def _default(self) -> dict[str, Any]:
+        return {"version": VIDEO_TASK_LEDGER_VERSION, "tasks": {}}
+
+    def _load(self) -> dict[str, Any]:
+        return load_json_mapping(self.path, default=self._default())
+
+    def get(self, out_name: str) -> dict[str, Any] | None:
+        record = self._load().get("tasks", {}).get(out_name)
+        return dict(record) if isinstance(record, dict) else None
+
+    def find_resumable(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return an unfinished, parameter-equivalent record, if any.
+
+        Records carrying a ``request_fingerprint`` must match it exactly —
+        resuming a task whose full request changed would download content
+        that does not match the current request. Legacy records without a
+        stored fingerprint fall back to ``prompt_hash`` equivalence so
+        in-flight tasks recorded before fingerprints existed stay resumable.
+        """
+        record = self.get(out_name)
+        if not record:
+            return None
+        if record.get("status") not in RESUMABLE_TASK_STATUSES:
+            return None
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
+            return None
+        if not (record.get("task_id") or record.get("video_id")):
+            return None
+        return record
+
+    def find_reusable_download(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a succeeded record whose video URL can be re-downloaded.
+
+        Records carrying a ``request_fingerprint`` must match it exactly.
+        Legacy records without one fall back to the weaker ``prompt_hash``
+        equivalence, preserving the pre-fingerprint free-redownload path.
+        """
+        record = self.get(out_name)
+        if not record:
+            return None
+        if record.get("status") != "succeeded":
+            return None
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
+            return None
+        if not record.get("video_url"):
+            return None
+        return record
+
+    def find_ambiguous_submission(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a matching submission whose provider response was lost."""
+        record = self.get(out_name)
+        if not record or record.get("status") != "submitting":
+            return None
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
+            return None
+        if record.get("task_id") or record.get("video_id"):
+            return None
+        return record
+
+    def fingerprint_matches(self, out_name: str, request_fingerprint: str) -> bool:
+        """True when a succeeded record exists with this exact fingerprint.
+
+        This is the cache gate for skipping paid regeneration: the on-disk
+        artifact is only reusable when the request that produced it is
+        fingerprint-identical to the current one. Legacy records (no stored
+        fingerprint) never match and are regenerated once.
+        """
+        record = self.get(out_name)
+        if not record:
+            return False
+        if record.get("status") != "succeeded":
+            return False
+        stored = record.get("request_fingerprint")
+        return stored is not None and stored == request_fingerprint
+
+    def record_created(
+        self,
+        out_name: str,
+        *,
+        task_id: str | None,
+        provider: str,
+        prompt_hash: str,
+        model: str,
+        resolution: str,
+        output_path: str,
+        video_id: str | None = None,
+        cost_estimate: float | None = None,
+        request_fingerprint: str | None = None,
+    ) -> None:
+        """Persist a freshly created paid task (called right after creation).
+
+        If an unfinished record with a different prompt hash exists for the
+        same output, it is archived into the entry's history as "superseded"
+        before being replaced.
+        """
+        now = _utc_now_iso()
+
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", VIDEO_TASK_LEDGER_VERSION)
+            tasks = data.setdefault("tasks", {})
+            old = tasks.get(out_name)
+            record: dict[str, Any] = {
+                "task_id": task_id,
+                "video_id": video_id,
+                "provider": provider,
+                "out_name": out_name,
+                "take": _take_number_from_out_name(out_name),
+                "prompt_hash": prompt_hash,
+                "model": model,
+                "resolution": resolution,
+                "status": "submitted",
+                "output_path": output_path,
+                "cost_estimate": cost_estimate,
+                "request_fingerprint": request_fingerprint,
+                "created_at": now,
+                "updated_at": now,
+            }
+            history: list[dict[str, Any]] = []
+            if isinstance(old, dict):
+                history.extend(item for item in old.get("history", []) if isinstance(item, dict))
+                if (
+                    old.get("status") in RESUMABLE_TASK_STATUSES
+                    and old.get("prompt_hash") != prompt_hash
+                ):
+                    archived = {k: v for k, v in old.items() if k != "history"}
+                    archived["status"] = "superseded"
+                    archived["updated_at"] = now
+                    history.append(archived)
+            if history:
+                record["history"] = history[-_LEDGER_HISTORY_LIMIT:]
+            tasks[out_name] = record
+
+        update_json_mapping(self.path, update, default=self._default())
+
+    def record_submitting(
+        self,
+        out_name: str,
+        *,
+        provider: str,
+        prompt_hash: str,
+        model: str,
+        resolution: str,
+        output_path: str,
+        cost_estimate: float | None = None,
+        request_fingerprint: str | None = None,
+    ) -> None:
+        """Persist provider-call intent before a paid async task is submitted."""
+        self.record_created(
+            out_name,
+            task_id=None,
+            provider=provider,
+            prompt_hash=prompt_hash,
+            model=model,
+            resolution=resolution,
+            output_path=output_path,
+            cost_estimate=cost_estimate,
+            request_fingerprint=request_fingerprint,
+        )
+        self.update_status(out_name, "submitting")
+
+    def update_status(self, out_name: str, status: str, **fields: Any) -> None:
+        """Update the status (and optional extra fields) of a ledger record."""
+        now = _utc_now_iso()
+
+        def update(data: dict[str, Any]) -> None:
+            data.setdefault("version", VIDEO_TASK_LEDGER_VERSION)
+            tasks = data.setdefault("tasks", {})
+            record = tasks.get(out_name)
+            if not isinstance(record, dict):
+                record = {"out_name": out_name, "created_at": now}
+                tasks[out_name] = record
+            record["status"] = status
+            record["updated_at"] = now
+            for key, value in fields.items():
+                if value is not None:
+                    record[key] = value
+
+        update_json_mapping(self.path, update, default=self._default())

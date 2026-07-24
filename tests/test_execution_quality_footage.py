@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-from narrascape.cache import BuildCache
 from narrascape.config import (
     AudioConfig,
     BGMMap,
@@ -101,7 +100,6 @@ def _context(config: NarrascapeConfig) -> StageContext:
     return StageContext(
         config=config,
         script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
     )
 
 
@@ -614,7 +612,7 @@ def test_generate_music_reserves_budget_before_provider_call(tmp_path, monkeypat
     observed = []
     stage = GenerateMusicStage(api_key="fake")
 
-    def fake_generate_one(zone, duration, music_cfg, state, music_dir):
+    def fake_generate_one(zone, duration, music_cfg, state, music_dir, **kwargs):
         budget = json.loads((config.pipeline_dir / "budget_state.json").read_text(encoding="utf-8"))
         observed.append(dict(budget["reservations"]))
         output = music_dir / f"{zone.id}.mp3"
@@ -982,18 +980,24 @@ def test_agnes_video_generation_downloads_completed_result(tmp_path, monkeypatch
 
 def test_generate_video_reuses_persisted_provider_task(tmp_path, monkeypatch):
     from narrascape.stages.generate_video import GenerateVideoStage
+    from narrascape.stages.generate_video_services import VideoTaskLedger, video_task_prompt_hash
 
     stage = GenerateVideoStage(api_key="test-key")
-    task_map = {
-        "vid_01": {
-            "provider": "seedance",
-            "task_id": "task-existing",
-            "status": "submitted",
-        }
-    }
+    ledger = VideoTaskLedger(tmp_path / "video_tasks.json")
+    stage._task_ledger = ledger
+    ledger.record_created(
+        "vid_01",
+        task_id="task-existing",
+        provider="seedance",
+        prompt_hash=video_task_prompt_hash(
+            provider="seedance", model="model", resolution="720p", prompt="prompt"
+        ),
+        model="model",
+        resolution="720p",
+        output_path=(tmp_path / "vid_01.mp4").as_posix(),
+    )
     create_calls = []
     poll_calls = []
-    persisted = []
 
     monkeypatch.setattr(stage, "_create_task", lambda *args, **kwargs: create_calls.append(args))
 
@@ -1018,22 +1022,31 @@ def test_generate_video_reuses_persisted_provider_task(tmp_path, monkeypatch):
         None,
         tmp_path,
         provider="seedance",
-        task_map=task_map,
-        persist_task_map=lambda: persisted.append(dict(task_map)),
     )
 
     assert result is True
     assert create_calls == []
     assert poll_calls == ["task-existing"]
-    assert task_map["vid_01"]["status"] == "completed"
-    assert persisted
+    assert ledger.get("vid_01")["status"] == "succeeded"
 
 
 def test_generate_video_does_not_repeat_ambiguous_submission(tmp_path, monkeypatch):
     from narrascape.stages.generate_video import GenerateVideoStage
+    from narrascape.stages.generate_video_services import VideoTaskLedger, video_task_prompt_hash
 
     stage = GenerateVideoStage(api_key="test-key")
-    task_map = {"vid_01": {"provider": "seedance", "status": "submitting"}}
+    ledger = VideoTaskLedger(tmp_path / "video_tasks.json")
+    stage._task_ledger = ledger
+    ledger.record_submitting(
+        "vid_01",
+        provider="seedance",
+        prompt_hash=video_task_prompt_hash(
+            provider="seedance", model="model", resolution="720p", prompt="prompt"
+        ),
+        model="model",
+        resolution="720p",
+        output_path=(tmp_path / "vid_01.mp4").as_posix(),
+    )
     create_calls = []
     monkeypatch.setattr(stage, "_create_task", lambda *args, **kwargs: create_calls.append(args))
 
@@ -1046,12 +1059,11 @@ def test_generate_video_does_not_repeat_ambiguous_submission(tmp_path, monkeypat
         None,
         tmp_path,
         provider="seedance",
-        task_map=task_map,
-        persist_task_map=lambda: None,
     )
 
     assert result is False
     assert create_calls == []
+    assert ledger.get("vid_01")["status"] == "submitting"
 
 
 def test_agnes_video_task_creation_does_not_retry_ambiguous_timeout(monkeypatch):
@@ -1199,24 +1211,31 @@ def test_generate_video_poll_retries_rate_limit_http_error(monkeypatch):
 
     attempts = []
     sleeps = []
+    now = [0.0]
 
     def fail_urlopen(*args, **kwargs):
         attempts.append(1)
         raise urllib.error.HTTPError("https://provider.test", 429, "rate limited", {}, None)
 
     monkeypatch.setattr("urllib.request.urlopen", fail_urlopen)
-    monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+
+    def advance_time(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr("time.time", lambda: now[0])
+    monkeypatch.setattr("time.sleep", advance_time)
 
     stage = GenerateVideoStage(
         api_key="fake",
         poll_interval=10,
-        max_poll_time=300,
+        max_poll_time=15,
         max_poll_errors=2,
     )
 
     assert stage._poll_task("task") is None
     assert len(attempts) == 2
-    assert sleeps == [10]
+    assert sleeps == [10, 10]
 
 
 def test_qa_reports_deep_quality_checks(tmp_path, monkeypatch):

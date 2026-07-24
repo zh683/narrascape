@@ -44,6 +44,7 @@ pipeline:
   production_quality_gates: false
   auto_rework: true
   max_rework_cycles: 1
+  max_workers: 1
 ```
 
 | Field | Behavior |
@@ -56,8 +57,15 @@ pipeline:
 | `design_overwrite` | When true, `design` rewrites root `image_prompts.yaml` and `image_map.yaml`. Set false for hand-curated projects that should preserve authored prompt files while still writing `pipeline/<name>/design_report.yaml`. |
 | `auto_rework` | When true, the default build executes `rework_execute` after a `film_supervisor` `needs_rework` decision. |
 | `max_rework_cycles` | Maximum automatic supervisor/rework/rerun cycles after the first build pass. |
+| `max_workers` | Maximum concurrent stages per dependency layer (`1` = serial, the default). Overridable per run with `narrascape build --stage-parallel N`. `--interactive` always forces serial orchestration. |
 
 `video_generation: required` is an AI-film production policy. It rejects `llm.mode: none` during config validation because required generated-video workflows need an AI Director client for script breakdown, director contract, take selection, semantic QA, and rework decisions.
+
+`video_generation` is a string enum, but a bare `off` needs no quotes: YAML 1.1
+parses it as a boolean and `load_config` normalizes it back to `"off"` before
+validation. The same applies to `video.storyboard_conditioning`. A bare `on`
+(or `yes`/`no`) is rejected with a message listing the valid values, because
+neither enum includes `"on"`.
 
 Use `strict_director: true` when a production run must prove that the director
 chain used configured LLM paths instead of local templates. The pipeline checks
@@ -99,6 +107,18 @@ llm:
 
 `none` is useful for offline tests. It is not a creative production mode.
 
+`api_key` accepts environment references: `${VAR}` and `${VAR:-default}` are
+expanded when `config.yaml` loads. An unresolved reference in `llm.api_key` is
+a config error naming the missing variable; unresolved references in other
+fields are kept verbatim with a debug log.
+
+With `mode: api`, a missing key is a hard error — there is no silent fallback
+to assistant/bridge mode. Resolution order: `llm.api_key`, then the provider
+environment variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`,
+or `ARK_API_KEY`). Prefer env references over plaintext keys: a plaintext
+`llm.api_key` logs a warning because tracked config files are easy to commit
+by accident. Keep secrets in the environment or a git-ignored `.env` file.
+
 `llm.mode: none` is only valid with `pipeline.video_generation: auto` or `off`. A project with `pipeline.video_generation: required` must use `auto`, `ai_assistant`, `bridge`, or `api`, and the pipeline also refuses to start if no LLM client is supplied.
 
 LLM diagnostics are bounded and credential-redacted before entering memory. Disk
@@ -119,14 +139,26 @@ tts:
   pitch: 0
   vol: 1.0
   sample_rate: 32000
+  segments: null
   continuous_sound: true
   text_normalization: true
   language_boost: Chinese
   add_pauses: false
   pronunciation_dict: []
+  requests_per_minute: 0
+  max_concurrency: 1
 ```
 
 `provider: local` creates deterministic MP3 tones for verification.
+`segments` pins the segment count reported to the TTS engine (`null` =
+auto-detected from the script).
+`requests_per_minute` limits the TTS API call rate with a process-local token
+bucket (`0` = unlimited, the previous behavior).
+`max_concurrency` allows up to N segments to generate concurrently (`1` =
+serial, the default). The rate limiter still applies per request, and state,
+fingerprint, and budget bookkeeping stays consistent under concurrency. When
+the budget is exceeded mid-run, in-flight requests finish before the stage
+fails (serial mode aborts immediately).
 
 ## Images
 
@@ -140,6 +172,7 @@ images:
   width: 2560
   height: 1440
   count: null
+  requests_per_minute: 0
 ```
 
 `provider: local` creates deterministic placeholder PNG files.
@@ -158,7 +191,40 @@ video:
   duration: 5
   frame_rate: 24
   takes: 1
+  max_poll_time: 900
+  requests_per_minute: 0
+  max_concurrency: 1
+  storyboard_conditioning: off
 ```
+
+`max_poll_time` is the per-task polling budget in seconds (default `900`).
+720p jobs regularly exceed five minutes. When polling times out, the paid
+task is kept in `pipeline/<name>/video_tasks.json` and the next
+`generate_video` run resumes polling that task instead of creating — and
+paying for — a duplicate.
+
+`max_concurrency` above `1` switches `generate_video` to submit-all →
+poll-all pipelining: cache decisions (fingerprint skip / free re-download /
+resume) are made serially up front, all new tasks are created with bounded
+concurrency (ledger-recorded on creation), and every in-flight task is then
+polled in one unified loop with downloads running concurrently. In this mode
+`max_poll_time` budgets the whole poll loop (slowest task), not each task
+serially. Agnes keeps its >=65s creation cadence by submitting serially.
+Ledger, fingerprint, 429-exemption, exactly-once accounting, and crash
+resume semantics are unchanged; a resumed task that terminates failed is
+re-created on the next run rather than in the same one.
+
+`storyboard_conditioning: auto` (default `off`, bare `off` needs no quotes —
+the YAML 1.1 boolean parse is normalized back to the enum string) opts into
+storyboard-as-generation-condition: each shot's
+`director_contract.storyboard_binding` is resolved to a physical panel
+(`assets/storyboard/<frame_id>.<ext>`) that becomes the video `first_frame`,
+and storyboard-bound reference images (`binding.reference_image_ids`) lead
+the reference list ahead of the auto-derived refs. A panel therefore outranks
+the generated still as the keyframe condition — it is the explicit,
+human-reviewable narrative keyframe. Missing panels or ids fall back to the
+default inputs without blocking, and panel/content changes flow into the
+request fingerprint, so cached clips are invalidated correctly.
 
 Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
 shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.
@@ -171,6 +237,32 @@ Narrascape sends generated stills, storyboard-bound reference plates, and
 director-contract prompts into Seedance, then writes completed clips for
 `take_select`, `film_timeline`, QA, and rework stages. Legacy Agnes video
 support remains only for older configs.
+
+## Take Select
+
+```yaml
+take_select:
+  selection_strategy: auto   # auto | mcts
+  mcts_budget: 5
+  mcts_exploration: 1.414
+```
+
+`selection_strategy: auto` (default) keeps the legacy behavior: one LLM judge
+completion per segment overriding the deterministic quality score — zero
+behavior change.
+
+`selection_strategy: mcts` opts into an MCTS-style UCT search
+(AniMaker-inspired): the LLM judges candidate takes through **pairwise duels**
+chosen by UCT (`win_rate + c*sqrt(ln(total)/visits)`), with the deterministic
+quality score as prior. `mcts_budget` (default `5`, range 1-50) is a hard cap
+on LLM duel attempts per segment — including errored attempts — so LLM cost
+per multi-take segment stays bounded; `mcts_exploration` (default `1.414`) is
+the UCT exploration constant. The full decision trace (every duel, per-take
+visits/wins/win-rate/final-UCT, budget usage, human-readable summary) is
+persisted to `take_selection.yaml` under each selection's `mcts` block for
+human review. Without an LLM client the stage falls back to the deterministic
+ranking with a warning and a `fallback_no_llm` trace block. See
+`docs/agent-stages/take_select.md`.
 
 ## Visual Rendering
 
@@ -228,6 +320,7 @@ audio:
     narration_lufs: -16
     target_lufs: -14
     fade_out_seconds: 5
+    requests_per_minute: 0
 ```
 
 ## BGM Map
@@ -265,6 +358,7 @@ encode:
 ending:
   enabled: true
   duration: 15.0
+  tone: hopeful
   template: null
   lines:
     - text: Produced by Narrascape
@@ -272,6 +366,8 @@ ending:
   quote: null
   quote_size: 28
 ```
+
+`tone` steers the narrative tone of generated closing narration.
 
 ## Budget
 
@@ -285,9 +381,25 @@ budget:
   total_estimated: null
   mode: warn              # observe | warn | cap
   per_action_threshold: 0.5
+  llm_default_rate:       # conservative fallback for unlisted models
+    input_per_million_usd: 5.0
+    output_per_million_usd: 15.0
+  llm_rates:              # USD per million tokens, keyed by model name
+    gpt-4o:
+      input_per_million_usd: 2.5
+      output_per_million_usd: 10.0
 ```
 
 Set any `*_estimated` value to `0.0` for providers that are free but still rate-limited. `null` means Narrascape uses its conservative default estimate.
+
+`llm_rates` / `llm_default_rate` price LLM token usage. Every completed LLM
+call is recorded into `pipeline/<name>/budget_state.json` (providers without
+usage reporting get a chars/4 token estimate; `local`, `bridge`, and
+`ai_assistant` providers are recorded as zero-cost entries). Provider-billed
+failures — TTS business errors, failed/expired video tasks — are recorded as
+`failed` entries and count against the cap, while network-layer failures are
+zero-cost `network_error` entries. The `assistant_handoff` stage aggregates
+all entries into `pipeline/<name>/cost_report.yaml`.
 
 ## Script File
 

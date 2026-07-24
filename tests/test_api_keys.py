@@ -6,7 +6,7 @@ def test_env_file_is_cached_until_reset(monkeypatch):
 
     calls = []
 
-    def fake_load_env_file():
+    def fake_load_env_file(path=None):
         calls.append("read")
         return {"ARK_API_KEY": "cached-key"}
 

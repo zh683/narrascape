@@ -37,6 +37,7 @@ ARTIFACT_STAGE_HINTS: dict[str, tuple[str, str]] = {
     "creative_review": ("creative_review", "Review"),
     "visual_semantic_report": ("visual_semantic_qa", "Review"),
     "film_supervisor": ("film_supervisor", "Supervisor"),
+    "cost_report": ("assistant_handoff", "Governance"),
     "assistant_handoff": ("assistant_handoff", "Handoff"),
     "rework_execution": ("rework_execute", "Rework"),
 }

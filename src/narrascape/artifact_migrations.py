@@ -18,6 +18,7 @@ _CANONICAL_ARTIFACTS = (
     "assistant_handoff",
     "continuity_bible",
     "creative_review",
+    "cost_report",
     "design_report",
     "director_contract",
     "director_review",

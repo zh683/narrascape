@@ -170,5 +170,5 @@ class RetryPolicy:
             max_retries=self.max_retries,
             base_delay=self.base_delay,
             max_delay=self.max_delay,
-            retry_if=self.retry_if,
+            retryable_if=self.retry_if,
         )

@@ -52,6 +52,16 @@ Production-oriented features already implemented:
   clips, writes regeneration/recut/replacement queues, and triggers reruns.
 - `assistant_handoff` that writes a Codex-readable takeover packet with stage
   docs, next actions, quality gates, artifacts, and commands.
+- Request-fingerprint caching for paid generation stages, plus a paid video
+  task ledger (`video_tasks.json`) with crash-resume and exactly-once cost
+  accounting.
+- Cost governance: per-action budget ledger with LLM token pricing, failure
+  accounting, and an aggregated `cost_report.yaml`.
+- Opt-in parallelism: `--stage-parallel` layered stage execution and
+  `tts`/`video` `max_concurrency` per-asset generation pipelines.
+- Six-dimension QA assertion taxonomy (`qa.assertions`) reviewed per dimension
+  by `visual_semantic_qa`, plus optional MCTS take selection and
+  storyboard-conditioned video generation.
 - Offline deterministic providers for end-to-end tests.
 - SQLite-backed persistent jobs executed by an independent local worker.
 - Real decoded-frame and PCM audio analysis in render QA.
@@ -198,6 +208,7 @@ narrascape pre_production -p my-video
 narrascape design -p my-video
 narrascape build -p my-video --approve
 narrascape build -p my-video --production --approve
+narrascape build -p my-video --stage-parallel 4 --approve
 narrascape build -p my-video --stage generate_video --approve
 narrascape build -p my-video --stage qa --approve
 narrascape status -p my-video
@@ -235,6 +246,7 @@ and the exact `narrascape build` commands to continue the next stage.
 
 ## Documentation
 
+- [中文 README / Chinese README](README.zh-CN.md)
 - [Product Introduction / 产品介绍](docs/product-introduction.md)
 - [Quick Start](docs/quickstart.md)
 - [Complete Feature Map](docs/features.md)
@@ -261,6 +273,29 @@ pytest -q --tb=short --no-cov
 `requirements-dev.txt` is a thin wrapper around `pip install -e ".[dev]"`.
 Use it when bootstrapping a fresh checkout so CLI dependencies such as Typer and
 test tools such as pytest are installed before running `python -m narrascape.cli`.
+
+### Reproducible environments (dependency lock)
+
+`pyproject.toml` intentionally declares only lower bounds (`>=`) for runtime and
+dev dependencies: Narrascape is a library, and upper bounds are an anti-pattern
+for libraries unless a specific future release is known to break compatibility
+(no such case is known today).
+
+For developers who need a reproducible environment, `requirements-lock.txt`
+pins the exact versions resolved in the project's test environment. CI
+currently keeps installing with floating lower bounds
+(`pip install -e ".[dev]"`); the lock file is an opt-in snapshot, not the CI
+install path:
+
+```bash
+pip install -r requirements-lock.txt
+pip install -e . --no-deps
+```
+
+Regenerate it after dependency upgrades with
+`pip freeze --exclude-editable` from the test venv (excluding the `narrascape`
+editable install itself). The snapshot is interpreter-specific; regenerate on
+the target Python minor if an exact cross-version pin is needed.
 
 ## License
 

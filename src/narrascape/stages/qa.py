@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from narrascape.artifacts import write_artifact
 from narrascape.media_analysis import analyze_media
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.ffmpeg import get_media_info, run_ffmpeg_raw, validate_video
+
+logger = logging.getLogger("narrascape.stages.qa")
 
 
 class QAStage(Stage):
@@ -368,7 +371,7 @@ class QAStage(Stage):
                 try:
                     temp_frame.unlink()
                 except Exception:
-                    pass
+                    logger.warning("Could not remove QA temp frame %s", temp_frame, exc_info=True)
 
     def _detect_placeholder_residue(self, context: StageContext) -> bool:
         state_path = context.config.pipeline_dir / "image_gen_state.json"
@@ -379,7 +382,11 @@ class QAStage(Stage):
                 if selection.get("name") == "local_image":
                     return True
             except Exception:
-                pass
+                logger.warning(
+                    "Could not parse %s for placeholder-residue detection",
+                    state_path,
+                    exc_info=True,
+                )
         return False
 
     def _film_timeline_checks(self, context: StageContext) -> dict[str, Any]:

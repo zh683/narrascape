@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import write_artifact
+from narrascape.catalog import REWORK_ACTION_CHAINS, REWORK_TAIL_STAGES
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import (
     atomic_write_yaml,
@@ -164,41 +165,17 @@ class ReworkExecuteStage(Stage):
         replacement_queue: list[dict[str, Any]],
     ) -> list[str]:
         stages: list[str] = []
-        if contract_rewrite_queue:
-            stages.extend(
-                [
-                    "director_contract",
-                    "reference_plate",
-                    "generate_images",
-                    "animatic",
-                    "generate_video",
-                    "take_select",
-                    "film_timeline",
-                ]
-            )
-        if regen_queue:
-            stages.extend(["generate_video", "take_select", "film_timeline"])
-        if replacement_queue:
-            stages.extend(["source_media", "film_timeline"])
-        if recut_queue:
-            stages.extend(["film_timeline", "remotion_preview", "film_assemble"])
+        queue_triggers = {
+            "rewrite_director_contract": bool(contract_rewrite_queue),
+            "regenerate_video": bool(regen_queue),
+            "replace_source_media": bool(replacement_queue),
+            "recut": bool(recut_queue),
+        }
+        for action_type, triggered in queue_triggers.items():
+            if triggered:
+                stages.extend(REWORK_ACTION_CHAINS[action_type])
         if stages:
-            stages.extend(
-                [
-                    "remotion_preview",
-                    "film_assemble",
-                    "audio",
-                    "subtitles",
-                    "qa",
-                    "continuity_bible",
-                    "editing_review",
-                    "director_review",
-                    "rework_plan",
-                    "creative_review",
-                    "visual_semantic_qa",
-                    "film_supervisor",
-                ]
-            )
+            stages.extend(REWORK_TAIL_STAGES)
         return self._dedupe(stages)
 
     def _mark_stages_pending(self, state_path: Path, stages: list[str]) -> None:

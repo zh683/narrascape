@@ -10,6 +10,7 @@ and rework queues.
 | Need | Read |
 | --- | --- |
 | Understand the product in Chinese and English | [Product Introduction / 产品介绍](product-introduction.md) |
+| 中文读者入口 | [中文 README](../README.zh-CN.md) · [中文快速上手](quickstart.zh-CN.md) |
 | Run the project locally | [Quick Start](quickstart.md) |
 | See what is implemented today | [Complete Feature Map](features.md) |
 | Understand the whole workflow | [System Design](design.md) |
@@ -20,6 +21,9 @@ and rework queues.
 | Understand provider selection | [Provider Governance](provider-governance.md) |
 | Use reference images and storyboard bindings | [Reference Image + Storyboard Workflow](reference-image-storyboard-workflow.md) |
 | Track long-term film capability | [Film Capability Roadmap](film-capability-roadmap.md) |
+| Run the LLM over the file-based bridge | [Bridge Mode](BRIDGE_MODE.md) |
+| Keep visual style consistent across shots | [Style Consistency](style-consistency.md) |
+| Work on the codebase with strict typing | [Type Checking](type-checking.md) |
 
 ## Recommended Paths
 
@@ -120,6 +124,7 @@ debugging one stage at a time:
 - [kenburns](agent-stages/kenburns.md)
 - [pre_production](agent-stages/pre_production.md)
 - [production_readiness](agent-stages/production_readiness.md)
+- [pre_production](agent-stages/pre_production.md)
 - [qa](agent-stages/qa.md)
 - [reference_plate](agent-stages/reference_plate.md)
 - [remix_audio](agent-stages/remix_audio.md)

@@ -24,10 +24,14 @@ This page describes the implemented product surface as it exists in the codebase
   - `storyboard_sheet` renders a product-style contact sheet for storyboard frames and director bindings.
   - `editing_review` evaluates `film_timeline.yaml` for pacing, repetition, and emotional curve.
   - `rework_plan` turns director findings into regeneration, recut, or source-media replacement actions.
-  - `take_select` selects the best generated-video take when multi-take clips exist.
+  - `take_select` selects the best generated-video take when multi-take clips
+    exist, using an LLM judge or deterministic QA scoring; the opt-in
+    `take_select.selection_strategy: mcts` replaces the single-pass judge with
+    a budget-capped UCT search over pairwise LLM duels and writes a full
+    decision trace into `take_selection.yaml`.
 - Supervising director workflow:
   - `creative_review` uses an LLM when configured to review story clarity, cinematic intent, pacing, emotion, and continuity.
-  - `visual_semantic_qa` uses an LLM when configured to check whether visuals match script, character, costume, scene, and shot intent.
+  - `visual_semantic_qa` uses an LLM when configured to check whether visuals match script, character, costume, scene, and shot intent. Review is organized by a stable six-dimension QA taxonomy (`identity_continuity`, `dialogue_attribution`, `camera_language`, `motion_plausibility`, `scene_consistency`, `technical_quality`) carried on `qa.assertions` in the director contract; every finding is attributed to one dimension and the report includes a per-dimension pass/fail/unevaluated summary.
   - `film_supervisor` reads director reports and decides the next pipeline stages.
   - `assistant_handoff` writes a Codex-readable takeover packet with required reading, artifacts, quality gates, commands, and next actions.
   - `rework_execute` applies a rework plan by quarantining failed generated clips, writing rework queues, marking affected stages pending, and feeding the automatic rerun loop.
@@ -84,6 +88,7 @@ This page describes the implemented product surface as it exists in the codebase
 - Seedream provider path with prompt metadata and reference-image fields.
 - Local provider that creates deterministic PNG placeholders for offline end-to-end tests.
 - Provider selector is executed before generation and records the selected provider in `image_gen_state.json`.
+- Provider-bound prompts are sanitized before sending; any rewrite is persisted to the shared `pipeline/<project>/prompt_safety.yaml` audit (a clean run creates no file).
 - Per-prompt fields:
   - `shot_type`
   - `movement`
@@ -105,6 +110,9 @@ This page describes the implemented product surface as it exists in the codebase
 - Blocks provider calls when prompts are still generic or missing the executable ingredients needed for controllable video generation.
 - Supports model mapping from internal names to Volcengine Ark IDs.
 - Persists video generation state for resumability.
+- Every paid task is recorded in the `video_tasks.json` ledger on creation; on rerun the stage resumes polling unfinished parameter-equivalent tasks and re-downloads succeeded ones instead of paying twice, with exactly-once cost accounting.
+- Provider-bound prompts are sanitized before sending; any rewrite is persisted to the shared `pipeline/<project>/prompt_safety.yaml` audit.
+- With `video.storyboard_conditioning: auto` (default `off`), a physical storyboard panel bound via `storyboard_binding.storyboard_frame_ids` outranks the generated still as the provider `first_frame`, and storyboard-bound reference ids lead the reference list; the per-shot choice is recorded in `video_gen_state.json`.
 - Provider selector is executed before generation and records the selected video provider and requirements.
 - `video.takes` can ask `generate_video` to create multiple `vid_<segment>_take_<take>.mp4` candidates per shot.
 - `take_select` chooses among those candidates, using an LLM judge when configured and deterministic QA proxy scoring otherwise.
@@ -186,15 +194,60 @@ This page describes the implemented product surface as it exists in the codebase
 - Provider registry reports configured and local providers.
 - Provider selector scores candidates by task fit, quality, control, reliability, cost efficiency, latency, and continuity.
 - Provider selector is wired into `generate_images`, `generate_tts`, `generate_music`, and `generate_video`.
-- Canonical artifact validation exists for `asset_manifest`, `assistant_handoff`, `design_report`, `film_timeline`, `remotion_preview`, `render_report`, `screenplay_structure`, `director_contract`, `continuity_bible`, `editing_review`, `rework_plan`, `take_selection`, `creative_review`, `visual_semantic_report`, `film_supervisor`, `rework_execution`, and `storyboard_sheet`.
+- Provider HTTP middleware (`providers/http_client.py`) honors `Retry-After`, enforces per-provider token buckets (`requests_per_minute`), classifies circuit-breaker failures, and exempts 429 poll backoffs from error counts.
+- Canonical artifact validation exists for `asset_manifest`, `animatic`, `assistant_handoff`, `continuity_bible`, `creative_review`, `design_report`, `director_contract`, `editing_review`, `film_supervisor`, `production_readiness`, `film_timeline`, `render_report`, `reference_plates`, `remotion_preview`, `rework_execution`, `rework_plan`, `screenplay_structure`, `storyboard_sheet`, `take_selection`, `visual_semantic_report`, and `video_prompt_quality`.
 - Composition runtime registry exposes `ffmpeg` now and reserves a Remotion integration surface.
+
+## Cost Governance
+
+- `budget` config sets a total cap, per-category estimates, an
+  `observe | warn | cap` mode, and a per-action threshold.
+- Every paid action is recorded as a budget entry in
+  `pipeline/<project>/budget_state.json`: provider-billed failures (TTS
+  business errors, failed/expired video tasks) count as `failed` entries,
+  network-layer failures as zero-cost `network_error` entries.
+- LLM token usage is priced per model through `budget.llm_rates`, with
+  `llm_default_rate` as the conservative fallback for unlisted models;
+  providers without usage reporting get a chars/4 estimate and
+  `local`/`bridge`/`ai_assistant` calls are recorded as zero-cost entries.
+- The `assistant_handoff` stage aggregates all entries into
+  `pipeline/<project>/cost_report.yaml` so every takeover packet sees current
+  spending.
+
+## Security
+
+- API key fields accept environment references: `${VAR}` and
+  `${VAR:-default}` are interpolated at load time, so tracked config files
+  never need to hold secrets.
+- With `llm.mode: api`, a missing key is a hard error — there is no silent
+  fallback to assistant/bridge mode.
+- A plaintext `llm.api_key` logs a warning because tracked config files are
+  easy to commit by accident; secrets belong in the environment or a
+  git-ignored `.env` file.
+- Provider-bound prompts pass through `prompt_safety` sanitization, and every
+  rewrite lands in the shared `pipeline/<project>/prompt_safety.yaml` audit.
 
 ## Cache And Rebuilds
 
-- Content-hash cache under `pipeline/<name>/.cache`.
+- Request-level content-addressed fingerprints for paid generation stages (`generate_images`, `generate_video`, `generate_tts`, `generate_music`): an artifact is reused only when the output file exists and the stored fingerprint of its originating request (prompt, model, parameters, reference content) matches the current request.
 - Stage state tracking.
 - `--force` bypasses cached stage completion.
 - `clean` can remove stage artifacts or all pipeline outputs.
+
+## Concurrency
+
+- `--stage-parallel N` (or `pipeline.max_workers`) switches the scheduler to
+  opt-in layered parallel execution: stages within one dependency level run
+  concurrently, pre-gates stay serial on the main thread, halts take effect at
+  level boundaries, and results aggregate in dependency execution order.
+- `tts.max_concurrency` generates narration segments concurrently; payloads
+  and fingerprint checks are prepared serially and only paid generation runs
+  on the pool.
+- `video.max_concurrency` runs video generation as a submit-all → poll-all
+  pipeline: serial Phase A cache/fingerprint decisions, bounded-concurrency
+  Phase B task creation, and a unified Phase C poll loop with concurrent
+  downloads; the paid task ledger, exactly-once accounting, and crash-resume
+  semantics are unchanged.
 
 ## Dashboard
 

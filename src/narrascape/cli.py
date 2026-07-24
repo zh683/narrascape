@@ -31,6 +31,8 @@ from narrascape.config import (
     load_script,
 )
 from narrascape.log_setup import setup_logging
+from narrascape.pipeline import final_stage_results
+from narrascape.stages.base import Stage, StageResult
 from narrascape.utils.safe_io import atomic_copy_file, atomic_write_yaml
 
 LLMProviderName = Literal[
@@ -193,6 +195,45 @@ def _load_script_or_empty(config: NarrascapeConfig) -> Script:
     return load_script(config.script_path) if config.script_path.exists() else _empty_script()
 
 
+def _load_project_config(project_dir: Path) -> NarrascapeConfig:
+    """Load config.yaml from a project dir, exiting with a consistent error."""
+    config_path = project_dir / "config.yaml"
+    if not config_path.exists():
+        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
+        raise typer.Exit(1)
+    try:
+        return load_config(config_path)
+    except Exception as e:
+        console.print(f"[bold red]Config error:[/] {e}")
+        raise typer.Exit(1)
+
+
+def run_single_stage(
+    stage: Stage, config: NarrascapeConfig, *, script: Script | None = None
+) -> StageResult:
+    """Run one stage for a single-stage CLI command and persist its outcome.
+
+    These commands bypass the Pipeline executor, so without this bookkeeping
+    state.json never learns about their results and ``narrascape status``
+    goes blind. Records exactly what build records for a completed stage
+    (status + normalized outputs; failures record "failed") and creates no
+    approval files — single-stage commands are explicit user invocations and
+    must not demand an approve round-trip.
+    """
+    from narrascape.pipeline import record_stage_result
+    from narrascape.stages.base import StageContext
+
+    context = StageContext(
+        config=config,
+        script=script if script is not None else _load_script_or_empty(config),
+        state={},
+        dry_run=False,
+    )
+    result = stage.run(context)
+    record_stage_result(config, stage.name, result)
+    return result
+
+
 def _pre_production_report_output(outputs: Any) -> str:
     if isinstance(outputs, dict):
         return str(outputs.get("pre_production_report", ""))
@@ -250,6 +291,16 @@ def _validated_stage_name(stage_name: str) -> str:
 
 from narrascape.llm import LLMClient
 from narrascape.llm import LLMConfig as LLMClientConfig
+
+# Credential environment variable consulted per provider in explicit
+# llm.mode=api (after config.yaml llm.api_key, which itself supports
+# "${VAR}" interpolation at load time).
+_LLM_PROVIDER_ENV_VARS = {
+    "openai": "OPENAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "volcengine": "ARK_API_KEY",
+}
 
 
 def _llm_client_config(
@@ -329,22 +380,43 @@ def _get_llm_client(
                 )
             )
         elif config.llm.mode == "api":
-            # Use config API settings
-            if config.llm.api_key:
-                return LLMClient(
-                    _llm_client_config(
-                        config,
-                        provider=cast(LLMProviderName, config.llm.provider or "openai"),
-                        model=config.llm.model or "gpt-4o",
-                        api_key=config.llm.api_key,
-                        base_url=config.llm.base_url or None,
-                        temperature=config.llm.temperature,
-                        max_tokens=config.llm.max_tokens,
-                        max_retries=3,
-                        retry_delay=2.0,
-                        json_mode=True,
-                    )
+            # Explicit API mode never falls back to assistant/bridge: a missing
+            # key is a configuration error and must fail loudly.
+            provider = (config.llm.provider or "openai").lower()
+            env_var = _LLM_PROVIDER_ENV_VARS.get(provider, "")
+            api_key = config.llm.api_key.strip()
+            if not api_key and env_var:
+                api_key = APIKeys.get(env_var) or ""
+            if not api_key or api_key.startswith("${"):
+                key_source = (
+                    f'Set llm.api_key in config.yaml ("${{{env_var}}}" references are '
+                    f"expanded at load time) or export {env_var}"
+                    if env_var
+                    else "Set llm.provider and llm.api_key in config.yaml"
                 )
+                console.print("LLM config error:", style="bold red", end=" ")
+                console.print(
+                    "llm.mode=api requires an API key, "
+                    f"but none was found. {key_source}. Explicit api mode does not fall "
+                    "back to assistant/bridge mode. See docs/quickstart.md and "
+                    "docs/config-reference.md.",
+                    markup=False,
+                    highlight=False,
+                )
+                raise typer.Exit(1)
+            return LLMClient(
+                LLMClientConfig(
+                    provider=cast(LLMProviderName, provider),
+                    model=config.llm.model or "gpt-4o",
+                    api_key=api_key,
+                    base_url=config.llm.base_url or None,
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens,
+                    max_retries=3,
+                    retry_delay=2.0,
+                    json_mode=True,
+                )
+            )
         elif config.llm.mode == "none":
             if config.pipeline.video_generation == "required":
                 console.print(
@@ -648,31 +720,12 @@ def research_cmd(
 
     Generates research_report.md with structured findings.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.cache import BuildCache
-    from narrascape.stages.base import StageContext
     from narrascape.stages.research import ResearchStage
 
     stage = ResearchStage(llm_client=_get_llm_client(config=config), topic=topic, depth=depth)
-    context = StageContext(
-        config=config,
-        script=_empty_script(),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=_empty_script())
     if not result.success:
         console.print(f"[bold red]Research failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -721,19 +774,8 @@ def write_cmd(
     The script will be humanized and marked for your approval.
     After editing, approve it to proceed to design/build.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.cache import BuildCache
-    from narrascape.stages.base import StageContext
     from narrascape.stages.write import WriteStage
 
     stage = WriteStage(
@@ -744,15 +786,7 @@ def write_cmd(
         research_report=research_report or "",
         auto_humanize=not skip_humanize,
     )
-    context = StageContext(
-        config=config,
-        script=_empty_script(),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=_empty_script())
     if not result.success:
         console.print(f"[bold red]Write failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -782,33 +816,14 @@ def humanize_cmd(
 
     Backs up the original script and applies humanization patterns.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
-
-    from narrascape.cache import BuildCache
-    from narrascape.stages.base import StageContext
     from narrascape.stages.humanize import HumanizeStage
 
     stage = HumanizeStage(
         llm_client=_get_llm_client(config=config), aggressive=aggressive, score_only=score_only
     )
-    context = StageContext(
-        config=config,
-        script=_load_script_or_empty(config),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config)
     if not result.success:
         console.print(f"[bold red]Humanize failed:[/] {result.message}")
         raise typer.Exit(1)
@@ -926,16 +941,7 @@ def pre_production_cmd(
     Uses AI Assistant bridge tasks for intelligent character/scene extraction.
     No external API keys needed when running with an AI assistant.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
-
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
     script_path = project_dir / config.project.script_file
     if not script_path.exists():
@@ -970,18 +976,7 @@ def pre_production_cmd(
         generate_expressions=not skip_expressions,
         generate_storyboard=not skip_storyboard,
     )
-    from narrascape.cache import BuildCache
-    from narrascape.stages.base import StageContext
-
-    context = StageContext(
-        config=config,
-        script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=load_script(config.script_path))
 
     if result.success:
         console.print("[bold green]✅ Pre-production complete[/]")
@@ -1043,16 +1038,7 @@ def design_cmd(
     Uses AI Assistant bridge tasks for autonomous cinematic design via PromptDirector.
     No external API keys needed when running with an AI assistant.
     """
-    config_path = project_dir / "config.yaml"
-    if not config_path.exists():
-        console.print(f"[bold red]Error:[/] config.yaml not found in {project_dir}")
-        raise typer.Exit(1)
-
-    try:
-        config = load_config(config_path)
-    except Exception as e:
-        console.print(f"[bold red]Config error:[/] {e}")
-        raise typer.Exit(1)
+    config = _load_project_config(project_dir)
 
     script_path = project_dir / config.project.script_file
     if not script_path.exists():
@@ -1099,18 +1085,7 @@ def design_cmd(
     from narrascape.stages.design import DesignStage
 
     stage = DesignStage(llm_client=llm_client, style_template=style)
-    from narrascape.cache import BuildCache
-    from narrascape.stages.base import StageContext
-
-    context = StageContext(
-        config=config,
-        script=load_script(config.script_path),
-        cache=BuildCache(config.pipeline_dir / ".cache"),
-        state={},
-        dry_run=False,
-    )
-
-    result = stage.run(context)
+    result = run_single_stage(stage, config, script=load_script(config.script_path))
 
     if result.success:
         console.print("[bold green]✅ Design complete[/]")
@@ -1134,8 +1109,18 @@ def build_cmd(
     force: Annotated[bool, typer.Option("--force", help="Ignore cache and rebuild")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview without executing")] = False,
     parallel: Annotated[
-        int, typer.Option("--parallel", help="Max parallel workers", min=1, max=16)
+        int,
+        typer.Option("--parallel", help="Max parallel render workers (kenburns)", min=1, max=16),
     ] = 4,
+    stage_parallel: Annotated[
+        int,
+        typer.Option(
+            "--stage-parallel",
+            help="Max concurrent stages per dependency layer (0 = use pipeline.max_workers config)",
+            min=0,
+            max=16,
+        ),
+    ] = 0,
     interactive: Annotated[
         bool, typer.Option("--interactive", "-i", help="Pause after each stage for human review")
     ] = False,
@@ -1217,6 +1202,7 @@ def build_cmd(
                 "console": console,
                 "llm_client": _get_llm_client(config=config),
                 "minimax_api_key": APIKeys.minimax(),
+                "max_workers": stage_parallel or None,
             },
         ).run(stages)
 
@@ -1232,14 +1218,18 @@ def build_cmd(
 
     console.print(table)
 
-    if all(r.success for r in results.values()):
+    # Success judgment uses the FINAL result per logical stage: a stage that
+    # failed in an early rework cycle but was fixed later counts as succeeded.
+    # The summary table above still shows every cycle's history.
+    final_results = final_stage_results(results)
+    if all(r.success for r in final_results.values()):
         console.print("[bold green]✅ Build complete[/]")
         for stage_name, result in results.items():
             if isinstance(result.outputs, dict):
                 for key, path in result.outputs.items():
                     console.print(f"  [dim]{key}:[/] {path}")
     else:
-        failed = [name for name, r in results.items() if not r.success]
+        failed = [name for name, r in final_results.items() if not r.success]
         console.print(f"[bold red]❌ Build stopped:[/] {', '.join(failed)}")
         console.print("[dim]  Review pending approvals: narrascape status -p .[/]")
         raise typer.Exit(1)

@@ -10,16 +10,21 @@ src/narrascape/
   config.py              Pydantic config and project file models
   pipeline.py            Stage graph, dependency resolution, state handling
   pipeline_approval.py   Human review gates
-  cache.py               Content-hash artifact cache
+  catalog.py             Stage, doc, and artifact catalogs for handoffs
+  api_keys.py            API key resolution with ${VAR} env interpolation
+  prompt_safety.py       Provider prompt sanitization and audit persistence
+  prompt_quality.py      Video prompt ingredient scoring
+  prompt_compiler.py     Provider-specific prompt compilation
   agent/                 AI Director models and PromptDirector
   llm/                   LLM clients, bridge transport, prompt templates, validators
-  providers/             Provider registry, selector scoring, execution helpers
+  providers/             Provider registry, selector scoring, execution, HTTP middleware, health
   artifacts.py           Lightweight canonical artifact validation
+  contracts/             Typed pydantic schemas for the core stage contracts
   compose.py             Composition runtime selection surface
   stages/                Pipeline stages
   motion/                Ken Burns and crop/zoom/PIL render engines
   uploader/              Reference image upload helpers
-  utils/                 ffmpeg, retry, budget helpers
+  utils/                 ffmpeg, retry, budget, fingerprint, safe_io, video_quality helpers
 ```
 
 ## Stage Registry
@@ -133,6 +138,21 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
 
 `_resolve_dependencies()` expands requested targets with transitive dependencies and performs a topological sort.
 
+> **Why `film_timeline` does not declare `take_select` / `generate_video`:**
+> a declared dependency is *pulled into execution* — running
+> `--stage film_timeline` alone would then trigger `generate_video` (paid
+> generation) and `take_select` as a side effect. Instead the stage reads
+> `video_gen_state.json` / `take_selection.yaml` tolerantly (missing files are
+> fine: the run falls back to base `vid_NN.mp4` globs, then source media,
+> then generated images) and emits an **advisory warning** when multi-take
+> videos (`vid_*_take_*.mp4`) exist but `take_selection.yaml` is missing,
+> since take files are invisible to the fallback glob. In full builds the
+> registry order already runs `take_select` before `film_timeline`.
+
+`_resolve_dependency_levels()` groups the same closure into topological levels
+(registry order within a level, deterministic) for the optional layered
+parallel scheduler.
+
 ## Pipeline Runtime
 
 `Pipeline.run()` does the following:
@@ -150,18 +170,106 @@ supervisor's `next_stages` for up to `pipeline.max_rework_cycles` cycles.
    - reloads the script after `write` or `humanize`
    - creates or checks approval state
 
+### Parallel orchestration (opt-in)
+
+When `pipeline.max_workers > 1` (or `--stage-parallel N` is passed), the
+scheduler switches to layered parallel execution. The serial loop is untouched
+and remains the default. Parallel semantics:
+
+- Stages within one dependency level run concurrently on a thread pool;
+  pre-gates (rejected / cached-skip / pending-approval halt / `can_run`) are
+  evaluated serially on the main thread before a level is submitted.
+- A pre-gate halt stops the run before the level executes; execution halts
+  (stage failure, review request) take effect at the level boundary —
+  already-submitted stages always run to completion.
+- When approval is required, every successful stage of the level gets a review
+  request (in execution order) instead of stopping after the first one.
+- Results are aggregated in dependency execution order, never completion order.
+- The script context is refreshed at level boundaries (after `write` /
+  `humanize`), never mid-level.
+- `--interactive` forces serial orchestration because approval prompts only
+  work on the main thread.
+- LLM budget attribution (`_active_stage`) is thread-local, so concurrent
+  stages charge the correct stage; state, approval, budget, and provider-health
+  files are already guarded by `safe_io` file locks.
+
+### Per-asset concurrency (opt-in)
+
+`generate_tts` supports `tts.max_concurrency > 1` to generate segments
+concurrently. Payloads and cache-fingerprint checks are prepared serially; only
+paid generation runs on the pool. The per-provider token bucket
+(`requests_per_minute`) is thread-safe (lock-guarded check-and-decrement) and
+still applies per request. State and fingerprint writes are lock-guarded. On
+budget exhaustion, in-flight requests finish before the stage fails.
+
+`generate_video` supports `video.max_concurrency > 1` as a submit-all →
+poll-all pipeline (see `docs/agent-stages/generate_video.md`): serial Phase A
+cache/fingerprint decisions, bounded-concurrency Phase B task creation
+(Agnes serialized to keep its >=65s cadence), and a unified Phase C poll loop
+with concurrent downloads, 429 Retry-After backoff exempt from error counts,
+and `max_poll_time` budgeting the slowest task. The paid task ledger,
+exactly-once accounting, and crash-resume semantics are unchanged; no extra
+locks were needed because ledger/budget/state writes are already
+file-lock-atomic and all shared-state aggregation stays on the main thread.
+Image generation remains serial per asset (its sequential-batch mode produces
+N images per request and is not asset-parallelizable).
+
 ## State Files
 
 ```text
 pipeline/<project>/state.json
 pipeline/<project>/approvals/
-pipeline/<project>/.cache/
 pipeline/<project>/budget_state.json
 pipeline/<project>/video_gen_state.json
+pipeline/<project>/video_tasks.json
 pipeline/<project>/render_report.yaml
+pipeline/<project>/prompt_safety.yaml
+pipeline/<project>/cost_report.yaml
 ```
 
-`state.json` stores stage completion. Approval files store human review state. The cache stores content-addressed rendered artifacts.
+`state.json` stores stage completion. Approval files store human review state.
+`prompt_safety.yaml` is the prompt-sanitize audit (written only when a stage
+rewrote a provider-bound prompt); `cost_report.yaml` is the spend aggregate
+refreshed by `assistant_handoff` from `budget_state.json`.
+Paid generation stages (images, video, TTS, music) skip re-generation only when
+the output file exists AND its stored request fingerprint matches the current
+request (prompt, model, size/resolution/duration, voice/speed, reference
+content). Per-unit fingerprints live in each stage's state file
+(`image_gen_state.json`, `tts_state.json`, `bgm_state.json` under a
+`fingerprints` key); for video they live in the paid task ledger
+(`video_tasks.json`, `request_fingerprint` field) alongside the stable
+`prompt_hash` used for in-flight task resume. Legacy state without
+fingerprints never matches and is regenerated once.
+
+## Contract Schemas
+
+`contracts/` holds the canonical field-level pydantic models for the three
+core stage-to-stage contracts: `director_contract.yaml`
+(`DirectorContract`), `film_timeline.yaml` (`FilmTimeline`), and
+`film_supervisor.yaml` (`FilmSupervisorReport`). They complement — not
+replace — the lightweight top-level key / `schema_version` checks in
+`artifacts.py`.
+
+- **Write side (fail-fast):** each producing stage validates its full payload
+  through the model immediately before the `artifacts.py` gate and the YAML
+  write, so schema drift raises `pydantic.ValidationError` at the write
+  point and no broken artifact reaches disk.
+- **Read side (advisory):** readers such as `Pipeline._supervisor_next_stages`,
+  `FilmTimelineStage._semantic_fields`, and
+  `GenerateVideoStage._load_director_contract` validate loaded artifacts for
+  typed access or drift detection, but fall back to raw dict access with a
+  warning when an older artifact does not match the model.
+- **Compatibility policy:** every model uses `extra="allow"`, optional fields
+  carry defaults, and `schema_version` stays a required `Literal` anchor, so
+  artifacts from older/newer producers keep loading and unknown fields
+  round-trip unchanged.
+
+`contracts/qa_taxonomy.py` complements the models with the stable QA assertion
+dimension taxonomy (`QA_DIMENSIONS`) shared by both sides of the QA contract:
+`director_contract` tags every `qa.assertions` entry with one dimension, and
+`visual_semantic_qa` reviews per dimension and attributes every finding to
+one. Its normalization helpers tolerate legacy untagged artifacts by bucketing
+them as `uncategorized`.
 
 ## LLM Client
 

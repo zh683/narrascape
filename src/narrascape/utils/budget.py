@@ -1,17 +1,39 @@
 """Budget tracking for API calls to prevent runaway spending.
 
 Tracks cumulative spending across pipeline runs and enforces caps.
+
+State file (budget_state.json) schema:
+    {
+        "spent": 12.34,
+        "entries": [
+            {
+                "timestamp": "...", "kind": "video", "status": "failed",
+                "cost": 0.5, "stage": "generate_video", "provider": "seedance",
+                "model": "", "detail": "vid_01",
+                "prompt_tokens": 0, "completion_tokens": 0, "estimated": false
+            },
+            ...
+        ]
+    }
+
+Older state files that only contain {"spent": ...} load transparently.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from narrascape.config import BudgetConfig
-from narrascape.utils.safe_io import atomic_write_json, update_json_mapping
+from narrascape.config import BudgetConfig, LLMTokenRate, NarrascapeConfig
+from narrascape.utils.safe_io import (
+    atomic_write_json,
+    atomic_write_yaml,
+    load_json_mapping,
+    update_json_mapping,
+)
 
 logger = logging.getLogger("narrascape.budget")
 
@@ -23,6 +45,38 @@ DEFAULT_COSTS = {
     "music_per_zone": 0.02,
     "video_per_segment": 0.5,
 }
+
+# Keep the persisted entry list bounded across many runs.
+MAX_ENTRIES = 2000
+
+# Entry status values
+ENTRY_STATUS_SUCCESS = "success"
+ENTRY_STATUS_FAILED = "failed"
+ENTRY_STATUS_NETWORK_ERROR = "network_error"
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate when a provider does not report usage (~4 chars/token)."""
+    return max(1, len(text) // 4)
+
+
+def estimate_llm_cost(
+    rates: dict[str, LLMTokenRate],
+    default_rate: LLMTokenRate,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> float:
+    """Estimate LLM call cost in USD from token usage and configured rates.
+
+    Unknown models fall back to the conservative default rate.
+    """
+    rate = rates.get(model, default_rate)
+    return round(
+        prompt_tokens * rate.input_per_million_usd / 1_000_000
+        + completion_tokens * rate.output_per_million_usd / 1_000_000,
+        6,
+    )
 
 
 class BudgetTracker:
@@ -54,7 +108,7 @@ class BudgetTracker:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(
             self.state_path,
-            {"spent": round(self.spent, 4), "reservations": self.reservations},
+            {"spent": round(self.spent, 4), "entries": [], "reservations": self.reservations},
         )
 
     def remaining(self) -> float:
@@ -203,15 +257,116 @@ class BudgetTracker:
         self.try_spend(actual_cost)
         logger.info(f"Budget: {self.spent:.2f}/{self.budget.total_usd:.2f} USD spent")
 
-    def try_spend(self, actual_cost: float) -> tuple[bool, str]:
+    def _append_entry(self, data: dict[str, Any], entry: dict[str, Any]) -> None:
+        entries = data.setdefault("entries", [])
+        if isinstance(entries, list):
+            entries.append(entry)
+            if len(entries) > MAX_ENTRIES:
+                del entries[: len(entries) - MAX_ENTRIES]
+
+    def _make_entry(
+        self,
+        actual_cost: float,
+        *,
+        kind: str,
+        status: str,
+        stage: str,
+        provider: str,
+        model: str,
+        detail: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        estimated: bool,
+    ) -> dict[str, Any]:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+            "status": status,
+            "cost": round(actual_cost, 6),
+            "stage": stage,
+            "provider": provider,
+            "model": model,
+            "detail": detail,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "estimated": estimated,
+        }
+
+    def record_actual(
+        self,
+        actual_cost: float,
+        *,
+        kind: str,
+        status: str = ENTRY_STATUS_SUCCESS,
+        stage: str = "",
+        provider: str = "",
+        model: str = "",
+        detail: str = "",
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        estimated: bool = False,
+    ) -> None:
+        """Record spending that has already been incurred, unconditionally.
+
+        Used for post-hoc accounting: provider-billed failed calls (task
+        failed/expired, business error status), LLM token usage, and
+        zero-cost network-failure entries. Unlike try_spend this never blocks
+        — the money is already spent. Cap enforcement happens on the next
+        can_spend/try_spend check.
+        """
+        if actual_cost < 0:
+            logger.warning(f"Ignoring negative cost: {actual_cost}")
+            return
+        entry = self._make_entry(
+            actual_cost,
+            kind=kind,
+            status=status,
+            stage=stage,
+            provider=provider,
+            model=model,
+            detail=detail,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated=estimated,
+        )
+
+        def update(data: dict[str, Any]) -> None:
+            data["spent"] = round(float(data.get("spent", 0.0)) + actual_cost, 4)
+            self._append_entry(data, entry)
+
+        data = update_json_mapping(self.state_path, update, default={"spent": 0.0, "entries": []})
+        self.spent = float(data.get("spent", 0.0))
+
+    def try_spend(
+        self,
+        actual_cost: float,
+        *,
+        kind: str = "generic",
+        status: str = ENTRY_STATUS_SUCCESS,
+        stage: str = "",
+        provider: str = "",
+        detail: str = "",
+    ) -> tuple[bool, str]:
         """Atomically check and record spending for concurrent pipeline stages."""
         if actual_cost < 0:
             return False, f"Ignoring negative cost: {actual_cost}"
+        entry = self._make_entry(
+            actual_cost,
+            kind=kind,
+            status=status,
+            stage=stage,
+            provider=provider,
+            model="",
+            detail=detail,
+            prompt_tokens=0,
+            completion_tokens=0,
+            estimated=False,
+        )
         if self.budget.mode == "observe":
-            self._atomic_add(actual_cost)
+            self._atomic_add(actual_cost, entry)
             return True, f"Budget observe: {self.spent:.2f}/{self.budget.total_usd:.2f} USD spent"
         if self.budget.mode == "warn":
-            self._atomic_add(actual_cost)
+            self._atomic_add(actual_cost, entry)
             if self.spent > self.budget.total_usd:
                 msg = (
                     f"Budget WARNING: {self.spent:.2f} USD exceeds "
@@ -233,6 +388,7 @@ class BudgetTracker:
                     )
                     return
                 data["spent"] = round(spent_before + actual_cost, 4)
+                self._append_entry(data, entry)
 
             data = update_json_mapping(self.state_path, update, default={"spent": 0.0})
             self.spent = float(data.get("spent", 0.0))
@@ -240,12 +396,14 @@ class BudgetTracker:
                 logger.error(blocked)
                 return False, blocked
             return True, f"Budget OK: {self.spent:.2f}/{self.budget.total_usd:.2f} USD"
-        self._atomic_add(actual_cost)
+        self._atomic_add(actual_cost, entry)
         return True, ""
 
-    def _atomic_add(self, actual_cost: float) -> None:
+    def _atomic_add(self, actual_cost: float, entry: dict[str, Any] | None = None) -> None:
         def update(data: dict[str, Any]) -> None:
             data["spent"] = round(float(data.get("spent", 0.0)) + actual_cost, 4)
+            if entry is not None:
+                self._append_entry(data, entry)
 
         data = update_json_mapping(self.state_path, update, default={"spent": 0.0})
         self.spent = float(data.get("spent", 0.0))
@@ -277,3 +435,69 @@ class BudgetTracker:
         self.spent = 0.0
         self.reservations = {}
         self._save()
+
+
+# ───────────────────────────────────────────
+# Cost report
+# ───────────────────────────────────────────
+
+
+def _group_sum(entries: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        name = str(entry.get(key) or "unknown")
+        group = groups.setdefault(name, {"calls": 0, "failed": 0, "cost_usd": 0.0})
+        group["calls"] += 1
+        if entry.get("status") != ENTRY_STATUS_SUCCESS:
+            group["failed"] += 1
+        group["cost_usd"] = round(group["cost_usd"] + float(entry.get("cost", 0.0)), 6)
+    return groups
+
+
+def build_cost_report(state: dict[str, Any], budget: BudgetConfig) -> dict[str, Any]:
+    """Aggregate budget_state.json content into a cost report mapping."""
+    entries = [e for e in state.get("entries", []) if isinstance(e, dict)]
+    spent = float(state.get("spent", 0.0))
+    llm_entries = [e for e in entries if e.get("kind") == "llm"]
+    failed_entries = [e for e in entries if e.get("status") == ENTRY_STATUS_FAILED]
+    return {
+        "schema_version": "cost_report.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "budget": {
+            "mode": budget.mode,
+            "total_usd": budget.total_usd,
+            "spent_usd": round(spent, 6),
+            "remaining_usd": round(max(0.0, budget.total_usd - spent), 6),
+        },
+        "totals": {
+            "calls": len(entries),
+            "succeeded": sum(1 for e in entries if e.get("status") == ENTRY_STATUS_SUCCESS),
+            "failed": len(failed_entries),
+            "network_errors": sum(
+                1 for e in entries if e.get("status") == ENTRY_STATUS_NETWORK_ERROR
+            ),
+            "cost_usd": round(spent, 6),
+            "failed_cost_usd": round(sum(float(e.get("cost", 0.0)) for e in failed_entries), 6),
+        },
+        "by_kind": _group_sum(entries, "kind"),
+        "by_stage": _group_sum(entries, "stage"),
+        "by_provider": _group_sum(entries, "provider"),
+        "llm": {
+            "calls": len(llm_entries),
+            "prompt_tokens": sum(int(e.get("prompt_tokens", 0)) for e in llm_entries),
+            "completion_tokens": sum(int(e.get("completion_tokens", 0)) for e in llm_entries),
+            "estimated_calls": sum(1 for e in llm_entries if e.get("estimated")),
+            "cost_usd": round(sum(float(e.get("cost", 0.0)) for e in llm_entries), 6),
+        },
+    }
+
+
+def write_cost_report(config: NarrascapeConfig) -> Path:
+    """Write pipeline/<name>/cost_report.yaml from budget_state.json."""
+    state_path = config.pipeline_dir / "budget_state.json"
+    state = load_json_mapping(state_path, default={"spent": 0.0, "entries": []})
+    report = build_cost_report(state, config.budget)
+    out_path = config.pipeline_dir / "cost_report.yaml"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_yaml(out_path, report)
+    return out_path
