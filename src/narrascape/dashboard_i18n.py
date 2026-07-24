@@ -42,6 +42,7 @@ STAGE_LABELS_ZH: dict[str, str] = {
 }
 
 ARTIFACT_LABELS_ZH: dict[str, str] = {
+    "cost_report": "Cost report",
     "script": "脚本",
     "pre_production": "前期设定",
     "design_report": "设计报告",

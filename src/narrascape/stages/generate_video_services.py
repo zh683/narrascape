@@ -440,7 +440,7 @@ VIDEO_TASK_LEDGER_VERSION = "1.0"
 
 # Ledger statuses that mean "the provider may still be working on this paid
 # task" — such records must be resumed instead of creating a new paid task.
-RESUMABLE_TASK_STATUSES = frozenset({"submitted", "polling"})
+RESUMABLE_TASK_STATUSES = frozenset({"submitting", "submitted", "polling"})
 
 _LEDGER_HISTORY_LIMIT = 5
 
@@ -554,6 +554,26 @@ class VideoTaskLedger:
             return None
         return record
 
+    def find_ambiguous_submission(
+        self,
+        out_name: str,
+        prompt_hash: str,
+        request_fingerprint: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return a matching submission whose provider response was lost."""
+        record = self.get(out_name)
+        if not record or record.get("status") != "submitting":
+            return None
+        stored_fingerprint = record.get("request_fingerprint")
+        if request_fingerprint is not None and stored_fingerprint is not None:
+            if stored_fingerprint != request_fingerprint:
+                return None
+        elif record.get("prompt_hash") != prompt_hash:
+            return None
+        if record.get("task_id") or record.get("video_id"):
+            return None
+        return record
+
     def fingerprint_matches(self, out_name: str, request_fingerprint: str) -> bool:
         """True when a succeeded record exists with this exact fingerprint.
 
@@ -628,6 +648,32 @@ class VideoTaskLedger:
             tasks[out_name] = record
 
         update_json_mapping(self.path, update, default=self._default())
+
+    def record_submitting(
+        self,
+        out_name: str,
+        *,
+        provider: str,
+        prompt_hash: str,
+        model: str,
+        resolution: str,
+        output_path: str,
+        cost_estimate: float | None = None,
+        request_fingerprint: str | None = None,
+    ) -> None:
+        """Persist provider-call intent before a paid async task is submitted."""
+        self.record_created(
+            out_name,
+            task_id=None,
+            provider=provider,
+            prompt_hash=prompt_hash,
+            model=model,
+            resolution=resolution,
+            output_path=output_path,
+            cost_estimate=cost_estimate,
+            request_fingerprint=request_fingerprint,
+        )
+        self.update_status(out_name, "submitting")
 
     def update_status(self, out_name: str, status: str, **fields: Any) -> None:
         """Update the status (and optional extra fields) of a ledger record."""

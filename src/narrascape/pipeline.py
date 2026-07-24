@@ -62,6 +62,7 @@ from narrascape.utils.safe_io import (
     atomic_write_json,
     file_lock,
     load_json_mapping,
+    load_yaml_mapping,
     update_json_mapping,
 )
 
@@ -1474,8 +1475,14 @@ class Pipeline:
         try:
             data = load_artifact_file(path)
         except Exception as exc:
-            logger.warning(f"Could not read film_supervisor.yaml: {exc}")
-            return []
+            logger.warning(
+                "film_supervisor.yaml failed typed validation; using raw access (%s)", exc
+            )
+            try:
+                data = load_yaml_mapping(path)
+            except Exception as raw_exc:
+                logger.warning(f"Could not read film_supervisor.yaml: {raw_exc}")
+                return []
         try:
             report = FilmSupervisorReport.model_validate(data)
         except ValidationError:

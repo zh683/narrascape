@@ -47,7 +47,7 @@ class PreProductionArtifact(ArtifactModel):
 
 class DesignReportArtifact(ArtifactModel):
     schema_version: Literal["design_report.v1"]
-    project_title: str
+    project_title: str = ""
     segments: list[dict[str, Any]]
 
 
@@ -130,12 +130,12 @@ class FilmTimelineArtifact(ArtifactModel):
     schema_version: Literal["film_timeline.v1"]
     project: dict[str, Any]
     tracks: dict[str, list[dict[str, Any]]]
-    coverage: dict[str, Any]
+    coverage: dict[str, Any] = Field(default_factory=dict)
 
 
 class RenderReportArtifact(ArtifactModel):
     schema_version: Literal["render_report.v1"]
-    output: str
+    output: str = ""
     checks: dict[str, Any]
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -190,8 +190,19 @@ class StoryboardSheetArtifact(ArtifactModel):
 
 class TakeSelectionArtifact(ArtifactModel):
     schema_version: Literal["take_selection.v1"]
-    selection_process: dict[str, Any]
+    selection_process: dict[str, Any] = Field(default_factory=dict)
     selections: list[dict[str, Any]]
+
+
+class CostReportArtifact(ArtifactModel):
+    schema_version: Literal["cost_report.v1"]
+    generated_at: str = ""
+    budget: dict[str, Any] = Field(default_factory=dict)
+    totals: dict[str, Any] = Field(default_factory=dict)
+    by_kind: dict[str, Any] = Field(default_factory=dict)
+    by_stage: dict[str, Any] = Field(default_factory=dict)
+    by_provider: dict[str, Any] = Field(default_factory=dict)
+    llm: dict[str, Any] = Field(default_factory=dict)
 
 
 class VisualSemanticReportArtifact(ReviewArtifact):
@@ -211,6 +222,7 @@ ARTIFACT_MODELS: dict[str, type[ArtifactModel]] = {
     "assistant_handoff": AssistantHandoffArtifact,
     "continuity_bible": ContinuityBibleArtifact,
     "creative_review": CreativeReviewArtifact,
+    "cost_report": CostReportArtifact,
     "design_report": DesignReportArtifact,
     "director_contract": DirectorContractArtifact,
     "director_review": DirectorReviewArtifact,
@@ -238,6 +250,7 @@ CANONICAL_FILENAMES: dict[str, str] = {
     "assistant_handoff.yaml": "assistant_handoff",
     "continuity_bible.yaml": "continuity_bible",
     "creative_review.yaml": "creative_review",
+    "cost_report.yaml": "cost_report",
     "design_report.yaml": "design_report",
     "director_contract.yaml": "director_contract",
     "director_review.yaml": "director_review",

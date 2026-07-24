@@ -33,8 +33,8 @@ def test_workbench_dashboard_tracks_missing_key_artifacts(tmp_path: Path):
     assert artifacts["film_timeline"]["kind"] == "text"
     assert artifacts["film_timeline"]["modified"] > 0
     assert artifacts["reference_plates"]["status"] == "missing"
-    assert data["artifact_counts"]["total"] == 26
-    assert data["artifact_counts"]["missing"] == 24
+    assert data["artifact_counts"]["total"] == 27
+    assert data["artifact_counts"]["missing"] == 25
     assert data["artifact_counts"]["attention"] >= 24
     assert any(item["stage"] == "reference_plate" for item in data["command_suggestions"])
     assert data["canvas"]["width"] >= 1400

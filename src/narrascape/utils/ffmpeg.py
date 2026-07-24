@@ -368,6 +368,9 @@ def _atomic_output_args(args: list[str]) -> tuple[list[str], Path | None, Path |
     normalized = _normalize_ffmpeg_args(args)
     if not normalized or not _is_media_path(normalized[-1]):
         return normalized, None, None
+    # Preserve printf-style image-sequence patterns for ffmpeg frame output.
+    if "%" in normalized[-1]:
+        return normalized, None, None
     output_path = Path(normalized[-1])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_name(

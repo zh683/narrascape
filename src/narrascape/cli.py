@@ -394,11 +394,14 @@ def _get_llm_client(
                     if env_var
                     else "Set llm.provider and llm.api_key in config.yaml"
                 )
+                console.print("LLM config error:", style="bold red", end=" ")
                 console.print(
-                    "[bold red]LLM config error:[/] llm.mode=api requires an API key, "
+                    "llm.mode=api requires an API key, "
                     f"but none was found. {key_source}. Explicit api mode does not fall "
                     "back to assistant/bridge mode. See docs/quickstart.md and "
-                    "docs/config-reference.md."
+                    "docs/config-reference.md.",
+                    markup=False,
+                    highlight=False,
                 )
                 raise typer.Exit(1)
             return LLMClient(

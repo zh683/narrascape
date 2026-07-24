@@ -209,6 +209,14 @@ class GenerateTTSStage(Stage):
             out: Path = item["out"]
             payload = item["payload"]
             fingerprint = item["fingerprint"]
+            per_tts = budget_tracker.get_cost_estimate("tts", 1)
+            reservation_id = f"generate_tts:{selection.tool.provider}:seg_{sid}"
+            reserved, reserve_msg = budget_tracker.reserve(reservation_id, per_tts)
+            if not reserved:
+                with state_lock:
+                    if not budget_failure:
+                        budget_failure.append(reserve_msg)
+                return
             try:
                 r = self._http.post_json(
                     f"{self.base_url}/v1/t2a_v2",
@@ -225,8 +233,9 @@ class GenerateTTSStage(Stage):
                         state["errors"].append(f"seg_{sid}: {r['base_resp']}")
                         atomic_write_json(state_path, state)
                     # 请求已到达服务端并被处理（HTTP 200 + 业务失败）：按估计成本记账
+                    budget_tracker.release_reservation(reservation_id)
                     budget_tracker.record_actual(
-                        budget_tracker.get_cost_estimate("tts", 1),
+                        per_tts,
                         kind="tts",
                         status="failed",
                         stage="generate_tts",
@@ -249,25 +258,21 @@ class GenerateTTSStage(Stage):
                         state.setdefault("fingerprints", {})[str(sid)] = fingerprint
                         atomic_write_json(state_path, state)
                     logger.info(f"OK {out.stat().st_size / 1024:.0f}KB")
-                    # Record actual cost per successful TTS generation
-                    per_tts = budget_tracker.get_cost_estimate("tts", 1)
-                    spend_ok, spend_msg = budget_tracker.try_spend(
+                    budget_tracker.release_reservation(reservation_id)
+                    budget_tracker.record_actual(
                         per_tts,
                         kind="tts",
                         stage="generate_tts",
                         provider=selection.tool.provider,
                         detail=f"seg_{sid}",
                     )
-                    if not spend_ok:
-                        with state_lock:
-                            if not budget_failure:
-                                budget_failure.append(spend_msg)
             except Exception as e:
                 logger.error(f"FAIL: {e}")
                 with state_lock:
                     state["errors"].append(f"seg_{sid}: {e}")
                     atomic_write_json(state_path, state)
                 # 网络层失败（请求未到达服务端）：不计费，仅记 zero-cost 条目
+                budget_tracker.release_reservation(reservation_id)
                 budget_tracker.record_actual(
                     0.0,
                     kind="tts",

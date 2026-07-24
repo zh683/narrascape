@@ -57,6 +57,7 @@ from narrascape.uploader.image_uploader import ImageUploader
 from narrascape.utils.budget import BudgetTracker
 from narrascape.utils.ffmpeg import validate_video
 from narrascape.utils.fingerprint import hash_reference, request_fingerprint
+from narrascape.utils.retry import is_retryable_provider_error
 from narrascape.utils.safe_io import (
     atomic_write_json,
     download_to_path,
@@ -65,6 +66,10 @@ from narrascape.utils.safe_io import (
 )
 
 logger = logging.getLogger("narrascape.stages.generate_video")
+
+
+def _is_explicit_rate_limit(exc: Exception) -> bool:
+    return isinstance(exc, urllib.error.HTTPError) and exc.code == 429
 
 
 class GenerateVideoStage(Stage):
@@ -864,7 +869,13 @@ class GenerateVideoStage(Stage):
         req.add_header("Content-Type", "application/json")
 
         try:
-            r = self._http.execute_request(req, timeout=60, max_retries=3, base_delay=2.0)
+            r = self._http.execute_request(
+                req,
+                timeout=60,
+                max_retries=3,
+                base_delay=2.0,
+                retryable_if=_is_explicit_rate_limit,
+            )
         except Exception as e:
             logger.error(f"Task creation failed: {e}")
             return None
@@ -899,7 +910,7 @@ class GenerateVideoStage(Stage):
                 )
             except urllib.error.HTTPError as e:
                 if e.code == 429:
-                    # 限流不是故障：按 Retry-After 实际等待，不计入连续错误
+                    # Rate limits use the total polling deadline, not the error budget.
                     hint = retry_after_hint(e)
                     wait = max(self.poll_interval, hint) if hint is not None else self.poll_interval
                     logger.warning(
@@ -908,6 +919,9 @@ class GenerateVideoStage(Stage):
                     )
                     time.sleep(wait)
                     continue
+                if not is_retryable_provider_error(e):
+                    logger.error(f"  Polling aborted after permanent HTTP error {e.code}")
+                    return None
                 consecutive_errors += 1
                 logger.warning(f"  Poll error (attempt {attempts}): {e}")
                 if consecutive_errors >= self.max_poll_errors:
@@ -996,11 +1010,7 @@ class GenerateVideoStage(Stage):
                 max_retries=4,
                 base_delay=65.0,
                 max_delay=75.0,
-                retryable_exceptions=(
-                    TimeoutError,
-                    urllib.error.URLError,
-                    urllib.error.HTTPError,
-                ),
+                retryable_if=_is_explicit_rate_limit,
                 on_retry=self._log_agnes_retry,
             )
         except Exception as exc:
@@ -1211,7 +1221,7 @@ class GenerateVideoStage(Stage):
                 )
             except urllib.error.HTTPError as exc:
                 if exc.code == 429:
-                    # 限流不是故障：按 Retry-After 实际等待，不计入连续错误
+                    # Rate limits use the total polling deadline, not the error budget.
                     wait = max(self.poll_interval, self._retry_after_from_http_error(exc))
                     logger.warning(
                         f"  Agnes poll rate-limited (429, attempt {attempts}); "
@@ -1568,6 +1578,24 @@ class GenerateVideoStage(Stage):
                     ledger.update_status(out_name, "polling")
                     return False
 
+            ambiguous = ledger.find_ambiguous_submission(out_name, prompt_hash, fingerprint)
+            if ambiguous is not None:
+                logger.error(
+                    f"  {out_name}: previous task submission has an ambiguous outcome; "
+                    "refusing to create a duplicate paid task"
+                )
+                return False
+            ledger.record_submitting(
+                out_name,
+                provider=provider,
+                prompt_hash=prompt_hash,
+                model=model,
+                resolution=resolution,
+                output_path=out_mp4.as_posix(),
+                cost_estimate=self._per_task_cost_estimate,
+                request_fingerprint=fingerprint,
+            )
+
         if provider == "agnes":
             task_id, video_id = self._create_agnes_task(
                 prompt,
@@ -1845,6 +1873,16 @@ class GenerateVideoStage(Stage):
                             }
                         )
                         continue
+                    ambiguous = ledger.find_ambiguous_submission(
+                        out_name, prompt_hash, segment_fingerprint
+                    )
+                    if ambiguous is not None:
+                        logger.error(
+                            f"  {out_name}: previous task submission has an ambiguous outcome; "
+                            "refusing to create a duplicate paid task"
+                        )
+                        fail_count += 1
+                        continue
 
                 creates.append(
                     {
@@ -1875,6 +1913,17 @@ class GenerateVideoStage(Stage):
                 can, msg = budget_tracker.can_spend(self._per_task_cost_estimate)
                 if not can:
                     return {"item": item, "task_id": None, "video_id": None, "budget_error": msg}
+            if ledger is not None:
+                ledger.record_submitting(
+                    item["out_name"],
+                    provider=provider_name,
+                    prompt_hash=item["prompt_hash"],
+                    model=item["model"],
+                    resolution=item["resolution"],
+                    output_path=item["out_mp4"].as_posix(),
+                    cost_estimate=self._per_task_cost_estimate,
+                    request_fingerprint=item["fingerprint"],
+                )
             if provider_name == "agnes":
                 task_id, video_id = self._create_agnes_task(
                     item["prompt"],

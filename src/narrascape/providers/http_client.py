@@ -195,6 +195,7 @@ class ProviderHttpClient:
             urllib.error.URLError,
             urllib.error.HTTPError,
         ),
+        retryable_if: Callable[[Exception], bool] = is_retryable_http_error,
         on_retry: Callable[[Exception, int, float], None] | None = None,
     ) -> dict[str, Any]:
         """POST a JSON body and return the parsed JSON object ({} for non-objects)."""
@@ -210,6 +211,7 @@ class ProviderHttpClient:
             base_delay=base_delay,
             max_delay=max_delay,
             retryable_exceptions=retryable_exceptions,
+            retryable_if=retryable_if,
             on_retry=on_retry,
         )
 
@@ -241,6 +243,7 @@ class ProviderHttpClient:
             urllib.error.URLError,
             urllib.error.HTTPError,
         ),
+        retryable_if: Callable[[Exception], bool] = is_retryable_http_error,
         on_retry: Callable[[Exception, int, float], None] | None = None,
     ) -> dict[str, Any]:
         """Execute a pre-built Request with rate limiting, retry, and health accounting.
@@ -260,7 +263,7 @@ class ProviderHttpClient:
                 base_delay=base_delay,
                 max_delay=max_delay,
                 retryable_exceptions=retryable_exceptions,
-                retryable_if=is_retryable_http_error,
+                retryable_if=retryable_if,
                 on_retry=on_retry,
                 delay_hint=retry_after_hint,
                 sleeper=self._sleep,

@@ -54,8 +54,8 @@ The current schema records:
    and take-level edit decisions inside the timeline.
 
 3. Rework enhancement:
-   Automated rework execution is implemented; the next layer is finer-grained
-   approval before replacing timeline clips and cross-cycle rework learning.
+   Finer-grained approval before replacing timeline clips and cross-cycle rework
+   learning are the next layer.
 
 4. Continuity enhancement:
    The continuity bible is implemented; the next layer is enforcing lens,
