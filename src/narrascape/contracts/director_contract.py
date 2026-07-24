@@ -66,9 +66,23 @@ class ReferenceStrategy(ContractModel):
     identity_priority: str = ""
 
 
+class ShotQaAssertion(ContractModel):
+    """A single QA assertion tagged with a stable cinemetrics dimension.
+
+    ``dimension`` is one of the ids in
+    :data:`narrascape.contracts.qa_taxonomy.QA_DIMENSIONS`; unknown values are
+    tolerated and bucketed as ``uncategorized`` by the taxonomy helpers.
+    """
+
+    id: str = ""
+    dimension: str = ""
+    check: str = ""
+
+
 class QaAssertions(ContractModel):
     must_show: list[str] = Field(default_factory=list)
     must_not_show: list[str] = Field(default_factory=list)
+    assertions: list[ShotQaAssertion] = Field(default_factory=list)
 
 
 class PromptBlueprint(ContractModel):
@@ -111,8 +125,16 @@ class GenerationContract(ContractModel):
 
 
 class ShotQa(ContractModel):
+    """Acceptance hints for downstream QA stages.
+
+    ``assertions`` is an additive structured checklist alongside the flat
+    ``must_show`` / ``must_not_show`` token lists; both planes stay populated
+    so older consumers keep working unchanged.
+    """
+
     must_show: list[str] = Field(default_factory=list)
     must_not_show: list[str] = Field(default_factory=list)
+    assertions: list[ShotQaAssertion] = Field(default_factory=list)
 
 
 class DirectorShot(ContractModel):

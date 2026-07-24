@@ -9,6 +9,7 @@ import yaml
 from narrascape.artifacts import validate_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract
+from narrascape.contracts.qa_taxonomy import QA_DIMENSIONS, normalize_assertions
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
 from narrascape.utils.safe_io import atomic_write_yaml
@@ -122,13 +123,17 @@ class DirectorContractStage(Stage):
             f"Screenplay structure: {json.dumps(structure, ensure_ascii=False)}\n"
             f"Continuity bible: {json.dumps(continuity, ensure_ascii=False)}\n\n"
             f"Storyboard frames by segment: {json.dumps(storyboard_by_segment, ensure_ascii=False)}\n\n"
+            "Tag every QA assertion with exactly one dimension from the stable checklist "
+            f"taxonomy: {json.dumps(QA_DIMENSIONS, ensure_ascii=False)}. "
+            "Provide 2-4 assertions per shot in qa.assertions covering the dimensions "
+            "most at risk for that shot.\n\n"
             'Return JSON only: {"shots":[{"segment_id":1,"story_reason":"...","emotional_target":"...",'
             '"film_language":{"shot_type":"...","camera_motion":"...","lighting":"...","composition":"..."},'
             '"continuity_constraints":{"characters":[],"location":"...","wardrobe":"...","lighting":"..."},'
             '"storyboard_binding":{"storyboard_frame_ids":[],"character_positions":[],"scene_ref":"...",'
             '"wardrobe_lock":"...","composition_requirements":[],"reference_image_ids":[]},'
             '"generation":{"video_prompt":"...","negative_prompt":"...","duration":5,"motion":"..."},'
-            '"qa":{"must_show":[],"must_not_show":[]}}]}.'
+            '"qa":{"must_show":[],"must_not_show":[],"assertions":[{"dimension":"...","check":"..."}]}}]}.'
         )
         response = self.llm_client.complete(prompt, json_mode=True)
         if hasattr(response, "extract_json_safe"):
@@ -239,6 +244,16 @@ class DirectorContractStage(Stage):
                         "qa": {
                             "must_show": self._must_show(characters, location_text, wardrobe_text),
                             "must_not_show": self._must_not_show(negative),
+                            "assertions": self._default_assertions(
+                                characters,
+                                location_text,
+                                wardrobe_text,
+                                shot_type,
+                                movement,
+                                lighting,
+                                story_reason,
+                                segment.text,
+                            ),
                         },
                     }
                 )
@@ -306,6 +321,7 @@ class DirectorContractStage(Stage):
             "qa": {
                 "must_show": list(qa.get("must_show") or []),
                 "must_not_show": list(qa.get("must_not_show") or []),
+                "assertions": normalize_assertions(qa.get("assertions")),
             },
         }
 
@@ -374,6 +390,7 @@ class DirectorContractStage(Stage):
             "qa_assertions": {
                 "must_show": list(qa.get("must_show") or []),
                 "must_not_show": list(qa.get("must_not_show") or []),
+                "assertions": normalize_assertions(qa.get("assertions")),
             },
         }
 
@@ -383,6 +400,60 @@ class DirectorContractStage(Stage):
 
     def _must_not_show(self, negative_prompt: str) -> list[str]:
         return [part.strip() for part in negative_prompt.split(",") if part.strip()]
+
+    def _default_assertions(
+        self,
+        characters: list[str],
+        location_text: str,
+        wardrobe_text: str,
+        shot_type: str,
+        movement: str,
+        lighting: str,
+        story_reason: str,
+        segment_text: str,
+    ) -> list[dict[str, str]]:
+        """Deterministic per-shot QA checklist covering every taxonomy dimension."""
+        show_target = ", ".join(characters) if characters else "the named character"
+        beat = segment_text.strip()
+        if len(beat) > 120:
+            beat = beat[:117].rstrip() + "..."
+        checks = [
+            (
+                "identity_continuity",
+                f"{show_target} keeps the same face, age, body, and wardrobe "
+                f"({wardrobe_text}) as the character references throughout the clip.",
+            ),
+            (
+                "dialogue_attribution",
+                f"The subject acting the story beat on screen is {show_target}; "
+                f"the action matches the narration: {beat or 'the scripted beat'}.",
+            ),
+            (
+                "camera_language",
+                f"The clip executes the planned {shot_type} shot with {movement} "
+                f"camera movement and {lighting}.",
+            ),
+            (
+                "motion_plausibility",
+                f"The story action ({story_reason}) and camera movement stay "
+                "physically plausible — no warping, ghosting, frozen frames, or "
+                "impossible motion.",
+            ),
+            (
+                "scene_consistency",
+                f"The location reads as {location_text} with coherent scene "
+                "geography and props across the clip.",
+            ),
+            (
+                "technical_quality",
+                "No readable text, watermark, flicker, compression artifacts, or "
+                "low-quality frames.",
+            ),
+        ]
+        return [
+            {"id": f"{dimension}:{index + 1}", "dimension": dimension, "check": check}
+            for index, (dimension, check) in enumerate(checks)
+        ]
 
     def _video_negative_prompt(self, negative_prompt: str) -> str:
         standard = [

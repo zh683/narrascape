@@ -22,6 +22,22 @@
 5. Compile provider-specific prompt variants under `generation.compiled_prompts`, especially `seedance` plus a `generic` fallback, with the provider prompt style, negative prompt, and reference strategy.
 6. Write `storyboard_binding.storyboard_frame_ids`, `character_positions`, `scene_ref`, `wardrobe_lock`, `composition_requirements`, and `reference_image_ids` when storyboard frames are available.
 7. Write `qa.must_show` and `qa.must_not_show` so `visual_semantic_qa` can review the same contract that guided generation.
+8. Tag every QA assertion with a stable dimension from `narrascape.contracts.qa_taxonomy.QA_DIMENSIONS` and write the tagged checklist to `qa.assertions` (and `prompt_blueprint.qa_assertions.assertions`). The LLM path is instructed to tag assertions itself; the deterministic fallback emits a default checklist covering all six dimensions per shot. Legacy contracts without `assertions` stay valid — readers bucket them as `uncategorized`.
+
+## QA Assertion Dimensions
+
+`qa.assertions` entries are `{id, dimension, check}`. The dimension taxonomy (Stable-cinemetrics-inspired) is fixed:
+
+| Dimension | Review intent |
+|---|---|
+| `identity_continuity` | Correct character identity: face, age, body, wardrobe locked to references |
+| `dialogue_attribution` | The right character says/acts the right narration beat |
+| `camera_language` | Shot type, camera motion, lighting, composition execute the film-language plan |
+| `motion_plausibility` | Subject action and camera movement are physically plausible |
+| `scene_consistency` | Location, geography, props, time-of-day coherent with continuity locks |
+| `technical_quality` | No readable text, watermark, flicker, artifacts, low-quality frames |
+
+Anything outside these ids (legacy contracts, malformed LLM output) is tolerated and bucketed as `uncategorized`; the flat `must_show` / `must_not_show` planes always stay populated alongside the tagged checklist.
 
 ## Do Not
 

@@ -98,6 +98,13 @@ def _shot_payload() -> dict[str, Any]:
                 "qa_assertions": {
                     "must_show": ["field coat"],
                     "must_not_show": ["extra characters"],
+                    "assertions": [
+                        {
+                            "id": "identity_continuity:1",
+                            "dimension": "identity_continuity",
+                            "check": "Mira keeps the field coat and the same face throughout the clip.",
+                        }
+                    ],
                 },
             },
             "compiled_prompts": {
@@ -119,6 +126,13 @@ def _shot_payload() -> dict[str, Any]:
         "qa": {
             "must_show": ["field coat"],
             "must_not_show": ["extra characters"],
+            "assertions": [
+                {
+                    "id": "identity_continuity:1",
+                    "dimension": "identity_continuity",
+                    "check": "Mira keeps the field coat and the same face throughout the clip.",
+                }
+            ],
         },
     }
 

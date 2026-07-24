@@ -69,14 +69,14 @@
 | **产物路径双前缀 → 增量跳过与审批门失效**（审批链路实测发现，563 单测未覆盖）：stage 返回的产物路径已是含 project_dir 前缀的 cwd 相对 display 路径，`_recordable_outputs` 对非绝对路径一律再拼 project_dir → 双前缀；`_completed_outputs_present` 检查必然失败，以相对路径 `-p` 指定项目时每次 build 重跑全部阶段（LLM 阶段重复调用） | ✅ 已修复（记录侧归一化为 project_dir 相对 posix 路径；校验侧候选链含存量双前缀迁移；新增 8 个测试含相对路径项目核心回归） | `52c06cd` |
 | YAML 1.1 裸 `off` 被解析为布尔值（`pipeline.video_generation: off` 校验报错，需写 `"off"` 加引号） | ✅ 已修复（load_config 校验前按字段映射表归一：False→"off"；True 在无 "on" 枚举时友好报错列明合法值；真布尔字段不受影响） | `7767410` |
 
-### 第四梯队（学术驱动）— 已落地 2/4
+### 第四梯队（学术驱动）— 已落地 4/4
 
 | 方向 | 状态 | 提交 |
 |---|---|---|
 | take_select 真实质量信号（VBench 式感知评分前置版） | ✅ 已落地 | `e921662` |
 | 分镜即生成条件（STAGE/DrawVideo 路径） | ✅ 已落地（opt-in `video.storyboard_conditioning: auto`：分镜面板→first_frame + 分镜绑定参考领先注入 + 指纹失效正确） | `2e6ae76` |
 | MCTS 选 take（AniMaker 路径） | ✅ 已落地（opt-in `take_select.selection_strategy: mcts`：成对 LLM 决斗 + UCT 探索/利用、mcts_budget 硬上限、确定性 tie-break 无 RNG、全量决策轨迹落盘可审查、无 LLM/全失败/无效判决三条回退路径） | `cbded8f` |
-| QA 断言维度对照 Stable cinemetrics 扩充 | ⏳ 开放 | — |
+| QA 断言维度对照 Stable cinemetrics 扩充 | ✅ 已落地（六维度分类法 `contracts/qa_taxonomy.py`：identity_continuity / dialogue_attribution / camera_language / motion_plausibility / scene_consistency / technical_quality + uncategorized 兜底；`qa.assertions` 维度标签清单与 must_show/must_not_show 双平面共存；visual_semantic_qa 按维度评审、findings 统一挂 dimension、report 新增 dimension_summary；旧契约容忍读为 unevaluated）（本轮，未提交） | — |
 
 ---
 
