@@ -219,6 +219,7 @@ narrascape dashboard
 
 ## Documentation
 
+- [中文 README / Chinese README](README.zh-CN.md)
 - [Product Introduction / 产品介绍](docs/product-introduction.md)
 - [Quick Start](docs/quickstart.md)
 - [Complete Feature Map](docs/features.md)

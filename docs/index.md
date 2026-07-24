@@ -10,6 +10,7 @@ and rework queues.
 | Need | Read |
 | --- | --- |
 | Understand the product in Chinese and English | [Product Introduction / 产品介绍](product-introduction.md) |
+| 中文读者入口 | [中文 README](../README.zh-CN.md) · [中文快速上手](quickstart.zh-CN.md) |
 | Run the project locally | [Quick Start](quickstart.md) |
 | See what is implemented today | [Complete Feature Map](features.md) |
 | Understand the whole workflow | [System Design](design.md) |
