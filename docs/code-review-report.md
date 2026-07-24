@@ -52,15 +52,15 @@
 | 文档失真（architecture/design 与实现不符） | ✅ 已修复（各轮同步更新） | 多个 |
 | 令牌桶并发竞态（修复中发现的新问题） | ✅ 已修复 | `39fc4bc` |
 | 返工阶段链双份拷贝已漂移 | ✅ 已修复（catalog 单一事实源 REWORK_ACTION_CHAINS/REWORK_TAIL_STAGES，决策/执行两侧共同消费 + 防漂移测试） | `6e6138b` |
-| clean 三处重复维护 | ✅ 已修复（catalog 新增 STAGE_CLEAN_ARTIFACTS/STAGE_CLEAN_EXTRAS 单一事实源，单文件目标直接解析自 CORE_ARTIFACT_TEMPLATES；Pipeline.clean 全量派生；模板变更随动 + 全目标清扫防漂移测试） | 本轮（未提交） |
+| clean 三处重复维护 | ✅ 已修复（catalog 新增 STAGE_CLEAN_ARTIFACTS/STAGE_CLEAN_EXTRAS 单一事实源，单文件目标直接解析自 CORE_ARTIFACT_TEMPLATES；Pipeline.clean 全量派生；模板变更随动 + 全目标清扫防漂移测试） | `2e6ae76` |
 | prompt_safety 静默重写无日志 | ✅ 已修复（命中即 logger.warning 类别+条数，进程级事件缓冲 + 三 stage 尾部落盘 pipeline/\<project\>/prompt_safety.yaml） | `6e6138b` |
 | film_timeline 欠声明 take_select 依赖 | ✅ 已修复（刻意不声明硬依赖——depends_on 会拉入付费生成；改为文档化 + 多 take 无选择结果时 advisory warning） | `6e6138b` |
 | design_report 查找优先级不一致 | ✅ 已修复（catalog.design_report_candidates 统一为 pipeline_dir 优先，10 处旧优先级站点 + reference_plate 全部改走单一 helper） | `6e6138b` |
 | build 退出码含中间返工轮失败 | ✅ 已修复（final_stage_results 折叠 cycle_N.* 键，末轮结果定退出码；展示层仍保留全历史） | `6e6138b` |
-| CLI 单阶段命令样板/不写 state | ✅ 已修复（cli.run_single_stage 统一五命令样板；产物记录复用 pipeline.recordable_outputs；写 state.json completed/failed + 归一化产物，不建审批文件；build 完成态校验可直接识别） | 本轮（未提交） |
-| _THREAD_LOCKS 永久增长 | ✅ 已修复（引用计数 + 容量上限 128 的 LRU 驱逐；只驱逐空闲条目，持锁/等锁条目永不驱逐，跨进程 .lock 语义不变） | 本轮（未提交） |
-| 依赖无上界/无 lock | ✅ 已修复（选 lock 路线而非加上界——库上界是反模式；requirements-lock.txt 钉住测试环境全量解析，README 记录用法与再生成方式 + 一致性测试） | 本轮（未提交） |
-| 6 处 except Exception: pass | ✅ 已修复（现存 5 处全部日志化：qa.py 两处 warning 级、dashboard/pil.py 三处 debug 级，控制流不变；审计所列 dashboard 第二处在行号漂移后已是有记录分支） | 本轮（未提交） |
+| CLI 单阶段命令样板/不写 state | ✅ 已修复（cli.run_single_stage 统一五命令样板；产物记录复用 pipeline.recordable_outputs；写 state.json completed/failed + 归一化产物，不建审批文件；build 完成态校验可直接识别） | `2e6ae76` |
+| _THREAD_LOCKS 永久增长 | ✅ 已修复（引用计数 + 容量上限 128 的 LRU 驱逐；只驱逐空闲条目，持锁/等锁条目永不驱逐，跨进程 .lock 语义不变） | `2e6ae76` |
+| 依赖无上界/无 lock | ✅ 已修复（选 lock 路线而非加上界——库上界是反模式；requirements-lock.txt 钉住测试环境全量解析，README 记录用法与再生成方式 + 一致性测试） | `2e6ae76` |
+| 6 处 except Exception: pass | ✅ 已修复（现存 5 处全部日志化：qa.py 两处 warning 级、dashboard/pil.py 三处 debug 级，控制流不变；审计所列 dashboard 第二处在行号漂移后已是有记录分支） | `2e6ae76` |
 
 ### 验证中新发现的问题（2026-07-24 补录）
 
@@ -74,7 +74,7 @@
 | 方向 | 状态 | 提交 |
 |---|---|---|
 | take_select 真实质量信号（VBench 式感知评分前置版） | ✅ 已落地 | `e921662` |
-| 分镜即生成条件（STAGE/DrawVideo 路径） | ✅ 已落地（opt-in `video.storyboard_conditioning: auto`：分镜面板→first_frame + 分镜绑定参考领先注入 + 指纹失效正确） | 本轮（未提交） |
+| 分镜即生成条件（STAGE/DrawVideo 路径） | ✅ 已落地（opt-in `video.storyboard_conditioning: auto`：分镜面板→first_frame + 分镜绑定参考领先注入 + 指纹失效正确） | `2e6ae76` |
 | MCTS 选 take（AniMaker 路径） | ⏳ 开放 | — |
 | QA 断言维度对照 Stable cinemetrics 扩充 | ⏳ 开放 | — |
 
