@@ -220,6 +220,31 @@ provider `last_frame` input. Ordinary character, scene, and style reference
 chains are not used as last frames unless they are explicitly marked for that
 purpose.
 
+## Storyboard As Generation Condition (opt-in)
+
+By default the storyboard conditions generation only indirectly: its frames
+shape the design prompts, and its bound reference ids are injected as
+reference images. Setting `video.storyboard_conditioning: auto` makes the
+binding physical:
+
+- A per-frame **storyboard panel** image at
+  `assets/storyboard/<frame_id>.<ext>` (matching the contract's
+  `storyboard_binding.storyboard_frame_ids`, first bound frame with an
+  existing file wins) becomes the provider `first_frame`. The panel is the
+  explicit, human-reviewable narrative keyframe, so it outranks the derived
+  generated still. Today nothing renders panels automatically — drop them in
+  manually or from an external storyboard tool; the directory is created by
+  `pre_production`.
+- Reference images whose ids appear in `storyboard_binding.reference_image_ids`
+  lead the provider reference list, ahead of the auto-derived style anchor,
+  character, and scene references: narrative intent first.
+- Missing panels or unresolvable ids fall back to the default inputs —
+  conditioning never blocks a shot.
+- Every per-shot choice is recorded in `video_gen_state.json` under
+  `reference_inputs.<vid>.storyboard_conditioning`, and panel/content changes
+  alter the request fingerprint, so switching a panel correctly invalidates
+  cached clips instead of silently reusing them.
+
 ## Production Review Checklist
 
 Before final image generation, review:

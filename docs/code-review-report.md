@@ -60,12 +60,12 @@
 | 依赖无上界/无 lock | ⏳ 开放 | — |
 | 6 处 except Exception: pass | ⏳ 开放 | — |
 
-### 第四梯队（学术驱动）— 已落地 1/4
+### 第四梯队（学术驱动）— 已落地 2/4
 
 | 方向 | 状态 | 提交 |
 |---|---|---|
 | take_select 真实质量信号（VBench 式感知评分前置版） | ✅ 已落地 | `e921662` |
-| 分镜即生成条件（STAGE/DrawVideo 路径） | ⏳ 开放 | — |
+| 分镜即生成条件（STAGE/DrawVideo 路径） | ✅ 已落地（opt-in `video.storyboard_conditioning: auto`：分镜面板→first_frame + 分镜绑定参考领先注入 + 指纹失效正确） | 本轮（未提交） |
 | MCTS 选 take（AniMaker 路径） | ⏳ 开放 | — |
 | QA 断言维度对照 Stable cinemetrics 扩充 | ⏳ 开放 | — |
 

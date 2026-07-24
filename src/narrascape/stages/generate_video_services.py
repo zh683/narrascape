@@ -13,7 +13,11 @@ from typing import Any
 from narrascape.artifacts import validate_artifact
 from narrascape.prompt_compiler import provider_negative_prompt, provider_prompt
 from narrascape.prompt_quality import video_prompt_quality_assessment
-from narrascape.reference_assets import is_reference_uri, resolve_reference_assets_for_shot
+from narrascape.reference_assets import (
+    IMAGE_EXTENSIONS,
+    is_reference_uri,
+    resolve_reference_assets_for_shot,
+)
 from narrascape.utils.safe_io import atomic_write_yaml, load_json_mapping, update_json_mapping
 
 
@@ -303,6 +307,46 @@ class VideoReferenceResolver:
         elif url:
             item["url"] = url
         return item
+
+    def find_storyboard_panel(self, project_dir: Path, contract: dict[str, Any]) -> Path | None:
+        """First existing physical storyboard panel among the shot's bound frames.
+
+        Panels live at ``assets/storyboard/<frame_id>.<ext>``. pre_production
+        creates the directory but rendering panels is opt-in, so ``None`` (no
+        panel) is the common case — callers must fall back gracefully.
+        """
+        binding = contract.get("storyboard_binding", {}) if isinstance(contract, dict) else {}
+        frame_ids = [str(value) for value in binding.get("storyboard_frame_ids", []) or []]
+        storyboard_dir = project_dir / "assets" / "storyboard"
+        for frame_id in frame_ids:
+            for ext in IMAGE_EXTENSIONS:
+                candidate = storyboard_dir / f"{frame_id}{ext}"
+                if candidate.exists():
+                    return candidate
+        return None
+
+    def prioritize_storyboard_references(
+        self,
+        assets: list[dict[str, Any]],
+        contract: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Stable-partition reference assets so storyboard-bound ids lead.
+
+        The director's per-frame curation
+        (``storyboard_binding.reference_image_ids``) is narrative intent and
+        outranks the auto-derived style/character/scene references.
+        """
+        binding = contract.get("storyboard_binding", {}) if isinstance(contract, dict) else {}
+        storyboard_ids = {str(value) for value in binding.get("reference_image_ids", []) or []}
+        if not storyboard_ids:
+            return assets
+        leading = [
+            asset for asset in assets if str(asset.get("requested_id") or "") in storyboard_ids
+        ]
+        trailing = [
+            asset for asset in assets if str(asset.get("requested_id") or "") not in storyboard_ids
+        ]
+        return leading + trailing
 
     def resolve_first_frame(self, seg: dict[str, Any], images_dir: Path, img_id: str) -> str | None:
         ref_url = seg.get("reference_image_url", "")

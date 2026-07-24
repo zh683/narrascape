@@ -321,6 +321,17 @@ class VideoConfig(BaseModel):
             "created up front and polled in one unified loop."
         ),
     )
+    storyboard_conditioning: Literal["off", "auto"] = Field(
+        "off",
+        description=(
+            "Opt-in storyboard-as-generation-condition. 'auto' resolves each shot's "
+            "director_contract storyboard_binding to a physical panel "
+            "(assets/storyboard/<frame_id>.<ext>) used as the video first_frame, and "
+            "lets storyboard-bound reference images (binding.reference_image_ids) lead "
+            "the reference list ahead of auto-derived refs; missing panels or ids fall "
+            "back to the default inputs without blocking. 'off' keeps legacy behavior."
+        ),
+    )
 
 
 # ───────────────────────────────────────────

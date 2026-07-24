@@ -322,6 +322,10 @@ class GenerateVideoStage(Stage):
                 if provider_name == "agnes"
                 else uploaded_reference_images
             )
+            if config.video.storyboard_conditioning == "auto":
+                first_frame, reference_images = self._storyboard_conditioned_inputs(
+                    config, contract, first_frame, reference_inputs, provider_name
+                )
 
             # Select model per segment
             model = self._segment_model(seg, provider_name)
@@ -637,6 +641,55 @@ class GenerateVideoStage(Stage):
             contract,
             reference_plate,
         )
+
+    def _storyboard_conditioned_inputs(
+        self,
+        config: Any,
+        contract: dict[str, Any],
+        first_frame: str | None,
+        reference_inputs: dict[str, Any],
+        provider_name: str,
+    ) -> tuple[str | None, list[Any]]:
+        """Apply opt-in storyboard conditioning (video.storyboard_conditioning == "auto").
+
+        Priority decision: a physical storyboard panel — an explicit,
+        human-reviewable narrative keyframe bound by the director contract —
+        outranks the derived generated still as ``first_frame``; storyboard-bound
+        reference images lead the reference list ahead of the auto-derived
+        style/character/scene refs. Missing panels or unresolvable ids fall
+        back to the pre-existing inputs and never block generation.
+        """
+        resolver = self._current_reference_resolver()
+        assets = [
+            dict(asset) for asset in reference_inputs.get("uploaded_reference_assets", []) or []
+        ]
+        uploaded_reference_images = list(
+            reference_inputs.get("uploaded_reference_images", []) or []
+        )
+
+        conditioned_first = first_frame
+        panel_path = resolver.find_storyboard_panel(config.project_dir, contract)
+        if panel_path is not None:
+            conditioned_first = str(resolver.uploader.upload(panel_path))
+            logger.info(f"  storyboard panel -> first_frame: {panel_path.name}")
+
+        assets = resolver.prioritize_storyboard_references(assets, contract)
+
+        binding = contract.get("storyboard_binding", {}) if isinstance(contract, dict) else {}
+        state = reference_inputs.get("state")
+        if isinstance(state, dict):
+            state["storyboard_conditioning"] = {
+                "panel": panel_path.name if panel_path else None,
+                "panel_applied": panel_path is not None,
+                "storyboard_reference_ids": [
+                    str(value) for value in binding.get("reference_image_ids", []) or []
+                ],
+            }
+
+        if provider_name == "agnes":
+            return conditioned_first, assets or uploaded_reference_images
+        urls = [str(asset["url"]) for asset in assets if asset.get("url")]
+        return conditioned_first, urls or uploaded_reference_images
 
     def _reference_manifest_for_segment(
         self,
@@ -1690,6 +1743,10 @@ class GenerateVideoStage(Stage):
                 if provider_name == "agnes"
                 else uploaded_reference_images
             )
+            if config.video.storyboard_conditioning == "auto":
+                first_frame, reference_images = self._storyboard_conditioned_inputs(
+                    config, contract, first_frame, reference_inputs, provider_name
+                )
             model = self._segment_model(seg, provider_name)
             resolution = self._segment_resolution(seg, provider_name)
             segment_fingerprint = self._video_request_fingerprint(

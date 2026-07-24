@@ -30,7 +30,18 @@
 6. Read the matching provider negative prompt and pass it to Seedance when supported.
 7. Require the animatic preview to exist so storyboard timing has been checked before provider execution.
 8. Resolve `storyboard_binding.reference_image_ids` to actual style, character, and scene reference images.
-9. Use generated images as first-frame references when available.
+9. Use generated images as first-frame references when available. When
+   `video.storyboard_conditioning: auto` (default `off`), a physical storyboard
+   panel bound via `storyboard_binding.storyboard_frame_ids`
+   (`assets/storyboard/<frame_id>.<ext>`, first match wins) outranks the
+   generated still as the provider `first_frame`, and reference images whose
+   ids appear in `storyboard_binding.reference_image_ids` lead the reference
+   list ahead of the auto-derived style/character/scene refs. Missing panels
+   or unresolvable ids fall back to the default inputs without blocking; the
+   per-shot choice is recorded under
+   `reference_inputs.<vid>.storyboard_conditioning` in `video_gen_state.json`,
+   and any panel/content switch changes the request fingerprint, so stale
+   clips are never silently reused.
 10. Resolve explicit `reference_image_chains` with `usage_mode: last_frame` or
     ending/final-frame chain ids into provider last-frame inputs for bookended
     shot continuity.

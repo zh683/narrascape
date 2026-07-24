@@ -174,6 +174,7 @@ video:
   max_poll_time: 900
   requests_per_minute: 0
   max_concurrency: 1
+  storyboard_conditioning: off
 ```
 
 `max_poll_time` is the per-task polling budget in seconds (default `900`).
@@ -192,6 +193,17 @@ serially. Agnes keeps its >=65s creation cadence by submitting serially.
 Ledger, fingerprint, 429-exemption, exactly-once accounting, and crash
 resume semantics are unchanged; a resumed task that terminates failed is
 re-created on the next run rather than in the same one.
+
+`storyboard_conditioning: auto` (default `off`) opts into
+storyboard-as-generation-condition: each shot's
+`director_contract.storyboard_binding` is resolved to a physical panel
+(`assets/storyboard/<frame_id>.<ext>`) that becomes the video `first_frame`,
+and storyboard-bound reference images (`binding.reference_image_ids`) lead
+the reference list ahead of the auto-derived refs. A panel therefore outranks
+the generated still as the keyframe condition — it is the explicit,
+human-reviewable narrative keyframe. Missing panels or ids fall back to the
+default inputs without blocking, and panel/content changes flow into the
+request fingerprint, so cached clips are invalidated correctly.
 
 Set `takes` above `1` to ask `generate_video` for multiple candidate clips per
 shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.
