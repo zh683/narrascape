@@ -84,6 +84,8 @@ video generation if preparation is incomplete. This is enabled automatically by
 llm:
   mode: auto
   timeout: 300
+  bridge_wait: block
+  bridge_batch: true
   provider: ""
   model: ""
   api_key: ""
@@ -106,6 +108,15 @@ llm:
 | `none` | Disable LLM calls and use deterministic local fallbacks. |
 
 `none` is useful for offline tests. It is not a creative production mode.
+
+Bridge tuning (see docs/BRIDGE_MODE.md):
+
+| Key | Values | Behavior |
+| --- | --- | --- |
+| `bridge_wait` | `block` (default) | Poll for the assistant response until `timeout`. |
+|  | `exit_on_pending` | Pause the build with an `awaiting_bridge` result; the stage stays `pending` and the build resumes on rerun once the response exists. |
+| `bridge_batch` | `true` (default) | One batched bridge task per stage. |
+|  | `false` | One smaller task per shot/segment in `design` and `director_contract`. |
 
 `api_key` accepts environment references: `${VAR}` and `${VAR:-default}` are
 expanded when `config.yaml` loads. An unresolved reference in `llm.api_key` is
@@ -455,6 +466,7 @@ For multi-image segments, `timing` must match image count and sum to `1.0`.
 | `NARRASCAPE_LLM_MODE` | Override LLM mode. |
 | `NARRASCAPE_BRIDGE_DIR` | Override bridge task directory. |
 | `NARRASCAPE_BRIDGE_TIMEOUT` | Override bridge timeout seconds. |
+| `NARRASCAPE_BRIDGE_WAIT` | Override bridge wait mode (`block` or `exit_on_pending`). |
 | `OPENAI_API_KEY` | OpenAI-compatible provider. |
 | `ANTHROPIC_API_KEY` | Anthropic provider. |
 | `DEEPSEEK_API_KEY` | DeepSeek provider. |

@@ -24,6 +24,9 @@ Protocol conventions:
 Environment:
     NARRASCAPE_BRIDGE_DIR - Directory for task/response files
     NARRASCAPE_BRIDGE_TIMEOUT - Max seconds to wait for response (default: 300)
+    NARRASCAPE_BRIDGE_WAIT - "block" (poll until timeout, default) or
+        "exit_on_pending" (raise BridgeTaskPending immediately so the build
+        pauses and can be resumed by rerunning the command)
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ import hashlib
 import json
 import logging
 import os
+import shutil
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -42,6 +47,42 @@ from narrascape.llm.models import LLMResponse, Message, PromptTemplate
 from narrascape.utils.safe_io import atomic_promote_file, atomic_write_text, file_lock
 
 logger = logging.getLogger("narrascape.llm.bridge")
+
+BRIDGE_WAIT_MODES = ("block", "exit_on_pending")
+
+
+class BridgeTaskPending(BaseException):
+    """Control-flow signal: a bridge task is waiting for the AI assistant.
+
+    Deliberately inherits from BaseException so the many broad
+    ``except Exception`` fallback paths across stages and agents cannot
+    swallow it and silently degrade to deterministic output. It is not an
+    error: the pipeline converts it into an "awaiting bridge task" pause,
+    and rerunning the command resumes once the response file exists.
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        task_file: Path,
+        response_file: Path,
+        note: str = "",
+    ):
+        self.task_id = task_id
+        self.task_file = Path(task_file)
+        self.response_file = Path(response_file)
+        self.note = note
+        message = (
+            f"Bridge task {task_id} is waiting for the AI assistant.\n"
+            f"Task file: {self.task_file}\n"
+            f"Expected response: {self.response_file}\n"
+            "Process the task and rerun the command; the completed response "
+            "will be picked up automatically."
+        )
+        if note:
+            message = f"{message}\n{note}"
+        super().__init__(message)
+
 
 # Bridge critical sections are sub-second (an atomic write or two renames),
 # so a lock older than this almost certainly belongs to a crashed process.
@@ -92,11 +133,20 @@ class BridgeLLMClient:
     without requiring external API keys.
     """
 
-    def __init__(self, task_dir: Path | None = None, timeout: int = 300):
+    def __init__(
+        self,
+        task_dir: Path | None = None,
+        timeout: int | None = None,
+        wait_mode: str | None = None,
+    ):
         """
         Args:
             task_dir: Directory for task/response files. Defaults to .narrascape/bridge
             timeout: Max seconds to wait for AI assistant response
+            wait_mode: "block" (default) polls until the response arrives or
+                the timeout expires; "exit_on_pending" raises BridgeTaskPending
+                right after the task file is written so the caller can pause
+                and resume on rerun. Env override: NARRASCAPE_BRIDGE_WAIT.
         """
         if task_dir is None:
             task_dir = Path(os.environ.get("NARRASCAPE_BRIDGE_DIR", ".narrascape/bridge"))
@@ -104,8 +154,25 @@ class BridgeLLMClient:
         self.pending_dir = self.task_dir / "pending"
         self.completed_dir = self.task_dir / "completed"
         self.archive_dir = self.task_dir / "archive"
+        self.resume_dir = self.task_dir / "resume"
         self.lock_path = self.task_dir / ".bridge.lock"
-        self.timeout = int(os.environ.get("NARRASCAPE_BRIDGE_TIMEOUT", timeout))
+        self._resume_scope = threading.local()
+        # Explicit constructor arguments win; env vars only fill defaults.
+        # (Env overriding an explicit timeout=0 once turned a quick timeout
+        # test into a 300s poll when another process/test had set the var.)
+        if timeout is not None:
+            self.timeout = int(timeout)
+        else:
+            self.timeout = int(os.environ.get("NARRASCAPE_BRIDGE_TIMEOUT", 300))
+        mode = (wait_mode or os.environ.get("NARRASCAPE_BRIDGE_WAIT", "block")).strip().lower()
+        if mode not in BRIDGE_WAIT_MODES:
+            logger.warning(
+                "[bridge] Unknown wait mode %r; falling back to 'block' " "(expected one of %s)",
+                mode,
+                ", ".join(BRIDGE_WAIT_MODES),
+            )
+            mode = "block"
+        self.wait_mode = mode
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -113,6 +180,33 @@ class BridgeLLMClient:
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.completed_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
+        self.resume_dir.mkdir(parents=True, exist_ok=True)
+
+    def set_resume_scope(self, scope: str | None) -> None:
+        """Bind resumable responses to the stage running in this thread."""
+        self._resume_scope.value = scope
+
+    def clear_resume_scope(self, scope: str) -> None:
+        """Discard replay checkpoints after a stage finishes or truly fails."""
+        scope_dir = self.resume_dir / self._safe_scope_name(scope)
+        if not scope_dir.exists():
+            return
+        with _bridge_lock(self.lock_path, max(0.1, min(float(self.timeout), 5.0))):
+            if scope_dir.exists():
+                shutil.rmtree(scope_dir)
+
+    @staticmethod
+    def _safe_scope_name(scope: str) -> str:
+        safe = "".join(char if char.isalnum() or char in "._-" else "_" for char in scope)
+        return safe[:80] or hashlib.sha256(scope.encode("utf-8")).hexdigest()[:12]
+
+    def _resume_response_file(self, task_id: str) -> Path | None:
+        if self.wait_mode != "exit_on_pending":
+            return None
+        scope = getattr(self._resume_scope, "value", None)
+        if not scope:
+            return None
+        return self.resume_dir / self._safe_scope_name(str(scope)) / f"response_{task_id}.json"
 
     def complete(self, prompt: str, **kwargs: Any) -> LLMResponse:
         """Submit a task and wait for AI assistant response."""
@@ -136,10 +230,14 @@ class BridgeLLMClient:
         schema_hint = kwargs.get("schema_hint", "")
         task_id = self._task_id(conversation_text, json_mode, schema_hint)
 
+        resumed = self._read_resume_response(task_id)
+        if resumed is not None:
+            return resumed
+
         # Write task file
         task_file = self.pending_dir / f"task_{task_id}.md"
         task_content = self._format_task(task_id, conversation_text, json_mode, schema_hint)
-        with _bridge_lock(self.lock_path, min(float(self.timeout), 5.0)):
+        with _bridge_lock(self.lock_path, max(0.1, min(float(self.timeout), 5.0))):
             if not task_file.exists():
                 _atomic_write_text(task_file, task_content)
 
@@ -157,6 +255,20 @@ class BridgeLLMClient:
         existing_response = self._read_response(task_id, task_file, response_file, wait_state)
         if existing_response:
             return existing_response
+
+        if self.wait_mode == "exit_on_pending":
+            note = ""
+            if wait_state["incomplete_seen"]:
+                note = (
+                    "An unparseable response file from a previous attempt was "
+                    "observed: rewrite it atomically (tmp file + rename) with "
+                    "valid JSON — see docs/BRIDGE_MODE.md."
+                )
+            logger.info(
+                "[bridge] wait_mode=exit_on_pending: raising BridgeTaskPending for task %s",
+                task_id,
+            )
+            raise BridgeTaskPending(task_id, task_file, response_file, note=note)
 
         while time.monotonic() - start < self.timeout:
             response = self._read_response(task_id, task_file, response_file, wait_state)
@@ -220,7 +332,7 @@ class BridgeLLMClient:
         if response_file.name.startswith(".") or response_file.suffix != ".json":
             return None
         try:
-            with _bridge_lock(self.lock_path, min(float(self.timeout), 5.0)):
+            with _bridge_lock(self.lock_path, max(0.1, min(float(self.timeout), 5.0))):
                 if not response_file.exists():
                     return None
                 try:
@@ -236,8 +348,14 @@ class BridgeLLMClient:
                                 response_file,
                             )
                     return None
-                if not isinstance(data, dict) or not isinstance(data.get("content"), str):
-                    raise KeyError("content must be a string")
+                data = self._normalize_response_data(data)
+                resume_file = self._resume_response_file(task_id)
+                if resume_file is not None:
+                    resume_file.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_write_text(
+                        resume_file,
+                        json.dumps(data, ensure_ascii=False),
+                    )
                 if task_file.exists():
                     atomic_promote_file(task_file, self.archive_dir / task_file.name, lock=False)
                 atomic_promote_file(
@@ -245,18 +363,64 @@ class BridgeLLMClient:
                 )
 
             logger.info(f"[bridge] Response received for task {task_id}")
-            return LLMResponse(
-                content=data.get("content", ""),
-                model="bridge-ai-assistant",
-                usage=data.get("usage", {}),
-                raw=data,
-            )
+            return self._response_from_data(data)
         except KeyError as e:
             logger.error(f"[bridge] Invalid response file: {e}")
             raise RuntimeError(
                 f"AI assistant response file is invalid. Please ensure the response "
                 f"file at {response_file} follows the expected JSON format."
             )
+
+    def _read_resume_response(self, task_id: str) -> LLMResponse | None:
+        resume_file = self._resume_response_file(task_id)
+        if resume_file is None or not resume_file.exists():
+            return None
+        try:
+            with _bridge_lock(self.lock_path, max(0.1, min(float(self.timeout), 5.0))):
+                data = self._normalize_response_data(
+                    json.loads(resume_file.read_text(encoding="utf-8"))
+                )
+                # A crash can occur after the checkpoint write but before the
+                # live exchange is archived. Finish that cleanup on replay.
+                task_file = self.pending_dir / f"task_{task_id}.md"
+                response_file = self.completed_dir / f"response_{task_id}.json"
+                if task_file.exists():
+                    atomic_promote_file(task_file, self.archive_dir / task_file.name, lock=False)
+                if response_file.exists():
+                    atomic_promote_file(
+                        response_file,
+                        self.archive_dir / response_file.name,
+                        lock=False,
+                    )
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError, KeyError) as exc:
+            raise RuntimeError(
+                f"Bridge resume checkpoint is invalid: {resume_file}: {exc}"
+            ) from exc
+        logger.info("[bridge] Replaying stage checkpoint for task %s", task_id)
+        return self._response_from_data(data, resumed=True)
+
+    @staticmethod
+    def _normalize_response_data(data: Any) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise KeyError("response must be a JSON object")
+        content = data.get("content")
+        if isinstance(content, (dict, list)):
+            return {**data, "content": json.dumps(content, ensure_ascii=False)}
+        if not isinstance(content, str):
+            raise KeyError("content must be a string, object, or array")
+        return data
+
+    @staticmethod
+    def _response_from_data(data: dict[str, Any], *, resumed: bool = False) -> LLMResponse:
+        raw = dict(data)
+        if resumed:
+            raw["_narrascape_bridge_resumed"] = True
+        return LLMResponse(
+            content=str(data.get("content", "")),
+            model="bridge-ai-assistant",
+            usage=data.get("usage", {}),
+            raw=raw,
+        )
 
     def _task_id(self, conversation: str, json_mode: bool, schema_hint: str) -> str:
         """Return a stable task id so timed-out tasks can be resumed."""
@@ -307,12 +471,19 @@ The JSON file must have this structure:
 }}
 ```
 
+`content` may be either:
+- a string containing the response (when the task asks for JSON, the string
+  itself must contain only the JSON payload — no Markdown fences, no prose), or
+- a directly embedded JSON object/array (no double-encoding needed).
+
 {schema_hint}
 
 ## Notes
 - Be specific and detailed in your response
 - Use cinematic/photographic terminology where appropriate
 - The response will be parsed automatically, so ensure valid JSON
+- If your previous response was rejected, the task text includes the exact
+  parse/validation error — fix only that and resubmit
 """
 
     def _log_instructions(self, task_id: str, task_file: Path) -> None:

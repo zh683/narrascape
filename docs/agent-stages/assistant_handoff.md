@@ -6,6 +6,7 @@
 - Optional `pipeline/<project>/render_report.yaml`
 - Optional `pipeline/<project>/production_readiness.yaml`
 - Optional `pipeline/<project>/state.json`
+- Optional `.narrascape/bridge/pending/` (unanswered assistant bridge tasks)
 
 ## Outputs
 
@@ -18,8 +19,11 @@
 1. Read the latest supervisor decision.
 2. Collect next stages and map each one to its agent-stage doc.
 3. Summarize core artifacts, quality gates, blocking findings, and stage state.
-4. Write a machine-readable takeover packet for Codex-style assistants.
-5. Write a Markdown summary for humans.
+4. List unanswered bridge task files as `pending_bridge_tasks` (task id, task
+   path, expected response path) so the takeover assistant knows what to
+   answer first.
+5. Write a machine-readable takeover packet for Codex-style assistants.
+6. Write a Markdown summary for humans.
 
 ## Do Not
 

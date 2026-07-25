@@ -52,6 +52,11 @@ class LLMConfig:
     log_max_text_chars: int = 2000
     log_include_parsed_output: bool = False
     log_persist_path: Path | None = None
+    # Bridge (ai_assistant/bridge) project pinning. None = fall back to
+    # NARRASCAPE_BRIDGE_* env vars, then built-in defaults.
+    bridge_dir: Path | None = None
+    bridge_timeout: int | None = None
+    bridge_wait: str | None = None  # "block" | "exit_on_pending"
 
     def copy(self, **overrides: Any) -> LLMConfig:
         """Create a copy with overrides."""
@@ -86,6 +91,9 @@ class LLMConfig:
                 "log_include_parsed_output", self.log_include_parsed_output
             ),
             log_persist_path=overrides.get("log_persist_path", self.log_persist_path),
+            bridge_dir=overrides.get("bridge_dir", self.bridge_dir),
+            bridge_timeout=overrides.get("bridge_timeout", self.bridge_timeout),
+            bridge_wait=overrides.get("bridge_wait", self.bridge_wait),
         )
 
 

@@ -16,7 +16,7 @@
 ## Procedure
 
 1. Read the screenplay structure, design report, script segments, storyboard frames, and any available continuity bible.
-2. If an LLM client is configured, ask it to act as a top-tier film director and prompt compiler.
+2. If an LLM client is configured, ask it to act as a top-tier film director and prompt compiler. In bridge modes this arrives as one batched task for all shots, or one task per shot with `llm.bridge_batch: false` (expecting `{"shots": [<one shot object>]}`); validation failures return as follow-up tasks quoting the exact error.
 3. For every shot, compile story purpose, emotional target, film language, continuity constraints, storyboard binding, generation instructions, and QA assertions.
 4. Write `generation.video_prompt`, `generation.negative_prompt`, `generation.duration`, and `generation.motion` as the portable execution contract.
 5. Compile provider-specific prompt variants under `generation.compiled_prompts`, especially `seedance` plus a `generic` fallback, with the provider prompt style, negative prompt, and reference strategy.

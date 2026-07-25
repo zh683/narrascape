@@ -130,6 +130,23 @@ class LLMConfig(StrictConfigModel):
 
     mode: str = Field("auto", description="LLM mode: auto, ai_assistant, api, bridge, none")
     timeout: int = Field(300, description="Bridge mode timeout in seconds")
+    bridge_wait: str = Field(
+        "block",
+        description=(
+            "Bridge wait mode: 'block' polls until the assistant responds or the "
+            "timeout expires; 'exit_on_pending' pauses the build with an "
+            "awaiting-bridge status so turn-based assistants (Kimi, Codex) can "
+            "process the task and the build resumes on rerun"
+        ),
+    )
+    bridge_batch: bool = Field(
+        True,
+        description=(
+            "Batch bridge LLM tasks into a single task file per stage; false "
+            "creates one smaller task per shot/segment, which is easier for "
+            "AI assistants to answer reliably"
+        ),
+    )
     provider: str = Field(
         "", description="API provider: openai, anthropic, deepseek, volcengine, ai_assistant"
     )
@@ -153,6 +170,14 @@ class LLMConfig(StrictConfigModel):
         allowed = {"auto", "ai_assistant", "api", "bridge", "none"}
         if v.lower() not in allowed:
             raise ValueError(f"llm.mode must be one of {allowed}, got '{v}'")
+        return v.lower()
+
+    @field_validator("bridge_wait")
+    @classmethod
+    def validate_bridge_wait(cls, v: str) -> str:
+        allowed = {"block", "exit_on_pending"}
+        if v.lower() not in allowed:
+            raise ValueError(f"llm.bridge_wait must be one of {allowed}, got '{v}'")
         return v.lower()
 
 

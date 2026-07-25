@@ -148,7 +148,7 @@ image_prompts.yaml
 image_map.yaml
 ```
 
-In `ai_assistant` or `bridge` mode, this may create task files under `.narrascape/bridge/pending/`. Process those tasks with the assistant, then rerun the command or let the waiting command continue.
+In `ai_assistant` or `bridge` mode, this may create task files under `.narrascape/bridge/pending/`. Process those tasks with the assistant, then rerun the command or let the waiting command continue. Turn-based assistants can set `llm.bridge_wait: exit_on_pending` so the build pauses with an `awaiting_bridge` status instead of blocking; `assistant_handoff.yaml` lists unanswered tasks under `pending_bridge_tasks`. See [Bridge Mode](BRIDGE_MODE.md).
 
 ## 7. Seedance Video Clips
 

@@ -16,7 +16,7 @@
 ## Procedure
 
 1. Confirm the script exists and has ordered segments.
-2. If LLM mode is `ai_assistant` or `bridge`, process pending bridge tasks exactly as written.
+2. If LLM mode is `ai_assistant` or `bridge`, process pending bridge tasks exactly as written. With `llm.bridge_batch: false` there is one task per shot, each expecting a single shot-design JSON object; a task whose text quotes a previous validation error is a retry — answer it with the corrected payload.
 3. Inspect `design_report.yaml` after generation.
 4. Verify every segment has a shot design, image prompt, and mapping entry.
 5. For production work, reject `llm.mode: none` unless the user explicitly wants offline verification.

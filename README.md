@@ -195,6 +195,11 @@ For production builds, use `llm.mode: ai_assistant`, `bridge`, `api`, or `auto`.
 `llm.mode: none` is intentionally not allowed with
 `pipeline.video_generation: required`.
 
+Turn-based assistants (Kimi Work, Codex) should also set
+`llm.bridge_wait: exit_on_pending` so a build pauses on unanswered bridge
+tasks and resumes on rerun instead of blocking until timeout. See
+[Bridge Mode](docs/BRIDGE_MODE.md).
+
 ## Common Commands
 
 ```bash

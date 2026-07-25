@@ -311,6 +311,7 @@ def _llm_client_config(
 
     if project_config is not None:
         logging_config = project_config.llm
+        explicit_fields = logging_config.model_fields_set
         runtime_options.update(
             log_enabled=logging_config.log_enabled,
             log_max_entries=logging_config.log_max_entries,
@@ -321,6 +322,12 @@ def _llm_client_config(
                 if logging_config.log_persist
                 else None
             ),
+            # Pin bridge exchange to this project regardless of CWD.
+            bridge_dir=project_config.project_dir / ".narrascape" / "bridge",
+            # Explicit project values win; otherwise BridgeLLMClient can honor
+            # the NARRASCAPE_BRIDGE_* environment defaults.
+            bridge_timeout=(logging_config.timeout if "timeout" in explicit_fields else None),
+            bridge_wait=(logging_config.bridge_wait if "bridge_wait" in explicit_fields else None),
         )
     return LLMClientConfig(**runtime_options)
 
@@ -1222,6 +1229,18 @@ def build_cmd(
     # failed in an early rework cycle but was fixed later counts as succeeded.
     # The summary table above still shows every cycle's history.
     final_results = final_stage_results(results)
+    awaiting = [(name, r) for name, r in final_results.items() if r.metadata.get("awaiting_bridge")]
+    if awaiting:
+        console.print("[bold yellow]⏸ Build paused — waiting for AI assistant bridge task(s)[/]")
+        for name, result in awaiting:
+            console.print(f"  [cyan]{name}[/]: task {result.metadata.get('bridge_task_id')}")
+            console.print(f"    task file: {result.metadata.get('bridge_task_file')}")
+            console.print(f"    response:  {result.metadata.get('bridge_response_file')}")
+        console.print(
+            "[dim]  Ask your AI assistant to process the pending task file(s), "
+            "then rerun the same command — the completed response will be picked up.[/]"
+        )
+        raise typer.Exit(1)
     if all(r.success for r in final_results.values()):
         console.print("[bold green]✅ Build complete[/]")
         for stage_name, result in results.items():

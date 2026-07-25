@@ -173,11 +173,14 @@ class PromptDirector:
 
         # Phase 0: Build character profiles and scene style for consistency anchoring
         # This happens BEFORE any shot design to ensure all shots reference the same anchors
-        # Bridge-backed assistant modes use one batch task; batch design handles consistency.
+        # Bridge-backed assistant modes default to one batch task; set
+        # llm.bridge_batch=false to design per shot with smaller task files.
         is_bridge_backed = getattr(
             self.llm_client, "config", None
         ) and is_assistant_bridge_provider(self.llm_client.config.provider)
-        if not is_bridge_backed:
+        bridge_batch = bool(getattr(getattr(config, "llm", None), "bridge_batch", True))
+        use_batch = bool(is_bridge_backed) and bridge_batch
+        if not use_batch:
             self._build_character_profiles(segments, analysis_list)
             self._build_scene_style(segments, analysis_list, style_template)
 
@@ -186,7 +189,7 @@ class PromptDirector:
         scene_style_str = self._format_scene_style_for_template()
 
         # Bridge-backed assistant modes use batch design to reduce task files.
-        if is_bridge_backed:
+        if use_batch:
             logger.info(
                 "[PromptDirector] AI assistant bridge mode: using batch design for all segments"
             )

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -66,6 +67,7 @@ class LLMClient:
         self._logs: list[LLMCallLog] = []
         self._provider = self._init_provider()
         self._bridge: BridgeLLMClient | None = None
+        self._bridge_resume_scope = threading.local()
         # Optional callback(usage, model, estimated) invoked after each successful
         # chat() call so callers (e.g. the pipeline) can account token usage.
         # Kept as a plain attribute to avoid any llm/ -> pipeline dependency.
@@ -173,7 +175,15 @@ class LLMClient:
         if self._bridge is None:
             from narrascape.llm.bridge import BridgeLLMClient
 
-            self._bridge = BridgeLLMClient()
+            self._bridge = BridgeLLMClient(
+                task_dir=self.config.bridge_dir,
+                # Pass None through: the constructor then falls back to the
+                # NARRASCAPE_BRIDGE_TIMEOUT env var before its own 300s default.
+                # Hardcoding `or 300` here would disable the env override.
+                timeout=self.config.bridge_timeout,
+                wait_mode=self.config.bridge_wait,
+            )
+            self._bridge.set_resume_scope(getattr(self._bridge_resume_scope, "value", None))
 
     def _require_bridge(self) -> BridgeLLMClient:
         self._init_bridge()
@@ -193,6 +203,19 @@ class LLMClient:
     def _bridge_chat(self, messages: list[Message], **kwargs: Any) -> LLMResponse:
         """Direct bridge chat for internal use."""
         return self._require_bridge().chat(messages, **kwargs)
+
+    def set_bridge_resume_scope(self, scope: str | None) -> None:
+        """Bind bridge replay checkpoints to the stage in this thread."""
+        self._bridge_resume_scope.value = scope
+        if self._bridge is not None:
+            self._bridge.set_resume_scope(scope)
+
+    def clear_bridge_resume_scope(self, scope: str) -> None:
+        """Discard a stage's replay checkpoints after a terminal result."""
+        if self._bridge is not None:
+            self._bridge.clear_resume_scope(scope)
+        if getattr(self._bridge_resume_scope, "value", None) == scope:
+            self._bridge_resume_scope.value = None
 
     # ── Public API ───────────────────────────
 
@@ -222,7 +245,9 @@ class LLMClient:
                     f"LLM retry {attempt}/{config.max_retries} after {delay:.1f}s: {e}"
                 ),
             )
-        self._report_usage(resp, messages)
+        raw = resp.raw or {}
+        if not raw.get("_narrascape_bridge_resumed"):
+            self._report_usage(resp, messages)
         return resp
 
     def _report_usage(self, resp: LLMResponse, messages: list[Message]) -> None:
@@ -277,19 +302,16 @@ class LLMClient:
             ValueError: If validation fails after all retries
         """
         template_name = template.user[:50] if template.user else "unnamed"
-        last_error = None
-
-        # Bridge / AI Assistant mode: only one attempt, no retry (AI assistant handles it)
-        attempts = (
-            1 if is_assistant_bridge_provider(self.config.provider) else (max_format_retries + 1)
-        )
+        last_error: str | None = None
+        messages = template.build(**variables)
+        log_messages = template.build(**variables)
+        attempts = max_format_retries + 1
 
         for attempt in range(attempts):
             start = time.monotonic()
-            resp = self.run_template(template, **variables)
+            resp = self.chat(messages)
             latency = (time.monotonic() - start) * 1000
 
-            # Try to parse JSON
             try:
                 data = resp.extract_json()
             except (json.JSONDecodeError, ValueError) as e:
@@ -297,7 +319,7 @@ class LLMClient:
                 logger.warning(f"[{template_name}] Parse failed (attempt {attempt+1}): {e}")
                 self._log_call(
                     template_name,
-                    template.build(**variables),
+                    log_messages,
                     resp.text,
                     None,
                     False,
@@ -305,34 +327,20 @@ class LLMClient:
                     latency,
                 )
 
-                # Add correction instruction for retry (only for non-bridge/ai_assistant)
-                if attempt < max_format_retries and not is_assistant_bridge_provider(
-                    self.config.provider
-                ):
-                    correction = f"\n\nYour previous response was not valid JSON. Error: {e}. Please fix the format and return ONLY valid JSON."
-                    # Rebuild template with correction appended, then send directly via chat()
-                    # 不创建新的 PromptTemplate，避免二次 format 导致大括号解析错误
-                    messages = template.build(**variables)
-                    messages[-1].content += correction
-                    resp = self.chat(messages)
-                    # 直接尝试从新响应中解析 JSON，不重新进入循环
-                    try:
-                        data = resp.extract_json()
-                    except (json.JSONDecodeError, ValueError) as e2:
-                        last_error = f"JSON parse error (retry): {e2}"
-                        logger.warning(
-                            f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}"
-                        )
-                        continue
-                else:
-                    continue
+                if attempt < max_format_retries:
+                    messages = self._append_format_correction(
+                        messages,
+                        resp.text,
+                        "Your previous response was not valid JSON. "
+                        f"Error: {e}. Fix the format and return ONLY valid JSON.",
+                    )
+                continue
 
-            # Validate parsed data
             is_valid, error_msg = validator(data)
             if is_valid:
                 self._log_call(
                     template_name,
-                    template.build(**variables),
+                    log_messages,
                     resp.text,
                     data,
                     True,
@@ -349,7 +357,7 @@ class LLMClient:
             )
             self._log_call(
                 template_name,
-                template.build(**variables),
+                log_messages,
                 resp.text,
                 data,
                 False,
@@ -359,46 +367,28 @@ class LLMClient:
                 resp.usage,
             )
 
-            # Add correction instruction for retry (only for non-bridge/ai_assistant)
-            if attempt < max_format_retries and not is_assistant_bridge_provider(
-                self.config.provider
-            ):
-                correction = f"\n\nYour previous response had validation errors: {error_msg}. Please correct these issues and return valid JSON."
-                # 不创建新的 PromptTemplate，避免二次 format 导致大括号解析错误
-                messages = template.build(**variables)
-                messages[-1].content += correction
-                resp = self.chat(messages)
-                # 直接尝试从新响应中解析 JSON 并验证
-                try:
-                    data = resp.extract_json()
-                except (json.JSONDecodeError, ValueError) as e2:
-                    last_error = f"JSON parse error (retry): {e2}"
-                    logger.warning(
-                        f"[{template_name}] Retry parse failed (attempt {attempt+1}): {e2}"
-                    )
-                    continue
-                is_valid, error_msg = validator(data)
-                if is_valid:
-                    self._log_call(
-                        template_name,
-                        template.build(**variables),
-                        resp.text,
-                        data,
-                        True,
-                        None,
-                        latency,
-                        resp.model,
-                        resp.usage,
-                    )
-                    return data
-                last_error = f"Validation error (retry): {error_msg}"
-                logger.warning(
-                    f"[{template_name}] Retry validation failed (attempt {attempt+1}): {error_msg}"
+            if attempt < max_format_retries:
+                messages = self._append_format_correction(
+                    messages,
+                    resp.text,
+                    "Your previous response had validation errors: "
+                    f"{error_msg}. Correct them and return ONLY valid JSON.",
                 )
 
         raise ValueError(
             f"LLM output validation failed after {attempts} attempts. Last error: {last_error}"
         )
+
+    @staticmethod
+    def _append_format_correction(
+        messages: list[Message], previous_response: str, correction: str
+    ) -> list[Message]:
+        """Build a stable retry conversation for provider and bridge retries."""
+        return [
+            *messages,
+            Message(role="assistant", content=previous_response),
+            Message(role="user", content=correction),
+        ]
 
     def get_logs(self) -> list[LLMCallLog]:
         """Get all LLM call logs for debugging."""
