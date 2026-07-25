@@ -42,6 +42,21 @@ run tests or QA
 refresh assistant_handoff
 ```
 
+## Bridge Takeover
+
+In `llm.mode: ai_assistant` or `bridge`, LLM calls arrive as task files under
+`.narrascape/bridge/pending/` (see `docs/BRIDGE_MODE.md`):
+
+- Prefer `llm.bridge_wait: exit_on_pending` for turn-based operation: a build
+  pauses with an `awaiting_bridge` status instead of blocking or failing, and
+  rerunning the same command resumes once the response file exists.
+- Check `pending_bridge_tasks` in `assistant_handoff.yaml` for unanswered
+  tasks instead of scanning the bridge directory.
+- A task whose text quotes a previous parse/validation error is the director
+  retry loop, not a duplicate — answer it with the corrected payload.
+- Set `llm.bridge_batch: false` to receive one task per shot instead of one
+  large batched task.
+
 ## Verification
 
 For repository changes, prefer:

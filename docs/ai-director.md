@@ -59,7 +59,7 @@ If `self.llm_client` exists, it then calls:
 PromptDirector(llm_client=self.llm_client).design_sequence(...)
 ```
 
-For assistant-backed modes, `PromptDirector` batches all shot design into one LLM task. The batch prompt explicitly asks the model to act as an AI Director and return a JSON array of creative shot designs.
+For assistant-backed modes, `PromptDirector` batches all shot design into one LLM task by default; `llm.bridge_batch: false` switches to one smaller task per shot, each expecting a single shot-design JSON object. The prompt explicitly asks the model to act as an AI Director and return creative shot designs.
 
 For API-backed modes, the director can build character profiles, scene style, and individual shot designs through structured LLM prompts.
 
@@ -74,7 +74,7 @@ PromptDirector -> LLMClient.complete(...)
 -> response content is parsed as JSON
 ```
 
-If the assistant does not write a response before timeout, the command fails. It does not silently generate a fake AI Director result.
+If the assistant does not write a response before timeout, the command fails. It does not silently generate a fake AI Director result. With `llm.bridge_wait: exit_on_pending` the build instead pauses with an `awaiting_bridge` status — the stage stays `pending` and rerunning the command resumes once the response exists (see [Bridge Mode](BRIDGE_MODE.md)). A response that fails JSON parsing or schema validation produces a follow-up task containing the exact error; answering it with the corrected payload continues the loop.
 
 ## Offline Path
 

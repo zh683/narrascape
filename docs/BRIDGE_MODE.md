@@ -41,6 +41,40 @@ $env:NARRASCAPE_LLM_MODE = "ai_assistant"
 $env:NARRASCAPE_BRIDGE_TIMEOUT = "600"
 ```
 
+## Wait Modes
+
+`llm.bridge_wait` controls what happens while a task is unanswered:
+
+| Value | Behavior | Best for |
+| --- | --- | --- |
+| `block` (default) | Poll until the response arrives or `timeout` expires | a human/assistant watching the terminal live |
+| `exit_on_pending` | Pause the build immediately with an `awaiting_bridge` status; the stage stays `pending` (not `failed`) and rerunning the command resumes once the response exists | turn-based assistants (Kimi Work, Codex) that process tasks between runs |
+
+```yaml
+llm:
+  mode: ai_assistant
+  bridge_wait: exit_on_pending
+  timeout: 1800
+```
+
+With `exit_on_pending`, a build that reaches an unanswered task prints the
+task/response paths and stops without marking anything failed. Process the
+task, then rerun the same command: the stable task id lets the bridge pick up
+the completed response and continue. Environment override:
+`NARRASCAPE_BRIDGE_WAIT=exit_on_pending`.
+
+An explicitly configured `llm.bridge_wait` or `llm.timeout` takes precedence
+over its environment variable. When the project omits the field,
+`NARRASCAPE_BRIDGE_WAIT` or `NARRASCAPE_BRIDGE_TIMEOUT` supplies the runtime
+default.
+
+`llm.bridge_batch` controls task granularity:
+
+| Value | Behavior |
+| --- | --- |
+| `true` (default) | One batched task per stage (all shots in a single JSON payload) |
+| `false` | One smaller task per shot/segment in `design` and `director_contract` — easier for assistants to answer reliably, and each shot resumes independently |
+
 ## Task File
 
 Narrascape writes:
@@ -85,16 +119,46 @@ Format:
 
 When the task asks for JSON, put the JSON payload inside the `content` string. Narrascape parses `content`.
 
+`content` may also be a directly embedded JSON object or array, which avoids
+double-encoding a large payload inside a JSON string:
+
+```json
+{
+  "content": {"shots": [{"segment_id": 1}]},
+  "usage": {}
+}
+```
+
+## Error Feedback
+
+Validated prompts retry through the bridge: when a response cannot be parsed
+or fails schema validation, Narrascape issues a follow-up task whose text
+contains the exact parse/validation error (look for "Your previous response
+was not valid JSON" or "had validation errors"). Answer the follow-up task
+with the corrected payload; each follow-up is a new task id, so the loop also
+resumes correctly across reruns in `exit_on_pending` mode.
+
+## Discovery
+
+The `assistant_handoff` stage lists unanswered bridge tasks under
+`pending_bridge_tasks` in `assistant_handoff.yaml` (and a `## Pending Bridge
+Tasks` section in the `.md`), so takeover flows do not depend on watching
+console output.
+
 ## Batching
 
-Bridge-backed modes intentionally batch large creative calls:
+Bridge-backed modes intentionally batch large creative calls by default:
 
-| Component | Bridge behavior |
-| --- | --- |
-| `ScriptAnalyzer` | one task for all segments |
-| `PromptDirector` | one task for all shot designs |
+| Component | `bridge_batch: true` (default) | `bridge_batch: false` |
+| --- | --- | --- |
+| `ScriptAnalyzer` | one task for all segments | one task for all segments |
+| `PromptDirector` (design) | one task for all shot designs | one task per shot |
+| `director_contract` | one task for all shot contracts | one task per shot |
 
-Retries are disabled for bridge calls so a timeout does not create duplicate task files.
+Plain bridge calls do not retry, so a timeout never creates duplicate task
+files (the pending task keeps a stable id and is reused). Validated prompts
+are the exception: parse/validation failures issue a follow-up task carrying
+the exact error — see [Error Feedback](#error-feedback).
 
 ## Common Tasks
 
@@ -123,7 +187,9 @@ path, and whether an incomplete (still-being-written) response file was
 observed — use that to distinguish "assistant never responded" from
 "assistant wrote the file non-atomically".
 
-Then rerun the command.
+Then rerun the command. With `llm.bridge_wait: exit_on_pending`, an
+unanswered task pauses the build instead of raising a timeout — process the
+task and rerun to resume.
 
 ### Bridge lock timeout
 

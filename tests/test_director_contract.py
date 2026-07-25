@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from narrascape.config import NarrascapeConfig, ProjectConfig, load_script
@@ -283,6 +284,16 @@ class _FakeLLM:
         return _Response(self.data)
 
 
+@pytest.mark.parametrize("returned_ids", [[2], [1, 1]])
+def test_director_contract_rejects_wrong_or_duplicate_per_shot_ids(returned_ids):
+    from narrascape.stages.director_contract import DirectorContractStage
+
+    llm = _FakeLLM({"shots": [{"segment_id": segment_id} for segment_id in returned_ids]})
+
+    with pytest.raises(ValueError, match="cover exactly segment_ids"):
+        DirectorContractStage(llm_client=llm)._request_shots("prompt", [1])
+
+
 def test_director_contract_compiles_story_language_prompt_and_qa(tmp_path):
     from narrascape.stages.director_contract import DirectorContractStage
 
@@ -472,6 +483,7 @@ def test_director_contract_uses_llm_when_available(tmp_path):
             ]
         }
     )
+    llm.data["shots"].append({**llm.data["shots"][0], "segment_id": 2})
     config = _config(tmp_path)
 
     result = DirectorContractStage(llm_client=llm).run(_context(config))

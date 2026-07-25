@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from narrascape.artifacts import write_artifact
 from narrascape.catalog import design_report_candidates
 from narrascape.contracts import DirectorContract
 from narrascape.contracts.qa_taxonomy import QA_DIMENSIONS, normalize_assertions
+from narrascape.llm import PromptTemplate, is_assistant_bridge_provider
 from narrascape.prompt_compiler import SCHEMA_VERSION, compile_video_prompts
 from narrascape.stages.base import Stage, StageContext, StageResult
 
@@ -109,12 +111,127 @@ class DirectorContractStage(Stage):
         context: StageContext,
     ) -> list[dict[str, Any]]:
         design_by_segment = self._design_by_segment(design)
-        prompt = (
+        if self._per_segment_llm_calls(context):
+            # llm.bridge_batch=false: one small task per shot so assistants
+            # answer reliably; each task carries only that segment's slice.
+            raw_shots: list[dict[str, Any]] = []
+            for segment in context.script.segments:
+                segment_id = int(segment.id)
+                prompt = self._llm_prompt(
+                    [segment.model_dump()],
+                    {**design, "segments": [design_by_segment.get(segment_id, {})]},
+                    structure,
+                    continuity,
+                    {segment_id: storyboard_by_segment.get(segment_id, [])},
+                    scope_note=(
+                        f"Design the contract for segment {segment_id} ONLY. "
+                        'Return JSON only: {"shots":[<one shot object>]} using the schema above.'
+                    ),
+                )
+                data = self._request_shots(prompt, [segment_id])
+                items = data["shots"]
+                raw_shots.extend(items)
+        else:
+            prompt = self._llm_prompt(
+                [segment.model_dump() for segment in context.script.segments],
+                design,
+                structure,
+                continuity,
+                storyboard_by_segment,
+                scope_note="",
+            )
+            expected_ids = [int(segment.id) for segment in context.script.segments]
+            data = self._request_shots(prompt, expected_ids)
+            raw_shots = data["shots"]
+        if not isinstance(raw_shots, list) or not raw_shots:
+            raise ValueError("LLM returned no shots")
+        return [
+            self._with_compiled_prompts(
+                self._normalize_shot(item, design_by_segment, storyboard_by_segment, context)
+            )
+            for item in raw_shots
+        ]
+
+    def _request_shots(self, prompt: str, expected_ids: list[int]) -> dict[str, Any]:
+        """Request and strictly validate the shot set before normalization."""
+        validated = getattr(self.llm_client, "run_template_validated", None)
+        require_exact_ids = callable(validated) or len(expected_ids) == 1
+
+        def validator(data: Any) -> tuple[bool, str]:
+            return self._validate_shot_response(data, expected_ids, require_exact_ids)
+
+        if callable(validated):
+            data = cast(Callable[..., Any], validated)(
+                PromptTemplate(user="{prompt}", output_format="Return ONLY valid JSON."),
+                validator=validator,
+                prompt=prompt,
+            )
+        else:
+            # Lightweight test doubles and legacy clients expose only complete().
+            response = cast(Callable[..., Any], self.llm_client.complete)(prompt, json_mode=True)
+            extract = getattr(response, "extract_json", None)
+            extract_safe = getattr(response, "extract_json_safe", None)
+            if callable(extract):
+                data = cast(Callable[[], Any], extract)()
+            elif callable(extract_safe):
+                data = cast(Callable[..., Any], extract_safe)(default={})
+            else:
+                data = json.loads(getattr(response, "content", "{}"))
+        valid, error = validator(data)
+        if not valid:
+            raise ValueError(error)
+        if not isinstance(data, dict):  # Narrows the validated result for type checkers.
+            raise ValueError("response must be a JSON object")
+        return data
+
+    @staticmethod
+    def _validate_shot_response(
+        data: Any, expected_ids: list[int], require_exact_ids: bool = True
+    ) -> tuple[bool, str]:
+        if not isinstance(data, dict):
+            return False, "response must be a JSON object"
+        shots = data.get("shots")
+        if not isinstance(shots, list) or not shots:
+            return False, "response.shots must be a non-empty array"
+        if not all(isinstance(item, dict) for item in shots):
+            return False, "every response.shots item must be an object"
+        try:
+            actual_ids = [int(item.get("segment_id")) for item in shots]
+        except (TypeError, ValueError):
+            return False, "every shot must contain an integer segment_id"
+        if require_exact_ids and (
+            len(actual_ids) != len(expected_ids) or sorted(actual_ids) != sorted(expected_ids)
+        ):
+            return (
+                False,
+                f"shots must cover exactly segment_ids {expected_ids}; got {actual_ids}",
+            )
+        return True, ""
+
+    def _per_segment_llm_calls(self, context: StageContext) -> bool:
+        """True when bridge-backed and llm.bridge_batch disables batch tasks."""
+        provider = str(getattr(getattr(self.llm_client, "config", None), "provider", "") or "")
+        if not is_assistant_bridge_provider(provider):
+            return False
+        return not bool(getattr(getattr(context.config, "llm", None), "bridge_batch", True))
+
+    def _llm_prompt(
+        self,
+        script_payload: list[dict[str, Any]],
+        design: dict[str, Any],
+        structure: dict[str, Any],
+        continuity: dict[str, Any],
+        storyboard_by_segment: dict[int, list[dict[str, Any]]],
+        scope_note: str = "",
+    ) -> str:
+        scope = f"{scope_note}\n\n" if scope_note else ""
+        return (
             "You are a top-tier film director and prompt compiler for AI video generation. "
             "For each shot, translate director thinking into an executable contract: story reason, "
             "emotional target, film language, continuity constraints, video prompt, negative prompt, "
             "duration, motion, storyboard binding, and QA assertions. Keep every artistic idea grounded in generation instructions.\n\n"
-            f"Script: {json.dumps([segment.model_dump() for segment in context.script.segments], ensure_ascii=False)}\n"
+            f"{scope}"
+            f"Script: {json.dumps(script_payload, ensure_ascii=False)}\n"
             f"Design report: {json.dumps(design, ensure_ascii=False)}\n"
             f"Screenplay structure: {json.dumps(structure, ensure_ascii=False)}\n"
             f"Continuity bible: {json.dumps(continuity, ensure_ascii=False)}\n\n"
@@ -131,22 +248,6 @@ class DirectorContractStage(Stage):
             '"generation":{"video_prompt":"...","negative_prompt":"...","duration":5,"motion":"..."},'
             '"qa":{"must_show":[],"must_not_show":[],"assertions":[{"dimension":"...","check":"..."}]}}]}.'
         )
-        response = self.llm_client.complete(prompt, json_mode=True)
-        if hasattr(response, "extract_json_safe"):
-            data = response.extract_json_safe(default={})
-        else:
-            data = json.loads(getattr(response, "content", "{}"))
-        if not isinstance(data, dict):
-            raise ValueError("LLM returned non-object JSON")
-        shots = data.get("shots", [])
-        if not isinstance(shots, list) or not shots:
-            raise ValueError("LLM returned no shots")
-        return [
-            self._with_compiled_prompts(
-                self._normalize_shot(item, design_by_segment, storyboard_by_segment, context)
-            )
-            for item in shots
-        ]
 
     def _compile_locally(
         self,

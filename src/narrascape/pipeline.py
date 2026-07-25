@@ -19,6 +19,7 @@ from narrascape.config import (
     load_script,
 )
 from narrascape.contracts import FilmSupervisorReport
+from narrascape.llm.bridge import BridgeTaskPending
 from narrascape.pipeline_approval import PipelineApproval
 from narrascape.stage_contracts import stage_input_patterns, stage_output_patterns
 from narrascape.stages.animatic import AnimaticStage
@@ -530,6 +531,37 @@ class Pipeline:
         self._stage_local.active = name
         if threading.current_thread() is threading.main_thread():
             self._active_stage = name
+        setter = getattr(self.llm_client, "set_bridge_resume_scope", None)
+        if callable(setter):
+            setter(name)
+
+    def _finalize_bridge_scope(self, stage_name: str, result: StageResult) -> None:
+        """Clear replay checkpoints unless the stage is paused for bridge input."""
+        if result.metadata.get("awaiting_bridge"):
+            return
+        clearer = getattr(self.llm_client, "clear_bridge_resume_scope", None)
+        if callable(clearer):
+            clearer(stage_name)
+
+    @staticmethod
+    def _bridge_pending_result(
+        stage_name: str, pending: BridgeTaskPending, duration_seconds: float
+    ) -> StageResult:
+        return StageResult(
+            stage_name,
+            False,
+            message=(
+                f"awaiting AI assistant bridge task {pending.task_id} "
+                f"(task: {pending.task_file})"
+            ),
+            duration_seconds=duration_seconds,
+            metadata={
+                "awaiting_bridge": True,
+                "bridge_task_id": pending.task_id,
+                "bridge_task_file": str(pending.task_file),
+                "bridge_response_file": str(pending.response_file),
+            },
+        )
 
     def _record_llm_usage(self, usage: dict[str, int], model: str, estimated: bool) -> None:
         """Budget-track one completed LLM call (invoked via LLMClient.on_usage).
@@ -914,6 +946,11 @@ class Pipeline:
                 self._set_active_stage(stage_name)
                 result = stage.run(context)
                 result.duration_seconds = time.monotonic() - start
+            except BridgeTaskPending as pending:
+                # Not a failure: the stage is paused until the AI assistant
+                # answers the bridge task. Keep it pending so a rerun resumes.
+                logger.info(f"[{stage_name}] Awaiting bridge task {pending.task_id}")
+                result = self._bridge_pending_result(stage_name, pending, time.monotonic() - start)
             except Exception as e:
                 logger.exception(f"[{stage_name}] Execution failed")
                 result = StageResult(
@@ -940,6 +977,8 @@ class Pipeline:
                             "strict_director_reason": strict_reason,
                         },
                     )
+
+            self._finalize_bridge_scope(stage_name, result)
 
             results[stage_name] = result
 
@@ -977,6 +1016,13 @@ class Pipeline:
                                 self._set_active_stage(stage_name)
                                 result = stage.run(context)
                                 result.duration_seconds = time.monotonic() - retry_start
+                            except BridgeTaskPending as pending:
+                                logger.info(
+                                    f"[{stage_name}] Awaiting bridge task {pending.task_id}"
+                                )
+                                result = self._bridge_pending_result(
+                                    stage_name, pending, time.monotonic() - retry_start
+                                )
                             except Exception as e:
                                 logger.exception(f"[{stage_name}] Retry failed")
                                 result = StageResult(
@@ -1004,8 +1050,16 @@ class Pipeline:
                                         },
                                     )
                                     results[stage_name] = result
+                            self._finalize_bridge_scope(stage_name, result)
                             if not result.success:
-                                self.state.set_stage_status(stage_name, "failed")
+                                if result.metadata.get("awaiting_bridge"):
+                                    self.state.set_stage_status(stage_name, "pending")
+                                    logger.warning(
+                                        f"[{stage_name}] Retry paused — waiting for AI assistant "
+                                        f"bridge task {result.metadata.get('bridge_task_id')}."
+                                    )
+                                else:
+                                    self.state.set_stage_status(stage_name, "failed")
                                 self._mark_remaining_pending(execution_order, stage_name)
                                 retry_failed = True
                                 break  # Retry failed, stop
@@ -1037,6 +1091,18 @@ class Pipeline:
                     self.approval.approve(stage_name, reviewer="auto")
                     logger.info(f"[{stage_name}] Auto-approved")
             else:
+                if result.metadata.get("awaiting_bridge"):
+                    # Paused, not failed: leave the stage pending so rerunning
+                    # the build resumes it once the bridge response exists.
+                    self.state.set_stage_status(stage_name, "pending")
+                    logger.warning(
+                        f"[{stage_name}] Paused — waiting for AI assistant to process "
+                        f"bridge task {result.metadata.get('bridge_task_id')}. "
+                        f"Task file: {result.metadata.get('bridge_task_file')}. "
+                        "Rerun the build after the response is written."
+                    )
+                    self._mark_remaining_pending(execution_order, stage_name)
+                    break
                 self.state.set_stage_status(stage_name, "failed")
                 logger.error(f"[{stage_name}] Failed: {result.message}")
                 if not getattr(stage, "continue_on_failure", False):
@@ -1263,6 +1329,9 @@ class Pipeline:
             self._set_active_stage(stage_name)
             result = stage.run(context)
             result.duration_seconds = time.monotonic() - start
+        except BridgeTaskPending as pending:
+            logger.info(f"[{stage_name}] Awaiting bridge task {pending.task_id}")
+            result = self._bridge_pending_result(stage_name, pending, time.monotonic() - start)
         except Exception as exc:
             logger.exception(f"[{stage_name}] Execution failed")
             result = StageResult(
@@ -1289,6 +1358,7 @@ class Pipeline:
                         "strict_director_reason": strict_reason,
                     },
                 )
+        self._finalize_bridge_scope(stage_name, result)
         return result
 
     def _parallel_post_gates(
@@ -1321,6 +1391,20 @@ class Pipeline:
                     self.approval.approve(stage_name, reviewer="auto")
                     logger.info(f"[{stage_name}] Auto-approved")
             else:
+                if result.metadata.get("awaiting_bridge"):
+                    # Paused, not failed: keep the stage pending so a rerun
+                    # resumes once the bridge response exists.
+                    self.state.set_stage_status(stage_name, "pending")
+                    logger.warning(
+                        f"[{stage_name}] Paused — waiting for AI assistant to process "
+                        f"bridge task {result.metadata.get('bridge_task_id')}. "
+                        f"Task file: {result.metadata.get('bridge_task_file')}. "
+                        "Rerun the build after the response is written."
+                    )
+                    if not halt:
+                        self._mark_remaining_pending(execution_order, stage_name)
+                        halt = True
+                    continue
                 self.state.set_stage_status(stage_name, "failed")
                 logger.error(f"[{stage_name}] Failed: {result.message}")
                 if not getattr(stage, "continue_on_failure", False) and not halt:

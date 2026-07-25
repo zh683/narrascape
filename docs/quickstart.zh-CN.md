@@ -56,6 +56,8 @@ llm:
   timeout: 300
 ```
 
+回合制助手（如 Kimi Work）建议再加两项：`bridge_wait: exit_on_pending` 让构建遇到未应答任务时暂停（阶段保持 pending，不标失败、不降级离线模式），助手处理完任务后重跑同一命令即断点续跑；`bridge_batch: false` 把整幕大任务拆成按镜头的小任务，长剧本下助手应答更稳。详见 [Bridge Mode](BRIDGE_MODE.md)。
+
 **api 模式**：直连 OpenAI 兼容 API，适合自动化和无人值守构建。
 
 ```yaml
@@ -148,6 +150,9 @@ budget:
 
 **生成视频没被采用？**
 `film_timeline` 的视觉优先级是生成视频 → 真实素材 → 生成图片兜底。多 take 场景下先跑 `take_select` 选出 take；如果存在 `vid_*_take_*.mp4` 但缺少 `take_selection.yaml`，`film_timeline` 会给出警告并只认基础 `vid_NN.mp4` 文件。
+
+**构建在桥接任务上停住了？**
+`bridge_wait: exit_on_pending` 下这是正常暂停：阶段保持 pending 等助手应答，不是失败。到 `.narrascape/bridge/pending/` 处理任务（或看 `assistant_handoff.yaml` 的 `pending_bridge_tasks`），把应答写进 `completed/response_<任务id>.json` 后重跑同一命令即可续跑。如果任务文本里引着上次的校验错误，按错误修正后直接应答——那是纠错重试环，不是重复任务。
 
 ## 下一步
 

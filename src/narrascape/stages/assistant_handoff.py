@@ -67,6 +67,7 @@ class AssistantHandoffStage(Stage):
             "quality_gates": self._quality_gates(config, render_report, production_readiness),
             "next_actions": self._next_actions(config, next_stages),
             "blocking_items": self._blocking_items(render_report, production_readiness),
+            "pending_bridge_tasks": self._pending_bridge_tasks(config),
             "state_summary": self._state_summary(state),
             "commands": self._commands(config, next_stages),
         }
@@ -261,6 +262,28 @@ class AssistantHandoffStage(Stage):
             )
         return result
 
+    def _pending_bridge_tasks(self, config: Any) -> list[dict[str, Any]]:
+        """List unanswered bridge task files so the assistant never has to
+        discover them from console logs (the discovery gap that silently
+        degrades builds to offline fallback)."""
+        pending_dir = config.project_dir / ".narrascape" / "bridge" / "pending"
+        completed_dir = config.project_dir / ".narrascape" / "bridge" / "completed"
+        tasks: list[dict[str, Any]] = []
+        if not pending_dir.exists():
+            return tasks
+        for task_file in sorted(pending_dir.glob("task_*.md")):
+            task_id = task_file.stem.removeprefix("task_")
+            response_file = completed_dir / f"response_{task_id}.json"
+            tasks.append(
+                {
+                    "task_id": task_id,
+                    "task_file": task_file.as_posix(),
+                    "response_file": response_file.as_posix(),
+                    "awaiting": "answered" if response_file.exists() else "response",
+                }
+            )
+        return tasks
+
     def _state_summary(self, state: dict[str, Any]) -> dict[str, Any]:
         stages = state.get("stages", {}) if isinstance(state.get("stages"), dict) else {}
         counts = {"completed": 0, "pending": 0, "failed": 0, "skipped": 0, "other": 0}
@@ -305,6 +328,15 @@ class AssistantHandoffStage(Stage):
                 lines.append(f"- `{item['source']}` {item['severity']}: {item['message']}")
         else:
             lines.append("- none")
+        pending_bridge = handoff.get("pending_bridge_tasks") or []
+        if pending_bridge:
+            lines.extend(["", "## Pending Bridge Tasks"])
+            lines.append(
+                "Process these task files and write each response atomically, "
+                "then rerun the build — see docs/BRIDGE_MODE.md:"
+            )
+            for item in pending_bridge:
+                lines.append(f"- `{item['task_id']}` ({item['awaiting']}): `{item['task_file']}`")
         lines.extend(["", "## Assistant Contract"])
         for item in handoff["assistant_contract"]:
             lines.append(f"- `{item['id']}`: {item['rule']}")

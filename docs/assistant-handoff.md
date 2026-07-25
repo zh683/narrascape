@@ -50,6 +50,7 @@ Before this stage, an assistant could inspect many files, but it had to infer:
 | `quality_gates` | production-safety checks such as LLM mode, strict director mode, readiness, QA errors, and missing generated video |
 | `next_actions` | stage-by-stage commands and intent |
 | `blocking_items` | QA errors or production-readiness findings |
+| `pending_bridge_tasks` | unanswered bridge task files awaiting the assistant (see docs/BRIDGE_MODE.md) |
 | `state_summary` | compact stage-state counts |
 | `commands` | status, build, production build, and refresh commands |
 | `cost_report` | side output, not a packet field: the stage refreshes `pipeline/<project>/cost_report.yaml` from the budget ledger before writing the packet, so every takeover sees current spending |
