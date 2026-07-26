@@ -39,7 +39,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $maxAttempts = 3
+          $maxAttempts = 2
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             choco install ffmpeg -y --no-progress
             if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
@@ -51,7 +51,27 @@ jobs:
               Start-Sleep -Seconds 15
             }
           }
-          throw "FFmpeg was unavailable after $maxAttempts Chocolatey install attempts."
+
+          Write-Warning "Chocolatey could not provide FFmpeg; using the GitHub release fallback."
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg-win64.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "ffmpeg-win64"
+          $assetUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip"
+          Invoke-WebRequest `
+            -Uri $assetUrl `
+            -OutFile $archive `
+            -MaximumRetryCount 3 `
+            -RetryIntervalSec 10
+          Expand-Archive -Path $archive -DestinationPath $extractDir -Force
+          $ffmpeg = Get-ChildItem -Path $extractDir -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          $ffprobe = Get-ChildItem -Path $extractDir -Filter ffprobe.exe -Recurse | Select-Object -First 1
+          if (-not $ffmpeg -or -not $ffprobe) {
+            throw "The FFmpeg fallback archive did not contain ffmpeg.exe and ffprobe.exe."
+          }
+          $binDir = $ffmpeg.Directory.FullName
+          $binDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:Path = "$binDir;$env:Path"
+          ffmpeg -version
+          ffprobe -version
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
