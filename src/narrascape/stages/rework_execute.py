@@ -120,6 +120,8 @@ class ReworkExecuteStage(Stage):
         candidates = list(videos_dir.glob(f"{video_id}.mp4")) + list(
             videos_dir.glob(f"{video_id}_take_*.mp4")
         )
+        candidates.extend(videos_dir.glob(f"{video_id}_shot_*.mp4"))
+        candidates = sorted(set(candidates))
         quarantined: list[str] = []
         quarantine_dir = context.config.pipeline_dir / "rework_quarantine" / "videos"
         quarantine_dir.mkdir(parents=True, exist_ok=True)

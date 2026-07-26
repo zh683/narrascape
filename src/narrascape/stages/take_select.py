@@ -21,7 +21,7 @@ class TakeSelectStage(Stage):
     name = "take_select"
     depends_on = ["generate_video"]
 
-    TAKE_RE = re.compile(r"^vid_(?P<segment>\d+)_take_(?P<take>\d+)$")
+    TAKE_RE = re.compile(r"^vid_(?P<segment>\d+)(?:_shot_(?P<shot>\d+))?_take_(?P<take>\d+)$")
 
     def __init__(self, llm_client: Any = None):
         self.llm_client = llm_client
@@ -40,9 +40,9 @@ class TakeSelectStage(Stage):
         output.parent.mkdir(parents=True, exist_ok=True)
         qa_report = self._load_yaml(config.pipeline_dir / "render_report.yaml")
         video_state = self._load_json(config.pipeline_dir / "video_gen_state.json")
-        expected_durations = self._expected_durations(
-            self._load_yaml(config.pipeline_dir / "director_contract.yaml")
-        )
+        director_contract = self._load_yaml(config.pipeline_dir / "director_contract.yaml")
+        expected_durations = self._expected_durations(director_contract)
+        contract_by_key = self._contract_by_key(director_contract)
         candidates = self._collect_candidates(config.project_dir / "assets" / "videos", video_state)
         strategy = config.take_select.selection_strategy
         if strategy == "mcts" and not self.llm_client:
@@ -53,31 +53,42 @@ class TakeSelectStage(Stage):
         selections: list[dict[str, Any]] = []
         llm_used = False
         llm_errors: list[str] = []
-        fallback_segments: list[int] = []
-        mcts_segments: list[int] = []
-        mcts_fallback_segments: list[int] = []
+        fallback_segments: list[int | str] = []
+        mcts_segments: list[int | str] = []
+        mcts_fallback_segments: list[int | str] = []
         with tempfile.TemporaryDirectory(prefix="take_select_frames_") as work_dir:
-            for segment_id, takes in candidates.items():
+            for (segment_id, shot_order), takes in candidates.items():
+                contract = contract_by_key.get((segment_id, shot_order), {})
+                selection_key: int | str = (
+                    str(contract.get("shot_id") or f"shot_{segment_id:03d}_{shot_order:02d}")
+                    if shot_order is not None
+                    else segment_id
+                )
                 selection, used_llm, error, scoring = self._select_for_segment(
                     segment_id,
                     takes,
                     qa_report,
                     context,
-                    expected_duration=expected_durations.get(segment_id),
+                    expected_duration=(
+                        expected_durations.get(str(contract.get("shot_id") or ""))
+                        or expected_durations.get(segment_id)
+                    ),
                     work_dir=Path(work_dir),
+                    shot_order=shot_order,
+                    contract=contract,
                 )
                 selections.append(selection)
                 llm_used = llm_used or used_llm
                 if error:
                     llm_errors.append(error)
                 if scoring == "bytes_fallback":
-                    fallback_segments.append(segment_id)
+                    fallback_segments.append(selection_key)
                 mcts_info = selection.get("mcts")
                 if isinstance(mcts_info, dict):
                     if mcts_info.get("status") == "fallback_no_llm":
-                        mcts_fallback_segments.append(segment_id)
+                        mcts_fallback_segments.append(selection_key)
                     else:
-                        mcts_segments.append(segment_id)
+                        mcts_segments.append(selection_key)
         selection_process: dict[str, Any] = {
             "judges": ["qa", "llm"],
             "mode": "qa_plus_llm" if llm_used else "deterministic_quality_score",
@@ -116,9 +127,9 @@ class TakeSelectStage(Stage):
         self,
         videos_dir: Path,
         video_state: dict[str, Any],
-    ) -> dict[int, list[dict[str, Any]]]:
+    ) -> dict[tuple[int, int | None], list[dict[str, Any]]]:
         done = set(video_state.get("done", []) or [])
-        candidates: dict[int, list[dict[str, Any]]] = {}
+        candidates: dict[tuple[int, int | None], list[dict[str, Any]]] = {}
         for path in sorted(videos_dir.glob("vid_*_take_*.mp4")):
             match = self.TAKE_RE.match(path.stem)
             if not match:
@@ -126,8 +137,9 @@ class TakeSelectStage(Stage):
             if done and path.stem not in done:
                 continue
             segment_id = int(match.group("segment"))
+            shot_order = int(match.group("shot")) if match.group("shot") else None
             take_id = int(match.group("take"))
-            candidates.setdefault(segment_id, []).append(
+            candidates.setdefault((segment_id, shot_order), []).append(
                 {
                     "id": path.stem,
                     "take_number": take_id,
@@ -146,6 +158,8 @@ class TakeSelectStage(Stage):
         *,
         expected_duration: float | None = None,
         work_dir: Path,
+        shot_order: int | None = None,
+        contract: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool, str | None, str]:
         scored: list[dict[str, Any]] = []
         risky_segments: set[int] = set()
@@ -274,6 +288,17 @@ class TakeSelectStage(Stage):
                 for item in scored
             ],
         }
+        if shot_order is not None:
+            contract = contract or {}
+            selection_entry.update(
+                {
+                    "shot_id": str(
+                        contract.get("shot_id") or f"shot_{segment_id:03d}_{shot_order:02d}"
+                    ),
+                    "shot_order": shot_order,
+                    "coverage_role": str(contract.get("coverage_role") or "coverage"),
+                }
+            )
         if mcts_trace is not None:
             selection_entry["mcts"] = mcts_trace
 
@@ -328,9 +353,9 @@ class TakeSelectStage(Stage):
             return "fallback_after_error"
         return "not_configured"
 
-    def _expected_durations(self, director_contract: dict[str, Any]) -> dict[int, float]:
+    def _expected_durations(self, director_contract: dict[str, Any]) -> dict[int | str, float]:
         """Segment id -> expected clip seconds from director_contract generation.duration."""
-        expected: dict[int, float] = {}
+        expected: dict[int | str, float] = {}
         for shot in director_contract.get("shots", []) or []:
             if not isinstance(shot, dict):
                 continue
@@ -347,8 +372,31 @@ class TakeSelectStage(Stage):
             except (TypeError, ValueError):
                 continue
             if duration > 0:
-                expected[segment_id] = duration
+                expected.setdefault(segment_id, duration)
+                if shot.get("shot_id"):
+                    expected[str(shot["shot_id"])] = duration
         return expected
+
+    def _contract_by_key(
+        self, director_contract: dict[str, Any]
+    ) -> dict[tuple[int, int | None], dict[str, Any]]:
+        result: dict[tuple[int, int | None], dict[str, Any]] = {}
+        for shot in director_contract.get("shots", []) or []:
+            if not isinstance(shot, dict):
+                continue
+            try:
+                segment_id = int(str(shot.get("segment_id")))
+            except (TypeError, ValueError):
+                continue
+            raw_order = shot.get("shot_order")
+            try:
+                shot_order = int(raw_order) if raw_order is not None else None
+            except (TypeError, ValueError):
+                shot_order = None
+            result[(segment_id, shot_order)] = shot
+            if shot_order in (None, 1):
+                result.setdefault((segment_id, None), shot)
+        return result
 
     def _load_yaml(self, path: Path) -> dict[str, Any]:
         return super()._load_yaml(path)

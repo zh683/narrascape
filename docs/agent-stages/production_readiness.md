@@ -35,10 +35,13 @@ When `pipeline.production_quality_gates: true`, the stage also checks:
 - `pre_production.yaml` has scene/environment references.
 - Every script segment has storyboard coverage.
 - Storyboard frames include reference image ids, scene refs, and character positions.
-- `director_contract.yaml` has one shot per script segment.
+- `director_contract.yaml` covers every script segment without exceeding the configured coverage-shot cap.
 - Each shot has storyboard frame ids, reference image ids, wardrobe lock,
   characters, location, compiled prompts, prompt blueprint, and QA `must_show`
   assertions.
+- Each shot also passes semantic validation for distinct observable action,
+  advanced camera language, temporal beats, editorial intent, executable
+  compiled prompts, and required QA dimensions.
 
 ## Failure Meaning
 

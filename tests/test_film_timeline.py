@@ -445,3 +445,72 @@ def test_film_timeline_no_warning_without_take_files(tmp_path, caplog):
         for r in caplog.records
         if r.levelno == logging.WARNING and "take_selection" in r.getMessage()
     ]
+
+
+def test_film_timeline_places_ordered_coverage_inside_one_narration_segment(tmp_path):
+    from narrascape.config import VideoConfig
+    from narrascape.stages.film_timeline import FilmTimelineStage
+
+    config = _project(tmp_path)
+    config.video = VideoConfig(coverage_mode="director", max_coverage_shots=2)
+    videos_dir = config.project_dir / "assets" / "videos"
+    for name in ("vid_01_shot_01", "vid_01_shot_02"):
+        (videos_dir / f"{name}.mp4").write_bytes(b"generated video")
+    (config.pipeline_dir / "video_gen_state.json").write_text(
+        json.dumps({"done": ["vid_01_shot_01", "vid_01_shot_02"]}),
+        encoding="utf-8",
+    )
+    (config.pipeline_dir / "director_contract.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "director_contract.v1",
+                "compile_process": {"llm_status": "used"},
+                "shots": [
+                    {
+                        "segment_id": 1,
+                        "shot_id": "shot_001_01",
+                        "shot_order": 1,
+                        "coverage_role": "master",
+                        "film_language": {
+                            "shot_type": "wide",
+                            "camera_motion": "still",
+                        },
+                        "editorial_intent": {
+                            "coverage_role": "master",
+                            "cut_motivation": "Establish the archive room.",
+                        },
+                        "generation": {"duration": 3.0},
+                    },
+                    {
+                        "segment_id": 1,
+                        "shot_id": "shot_001_02",
+                        "shot_order": 2,
+                        "coverage_role": "insert",
+                        "film_language": {
+                            "shot_type": "detail",
+                            "camera_motion": "push_in",
+                        },
+                        "editorial_intent": {
+                            "coverage_role": "insert",
+                            "cut_motivation": "Reveal the damaged archive label.",
+                        },
+                        "generation": {"duration": 2.0},
+                    },
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = FilmTimelineStage().run(_context(config))
+
+    assert result.success
+    timeline = yaml.safe_load(
+        (config.project_dir / "film_timeline.yaml").read_text(encoding="utf-8")
+    )
+    clips = [clip for clip in timeline["tracks"]["visual"] if clip.get("segment_id") == 1]
+    assert [clip["shot_id"] for clip in clips] == ["shot_001_01", "shot_001_02"]
+    assert [clip["duration"] for clip in clips] == [3.0, 2.0]
+    assert [clip["start"] for clip in clips] == [0.0, 3.0]
+    assert sum(clip["duration"] for clip in clips) == 5.0

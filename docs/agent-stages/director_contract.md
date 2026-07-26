@@ -16,13 +16,17 @@
 ## Procedure
 
 1. Read the screenplay structure, design report, script segments, storyboard frames, and any available continuity bible.
-2. If an LLM client is configured, ask it to act as a top-tier film director and prompt compiler. In bridge modes this arrives as one batched task for all shots, or one task per shot with `llm.bridge_batch: false` (expecting `{"shots": [<one shot object>]}`); validation failures return as follow-up tasks quoting the exact error.
+2. If an LLM client is configured, ask it to act as a top-tier film director and prompt compiler. In bridge modes this arrives as one batched task for all shots, or one task per segment with `llm.bridge_batch: false` (expecting `{"shots": [<ordered shot objects>]}`); validation failures return as follow-up tasks quoting the exact error.
 3. For every shot, compile story purpose, emotional target, film language, continuity constraints, storyboard binding, generation instructions, and QA assertions.
 4. Write `generation.video_prompt`, `generation.negative_prompt`, `generation.duration`, and `generation.motion` as the portable execution contract.
 5. Compile provider-specific prompt variants under `generation.compiled_prompts`, especially `seedance` plus a `generic` fallback, with the provider prompt style, negative prompt, and reference strategy.
 6. Write `storyboard_binding.storyboard_frame_ids`, `character_positions`, `scene_ref`, `wardrobe_lock`, `composition_requirements`, and `reference_image_ids` when storyboard frames are available.
 7. Write `qa.must_show` and `qa.must_not_show` so `visual_semantic_qa` can review the same contract that guided generation.
 8. Tag every QA assertion with a stable dimension from `narrascape.contracts.qa_taxonomy.QA_DIMENSIONS` and write the tagged checklist to `qa.assertions` (and `prompt_blueprint.qa_assertions.assertions`). The LLM path is instructed to tag assertions itself; the deterministic fallback emits a default checklist covering all six dimensions per shot. Legacy contracts without `assertions` stay valid — readers bucket them as `uncategorized`.
+9. Keep `story_reason` (editorial purpose) separate from `subject_action` (an observable action), and compile timed action beats under `temporal_plan`.
+10. Write lens, angle, depth, palette, blocking, eyeline, and screen-axis decisions under `film_language`; production semantic validation rejects empty advanced direction.
+11. With `video.coverage_mode: director`, emit ordered complementary shots sharing `segment_id`, with unique `shot_id`, contiguous `shot_order`, `coverage_role`, and `editorial_intent`. The default `single` mode emits one backward-compatible shot per segment.
+12. Derive `style_anchor` from `images.style` and provider flow from the configured image/video providers; do not hard-code one visual style or provider pair.
 
 ## QA Assertion Dimensions
 

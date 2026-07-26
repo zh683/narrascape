@@ -108,9 +108,11 @@ scene, sequence, and shot.
 any available continuity bible. It turns director judgment into a per-shot
 execution contract:
 
-- why the shot exists in the story
+- why the shot exists in the story, separately from the observable subject action
 - emotional target
-- film language: shot type, camera motion, lighting, and composition
+- film language: shot type, camera motion, lens, angle, depth, lighting,
+  palette, composition, blocking, eyeline, and screen axis
+- temporal action beats and editorial intent
 - continuity constraints: characters, location, wardrobe, and light
 - storyboard binding: frame ids, character positions, scene reference, wardrobe
   lock, composition requirements, and reference image ids
@@ -128,6 +130,11 @@ deterministic contract from existing design fields. The important boundary is
 that artistic ideas do not remain vague advice: every idea must compile into
 prompt text, provider-specific execution prompts, continuity constraints, or QA
 checks consumed by later stages.
+
+The backward-compatible default is one shot per script segment. With
+`video.coverage_mode: director`, the contract may contain ordered master,
+reaction, insert, or detail coverage sharing a segment id. Each shot has a
+unique id and is executed, selected, timed, and reviewed independently.
 
 `reference_plate` copies the prompt blueprint into `reference_plates.yaml`.
 That lets later QA and provider stages read the same structured contract without
@@ -175,11 +182,14 @@ It merges findings into executable actions grouped as:
 ### Multi-Take Director
 
 `generate_video` can create `vid_<segment>_take_<take>.mp4` candidates when
-`video.takes > 1`. `take_select` reads those files and writes
+`video.takes > 1`; director coverage uses
+`vid_<segment>_shot_<shot>_take_<take>.mp4`. `take_select` groups those files
+per shot and writes
 `take_selection.yaml`. When an LLM client is configured, the stage calls the LLM
 as a take judge with QA evidence and candidate metadata. Without an LLM, it uses
 a deterministic QA proxy score. When the file exists, `film_timeline` uses the
-selected take as the generated-video clip for that segment.
+selected take as that shot's generated-video clip. Multiple selected coverage
+shots are placed sequentially inside the segment's narration interval.
 
 ### Creative Review Director
 
@@ -190,8 +200,10 @@ LLM, it creates findings from existing director reports.
 
 ### Visual Semantic QA Director
 
-`visual_semantic_qa` reads visual clip paths, design intent, continuity context,
-the director contract, and QA checks. With an LLM client, it asks the model
+`visual_semantic_qa` reads visual clips, design intent, continuity context,
+the director contract, and QA checks. With a multimodal LLM client, it extracts
+representative frames and attaches their actual pixels plus reference images
+before asking the model
 whether visuals match the script, character identity, costume, location, shot
 intent, and the contract's `must_show` / `must_not_show` assertions. Without an
 LLM, it flags metadata mismatches such as scene or wardrobe drift, checks

@@ -216,9 +216,20 @@ class GenerateVideoStage(Stage):
                     False,
                     message="video_regen_queue.yaml has no matching design segments",
                 )
-        contract_by_segment = self._load_director_contract(pipe_dir / "director_contract.yaml")
-        reference_plates = self._load_reference_plates(pipe_dir / "reference_plates.yaml")
+        contract_path = pipe_dir / "director_contract.yaml"
+        contract_by_segment = self._load_director_contract(contract_path)
+        contract_shots = self._load_director_contract_shots(contract_path)
+        reference_plate_path = pipe_dir / "reference_plates.yaml"
+        reference_plates = self._load_reference_plates(reference_plate_path)
+        reference_plates_by_shot = self._load_reference_plates_by_shot(reference_plate_path)
         pre_production = self._load_yaml(pipe_dir / "pre_production.yaml")
+        segments = self._generation_units(
+            segments,
+            contract_shots,
+            reference_plates_by_shot,
+            coverage_mode=str(config.video.coverage_mode),
+            project_style=str(config.images.style or ""),
+        )
         quality_report = self._write_prompt_quality_report(
             config,
             segments,
@@ -296,7 +307,7 @@ class GenerateVideoStage(Stage):
         ok_count, fail_count = 0, 0
         job_index = 0
         for i, seg in enumerate(segments):
-            vid_id = f"vid_{seg['segment_id']:02d}"
+            vid_id = self._video_id_for_unit(seg)
             out_names = self._output_names_for_segment(vid_id, take_count)
             state.setdefault("generated_takes", {})[vid_id] = list(out_names)
 
@@ -311,7 +322,7 @@ class GenerateVideoStage(Stage):
             img_id = f"img_{seg['segment_id']:02d}"
             first_frame = self._resolve_first_frame(seg, images_dir, img_id)
             last_frame = self._resolve_last_frame(seg, images_dir, design)
-            contract = contract_by_segment.get(int(seg["segment_id"]), {})
+            contract = self._contract_for_unit(seg, contract_by_segment)
             negative_prompt = self._build_video_negative_prompt(contract, provider_name)
             reference_inputs = self._reference_inputs_for_segment(
                 config,
@@ -319,7 +330,7 @@ class GenerateVideoStage(Stage):
                 pre_production,
                 seg,
                 contract,
-                reference_plates.get(int(seg["segment_id"]), {}),
+                self._reference_plate_for_unit(seg, reference_plates),
             )
             uploaded_reference_images = reference_inputs.get("uploaded_reference_images", [])
             reference_images = (
@@ -595,8 +606,25 @@ class GenerateVideoStage(Stage):
             segment_id = self._to_int(shot.get("segment_id"))
             if segment_id is None:
                 continue
-            result[segment_id] = shot
+            current = result.get(segment_id)
+            if current is None or int(shot.get("shot_order") or 1) < int(
+                current.get("shot_order") or 1
+            ):
+                result[segment_id] = shot
         return result
+
+    def _load_director_contract_shots(self, path: Path) -> list[dict[str, Any]]:
+        if not path.exists():
+            return []
+        data = load_yaml_mapping(path)
+        shots = [dict(shot) for shot in data.get("shots", []) or [] if isinstance(shot, dict)]
+        shots.sort(
+            key=lambda shot: (
+                self._to_int(shot.get("segment_id")) or 0,
+                self._to_int(shot.get("shot_order")) or 1,
+            )
+        )
+        return shots
 
     def _warn_on_contract_drift(self, data: dict[str, Any]) -> None:
         """Detect contract schema drift at read time without changing behavior.
@@ -626,8 +654,87 @@ class GenerateVideoStage(Stage):
             segment_id = self._to_int(plate.get("segment_id"))
             if segment_id is None:
                 continue
-            result[segment_id] = plate
+            current = result.get(segment_id)
+            if current is None or int(plate.get("shot_order") or 1) < int(
+                current.get("shot_order") or 1
+            ):
+                result[segment_id] = plate
         return result
+
+    def _load_reference_plates_by_shot(self, path: Path) -> dict[str, dict[str, Any]]:
+        if not path.exists():
+            return {}
+        data = load_yaml_mapping(path)
+        return {
+            str(plate["shot_id"]): plate
+            for plate in data.get("plates", []) or []
+            if isinstance(plate, dict) and plate.get("shot_id")
+        }
+
+    def _generation_units(
+        self,
+        segments: list[dict[str, Any]],
+        contract_shots: list[dict[str, Any]],
+        reference_plates_by_shot: dict[str, dict[str, Any]],
+        *,
+        coverage_mode: str,
+        project_style: str,
+    ) -> list[dict[str, Any]]:
+        shots_by_segment: dict[int, list[dict[str, Any]]] = {}
+        for shot in contract_shots:
+            segment_id = self._to_int(shot.get("segment_id"))
+            if segment_id is not None:
+                shots_by_segment.setdefault(segment_id, []).append(shot)
+
+        units: list[dict[str, Any]] = []
+        for segment in segments:
+            segment_id = self._to_int(segment.get("segment_id"))
+            if segment_id is None:
+                continue
+            shots = shots_by_segment.get(segment_id, [])
+            selected_shots = shots if coverage_mode == "director" else shots[:1]
+            if not selected_shots:
+                selected_shots = [{}]
+            for shot in selected_shots:
+                unit = dict(segment)
+                unit["_project_style"] = project_style
+                unit["_coverage_expanded"] = coverage_mode == "director"
+                if shot:
+                    unit["_director_contract"] = shot
+                    unit["shot_id"] = str(shot.get("shot_id") or "")
+                    unit["shot_order"] = int(shot.get("shot_order") or 1)
+                    unit["coverage_role"] = str(shot.get("coverage_role") or "primary")
+                    plate = reference_plates_by_shot.get(unit["shot_id"])
+                    if plate:
+                        unit["_reference_plate"] = plate
+                units.append(unit)
+        return units
+
+    def _video_id_for_unit(self, unit: dict[str, Any]) -> str:
+        segment_id = int(unit["segment_id"])
+        if unit.get("_coverage_expanded"):
+            return f"vid_{segment_id:02d}_shot_{int(unit.get('shot_order') or 1):02d}"
+        return f"vid_{segment_id:02d}"
+
+    def _contract_for_unit(
+        self,
+        unit: dict[str, Any],
+        contract_by_segment: dict[int, dict[str, Any]],
+    ) -> dict[str, Any]:
+        contract = unit.get("_director_contract")
+        if isinstance(contract, dict):
+            return contract
+        return contract_by_segment.get(int(unit["segment_id"]), {})
+
+    def _reference_plate_for_unit(
+        self,
+        unit: dict[str, Any],
+        reference_plates: dict[int, dict[str, Any]],
+    ) -> dict[str, Any]:
+        plate = unit.get("_reference_plate")
+        if isinstance(plate, dict):
+            return plate
+        return reference_plates.get(int(unit["segment_id"]), {})
 
     def _reference_inputs_for_segment(
         self,
@@ -1743,7 +1850,7 @@ class GenerateVideoStage(Stage):
 
         # ── Phase A：主线程串行判定（与 _generate_one 同一判定序）──
         for i, seg in enumerate(segments):
-            vid_id = f"vid_{seg['segment_id']:02d}"
+            vid_id = self._video_id_for_unit(seg)
             out_names = self._output_names_for_segment(vid_id, take_count)
             state.setdefault("generated_takes", {})[vid_id] = list(out_names)
 
@@ -1755,7 +1862,7 @@ class GenerateVideoStage(Stage):
             img_id = f"img_{seg['segment_id']:02d}"
             first_frame = self._resolve_first_frame(seg, images_dir, img_id)
             last_frame = self._resolve_last_frame(seg, images_dir, design)
-            contract = contract_by_segment.get(int(seg["segment_id"]), {})
+            contract = self._contract_for_unit(seg, contract_by_segment)
             negative_prompt = self._build_video_negative_prompt(contract, provider_name)
             reference_inputs = self._reference_inputs_for_segment(
                 config,
@@ -1763,7 +1870,7 @@ class GenerateVideoStage(Stage):
                 pre_production,
                 seg,
                 contract,
-                reference_plates.get(int(seg["segment_id"]), {}),
+                self._reference_plate_for_unit(seg, reference_plates),
             )
             uploaded_reference_images = reference_inputs.get("uploaded_reference_images", [])
             reference_images = (

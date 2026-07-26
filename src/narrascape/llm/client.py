@@ -7,8 +7,10 @@ All outputs validated against expected format with automatic re-prompting.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import mimetypes
 import threading
 import time
 from collections.abc import Callable
@@ -223,6 +225,193 @@ class LLMClient:
         """Simple completion with a single user prompt."""
         messages = [Message(role="user", content=prompt)]
         return self.chat(messages, **kwargs)
+
+    def complete_multimodal(
+        self,
+        prompt: str,
+        image_paths: list[str | Path],
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Complete a prompt with actual local image pixels attached.
+
+        Bridge-backed assistants receive absolute local evidence paths because
+        they share the workspace. API providers receive base64 image blocks.
+        """
+        paths = [Path(path).resolve() for path in image_paths]
+        paths = [path for path in paths if path.is_file()]
+        if not paths:
+            return self.complete(prompt, **kwargs)
+        if is_assistant_bridge_provider(self.config.provider):
+            evidence = "\n".join(f"- {path.as_posix()}" for path in paths)
+            return self.complete(
+                f"{prompt}\n\nOpen and inspect the pixels in these local evidence images:\n{evidence}",
+                **kwargs,
+            )
+
+        config = self._merge_config(**kwargs)
+
+        def _call() -> LLMResponse:
+            if config.provider == "anthropic":
+                return self._anthropic_multimodal(prompt, paths, config)
+            if config.provider == "local":
+                return self._openai_multimodal_http(
+                    self._openai_multimodal_messages(prompt, paths), config
+                )
+            if config.provider in {"openai", "deepseek", "volcengine"}:
+                return self._openai_multimodal(prompt, paths, config)
+            raise ValueError(f"Provider {config.provider!r} does not support multimodal requests")
+
+        response = retry_with_backoff(
+            _call,
+            max_retries=config.max_retries,
+            base_delay=config.retry_delay,
+            retryable_exceptions=(Exception,),
+            retryable_if=is_retryable_provider_error,
+            on_retry=lambda e, attempt, delay: logger.warning(
+                f"Multimodal LLM retry {attempt}/{config.max_retries} after {delay:.1f}s: {e}"
+            ),
+        )
+        self._report_usage(response, [Message(role="user", content=prompt)])
+        return response
+
+    def _image_data(self, path: Path) -> tuple[str, str]:
+        media_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return media_type, encoded
+
+    def _openai_multimodal_messages(self, prompt: str, paths: list[Path]) -> list[dict[str, Any]]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for index, path in enumerate(paths, start=1):
+            media_type, encoded = self._image_data(path)
+            content.append({"type": "text", "text": f"Evidence image {index}: {path.name}"})
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{encoded}", "detail": "auto"},
+                }
+            )
+        return [{"role": "user", "content": content}]
+
+    def _openai_multimodal(self, prompt: str, paths: list[Path], config: LLMConfig) -> LLMResponse:
+        messages = self._openai_multimodal_messages(prompt, paths)
+        try:
+            import openai
+        except ImportError:
+            return self._openai_multimodal_http(messages, config)
+        client = openai.OpenAI(api_key=config.api_key, base_url=config.base_url)
+        request: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "top_p": config.top_p,
+            "timeout": config.timeout,
+        }
+        if config.json_mode:
+            request["response_format"] = {"type": "json_object"}
+        resp = client.chat.completions.create(**request)
+        return LLMResponse(
+            content=resp.choices[0].message.content or "",
+            model=resp.model or config.model,
+            usage={
+                "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
+                "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
+                "total_tokens": resp.usage.total_tokens if resp.usage else 0,
+            },
+            finish_reason=resp.choices[0].finish_reason,
+            raw=resp.model_dump() if hasattr(resp, "model_dump") else None,
+        )
+
+    def _openai_multimodal_http(
+        self, messages: list[dict[str, Any]], config: LLMConfig
+    ) -> LLMResponse:
+        import urllib.request
+
+        if config.base_url:
+            base_url = config.base_url.rstrip("/")
+            url = (
+                base_url
+                if base_url.endswith("/chat/completions")
+                else f"{base_url}/chat/completions"
+            )
+        elif config.provider == "local":
+            url = "http://localhost:8000/v1/chat/completions"
+        else:
+            url = "https://api.openai.com/v1/chat/completions"
+        payload: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "top_p": config.top_p,
+        }
+        if config.json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        headers = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers=headers,
+        )
+        with urllib.request.urlopen(request, timeout=int(config.timeout)) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        choice = result["choices"][0]
+        return LLMResponse(
+            content=choice["message"]["content"],
+            model=result.get("model", config.model),
+            usage=result.get("usage", {}),
+            finish_reason=choice.get("finish_reason"),
+            raw=result,
+        )
+
+    def _anthropic_multimodal(
+        self, prompt: str, paths: list[Path], config: LLMConfig
+    ) -> LLMResponse:
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ImportError(
+                "anthropic package not installed. Run: pip install anthropic"
+            ) from exc
+        content: list[dict[str, Any]] = []
+        for index, path in enumerate(paths, start=1):
+            media_type, encoded = self._image_data(path)
+            content.append({"type": "text", "text": f"Evidence image {index}: {path.name}"})
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": encoded,
+                    },
+                }
+            )
+        content.append({"type": "text", "text": prompt})
+        client = anthropic.Anthropic(api_key=config.api_key, base_url=config.base_url)
+        resp = client.messages.create(
+            model=config.model,
+            messages=[{"role": "user", "content": content}],
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            top_p=config.top_p,
+        )
+        return LLMResponse(
+            content=resp.content[0].text if resp.content else "",
+            model=resp.model,
+            usage={
+                "prompt_tokens": resp.usage.input_tokens if resp.usage else 0,
+                "completion_tokens": resp.usage.output_tokens if resp.usage else 0,
+                "total_tokens": (
+                    resp.usage.input_tokens + resp.usage.output_tokens if resp.usage else 0
+                ),
+            },
+            finish_reason=resp.stop_reason,
+            raw=resp.model_dump() if hasattr(resp, "model_dump") else None,
+        )
 
     def chat(self, messages: list[Message], **kwargs: Any) -> LLMResponse:
         """Send a chat completion request with retry."""

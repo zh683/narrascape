@@ -48,8 +48,10 @@
     shot continuity.
 11. Send resolved style, character, and scene images to the selected provider.
    - Seedance receives multimodal `reference_image` inputs.
-12. If `video.takes > 1`, submit one asynchronous task per take using stable
-   `vid_<segment>_take_<take>` names.
+12. In the default `video.coverage_mode: single`, retain `vid_<segment>` names.
+    In `director` mode, flatten ordered contract shots into generation units
+    named `vid_<segment>_shot_<shot>`. If `video.takes > 1`, append
+    `_take_<take>` to either form.
 13. Poll each task until it succeeds or fails, up to `video.max_poll_time`
    seconds per task. Record every created task in `video_tasks.json`
    immediately; on rerun, resume polling unfinished parameter-equivalent
@@ -86,4 +88,5 @@
 - Do not silently fall back to local placeholders for production video generation.
 - Do not skip provider selection metadata.
 - Do not generate multiple takes unless `video.takes` requests them.
+- Do not generate multi-shot coverage unless `video.coverage_mode: director` requests it.
 - Do not overwrite completed clips unless the user requested a rebuild.

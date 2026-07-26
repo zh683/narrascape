@@ -3,6 +3,7 @@
 ## Inputs
 
 - `assets/videos/vid_<segment>_take_<take>.mp4`
+- `assets/videos/vid_<segment>_shot_<shot>_take_<take>.mp4`
 - Optional `pipeline/<project>/video_gen_state.json`
 - Optional `pipeline/<project>/render_report.yaml`
 - Optional `pipeline/<project>/director_contract.yaml` (expected clip durations)
@@ -13,7 +14,7 @@
 
 ## Procedure
 
-1. Discover multi-take generated-video candidates created by `generate_video` when `video.takes > 1`.
+1. Discover multi-take generated-video candidates created by `generate_video` when `video.takes > 1`, grouping director coverage independently by `(segment_id, shot_order)`.
 2. Ignore candidates not marked done when `video_gen_state.json` has a done list.
 3. Score takes with deterministic frame analysis (`utils/video_quality.py`):
    ffprobe duration + 3 evenly spaced sampled frames per take, combined into a

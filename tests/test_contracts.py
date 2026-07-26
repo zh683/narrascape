@@ -266,7 +266,8 @@ def test_director_contract_round_trip_is_lossless():
 
     dumped = DirectorContract.model_validate(payload).model_dump()
 
-    assert dumped == payload
+    _assert_contains(payload, dumped)
+    DirectorContract.model_validate(dumped)
 
 
 def test_film_supervisor_round_trip_is_lossless():
@@ -284,10 +285,18 @@ def test_film_timeline_round_trip_preserves_payload():
 
     # Every original key/value survives unchanged.
     _assert_contains(payload, dumped)
-    # The only keys the model adds are the footage-only trim defaults.
+    # Optional typed fields are additive for legacy payloads.
     original_clip = payload["tracks"]["visual"][0]
     dumped_clip = dumped["tracks"]["visual"][0]
-    assert set(dumped_clip) - set(original_clip) == {"source_in", "source_out"}
+    assert set(dumped_clip) - set(original_clip) == {
+        "shot_id",
+        "shot_order",
+        "coverage_role",
+        "transition_out",
+        "cut_motivation",
+        "source_in",
+        "source_out",
+    }
     assert dumped_clip["source_in"] is None
     assert dumped_clip["source_out"] is None
     # Dumped output is itself a valid contract (idempotent).

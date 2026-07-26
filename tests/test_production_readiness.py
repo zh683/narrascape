@@ -386,10 +386,55 @@ def test_production_readiness_quality_gates_pass_complete_prep(tmp_path):
             "shots": [
                 {
                     "segment_id": 1,
+                    "shot_id": "shot_001",
+                    "shot_order": 1,
+                    "coverage_role": "master",
+                    "story_reason": "Introduce Mira's discovery before the machine responds.",
+                    "subject_action": "Mira reaches toward the console and stops above the switch.",
+                    "emotional_target": "controlled apprehension",
+                    "film_language": {
+                        "shot_type": "medium close-up",
+                        "camera_motion": "slow push in",
+                        "lighting": "green practicals with soft edge light",
+                        "composition": "Mira center-left with the console in foreground",
+                        "focal_length": "50mm",
+                        "aperture": "f/2.8",
+                        "camera_angle": "eye level",
+                        "camera_height": "Mira eye line",
+                        "depth_of_field": "moderate focus falloff behind Mira",
+                        "color_palette": "green, charcoal, muted steel",
+                        "blocking": ["Mira center-left, console foreground right"],
+                        "eyeline": "Mira looks frame right",
+                        "screen_axis": "Mira-console axis",
+                    },
+                    "temporal_plan": {
+                        "subject_action": "Mira reaches toward the console and stops above the switch.",
+                        "start_state": "Mira stands one step from the console.",
+                        "beats": [
+                            {
+                                "phase": "middle",
+                                "at": 0.5,
+                                "subject_action": "Mira extends her hand and stops above the switch.",
+                                "camera_action": "slow push in",
+                            }
+                        ],
+                        "end_state": "Mira holds her hand above the switch.",
+                        "performance_notes": "one restrained, readable gesture",
+                    },
+                    "editorial_intent": {
+                        "coverage_role": "master",
+                        "cut_motivation": "Hold the decision point before the machine responds.",
+                        "transition_in": "cut",
+                        "transition_out": "cut",
+                        "handles_seconds": 0.25,
+                    },
                     "storyboard_binding": {
                         "storyboard_frame_ids": ["sb_01_01"],
                         "reference_image_ids": ["char_mira_anchor", "scene_lab_mood"],
                         "wardrobe_lock": "field coat",
+                        "scene_ref": "lab",
+                        "character_positions": ["Mira center-left"],
+                        "composition_requirements": ["console foreground right"],
                     },
                     "continuity_constraints": {
                         "characters": ["mira"],
@@ -397,10 +442,34 @@ def test_production_readiness_quality_gates_pass_complete_prep(tmp_path):
                         "wardrobe": "field coat",
                     },
                     "generation": {
-                        "prompt_blueprint": {"schema_version": "prompt_blueprint.v1"},
+                        "video_prompt": "Mira reaches toward the lab console as the camera slowly pushes in.",
+                        "negative_prompt": "text, watermark, malformed hands",
+                        "duration": 5.0,
+                        "motion": "slow push in",
+                        "prompt_blueprint": {
+                            "schema_version": "prompt_blueprint.v1",
+                            "style_anchor": "grounded cinematic realism",
+                        },
                         "compiled_prompts": {"seedance": {"prompt": "Camera: medium shot."}},
                     },
-                    "qa": {"must_show": ["mira", "lab", "field coat"]},
+                    "qa": {
+                        "must_show": ["mira", "lab", "field coat"],
+                        "must_not_show": ["text", "watermark"],
+                        "assertions": [
+                            {
+                                "dimension": "camera_language",
+                                "check": "Execute the medium close-up and slow push-in.",
+                            },
+                            {
+                                "dimension": "motion_plausibility",
+                                "check": "Mira's reach stops naturally above the switch.",
+                            },
+                            {
+                                "dimension": "technical_quality",
+                                "check": "No flicker, text, watermark, or malformed hands.",
+                            },
+                        ],
+                    },
                 }
             ],
         },

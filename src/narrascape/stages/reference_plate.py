@@ -99,6 +99,8 @@ class ReferencePlateStage(Stage):
         return {
             "segment_id": self._segment_id(shot),
             "shot_id": str(shot.get("shot_id") or ""),
+            "shot_order": int(shot.get("shot_order") or 1),
+            "coverage_role": str(shot.get("coverage_role") or "primary"),
             "story_reason": str(shot.get("story_reason") or ""),
             "storyboard_frame_ids": list(binding.get("storyboard_frame_ids") or []),
             "character_positions": list(binding.get("character_positions") or []),

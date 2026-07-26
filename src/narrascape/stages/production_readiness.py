@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from narrascape.artifacts import write_artifact
+from narrascape.director_contract_quality import contract_semantic_errors
 from narrascape.stages.base import Stage, StageContext, StageResult
 
 
@@ -285,6 +286,26 @@ class ProductionReadinessStage(Stage):
                     "severity": "high",
                     "evidence": "missing director contract shot(s) for segment(s): "
                     + ", ".join(str(item) for item in missing_shots),
+                }
+            )
+        semantic_errors = contract_semantic_errors(
+            [shot for shot in shots if isinstance(shot, dict)],
+            expected_segment_ids=sorted(segment_ids),
+            max_shots_per_segment=(
+                int(context.config.video.max_coverage_shots)
+                if str(context.config.video.coverage_mode) == "director"
+                else 1
+            ),
+            require_advanced=True,
+            require_compiled=True,
+        )
+        for error in semantic_errors:
+            findings.append(
+                {
+                    "stage": "director_contract",
+                    "risk_type": "director_contract_semantically_incomplete",
+                    "severity": "high",
+                    "evidence": error,
                 }
             )
         for shot in shots:
