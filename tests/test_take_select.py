@@ -411,3 +411,22 @@ def test_expected_durations_parsing():
 
     assert stage._expected_durations(contract) == {1: 5.0}
     assert stage._expected_durations({}) == {}
+
+
+def test_collect_candidates_groups_director_coverage_by_shot(tmp_path):
+    stage = TakeSelectStage()
+    videos_dir = tmp_path / "videos"
+    videos_dir.mkdir()
+    names = [
+        "vid_01_shot_01_take_01",
+        "vid_01_shot_01_take_02",
+        "vid_01_shot_02_take_01",
+        "vid_01_shot_02_take_02",
+    ]
+    for name in names:
+        (videos_dir / f"{name}.mp4").write_bytes(name.encode())
+
+    candidates = stage._collect_candidates(videos_dir, {"done": names})
+
+    assert sorted(candidates) == [(1, 1), (1, 2)]
+    assert [item["id"] for item in candidates[(1, 2)]] == names[2:]

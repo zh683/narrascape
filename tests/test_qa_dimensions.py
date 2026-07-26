@@ -331,7 +331,7 @@ def test_local_compile_tags_every_dimension_per_shot(tmp_path):
     assert "Mira stands alone in the lab" in dialogue["check"]
 
 
-def test_llm_path_prompt_carries_taxonomy_and_normalizes(tmp_path):
+def test_llm_path_prompt_carries_taxonomy_and_rejects_incomplete_contract(tmp_path):
     llm = _FakeLLM(
         {
             "shots": [
@@ -373,15 +373,14 @@ def test_llm_path_prompt_carries_taxonomy_and_normalizes(tmp_path):
     assert "qa.assertions" in prompt
     assert "must_show" in prompt  # legacy plane stays in the contract format
 
-    shot = _load_contract(config)["shots"][0]
-    assert shot["qa"]["must_show"] == ["mira", "field coat"]
+    contract = _load_contract(config)
+    assert contract["compile_process"]["llm_status"] == "fallback_after_error"
+    assert "subject_action must be concrete" in contract["compile_process"]["llm_error"]
+    shot = contract["shots"][0]
+    assert shot["qa"]["must_show"] == ["mira", "lab", "field coat"]
     assertions = shot["qa"]["assertions"]
-    assert [item["dimension"] for item in assertions] == [
-        "identity_continuity",
-        UNCATEGORIZED_DIMENSION,
-    ]
+    assert {item["dimension"] for item in assertions} == set(QA_DIMENSIONS)
     assert assertions[0]["id"] == "identity_continuity:1"
-    assert assertions[1]["id"] == f"{UNCATEGORIZED_DIMENSION}:2"
 
 
 # ─────────────────────────────────────────────
@@ -389,12 +388,14 @@ def test_llm_path_prompt_carries_taxonomy_and_normalizes(tmp_path):
 # ─────────────────────────────────────────────
 
 
-def test_visual_qa_llm_prompt_includes_assertion_checklist(tmp_path):
+def test_visual_qa_llm_prompt_includes_assertion_checklist(tmp_path, monkeypatch):
     llm = _FakeLLM({"status": "approved", "findings": []})
     config = _config(tmp_path)
     DirectorContractStage().run(_context(config))
 
-    result = VisualSemanticQAStage(llm_client=llm).run(_context(config))
+    stage = VisualSemanticQAStage(llm_client=llm)
+    monkeypatch.setattr(stage, "_extract_clip_frames", lambda clip, path, context: ["frame.jpg"])
+    result = stage.run(_context(config))
 
     assert result.success
     prompt, _ = llm.calls[0]
@@ -416,7 +417,7 @@ def test_visual_qa_llm_prompt_includes_assertion_checklist(tmp_path):
     assert summary[UNCATEGORIZED_DIMENSION]["unevaluated"] == 2
 
 
-def test_visual_qa_llm_findings_get_dimension_attribution(tmp_path):
+def test_visual_qa_llm_findings_get_dimension_attribution(tmp_path, monkeypatch):
     llm = _FakeLLM(
         {
             "status": "needs_rework",
@@ -447,7 +448,9 @@ def test_visual_qa_llm_findings_get_dimension_attribution(tmp_path):
     config = _config(tmp_path)
     DirectorContractStage().run(_context(config))
 
-    result = VisualSemanticQAStage(llm_client=llm).run(_context(config))
+    stage = VisualSemanticQAStage(llm_client=llm)
+    monkeypatch.setattr(stage, "_extract_clip_frames", lambda clip, path, context: ["frame.jpg"])
+    result = stage.run(_context(config))
 
     assert result.success
     report = _load_report(config)

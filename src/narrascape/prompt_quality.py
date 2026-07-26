@@ -361,7 +361,7 @@ def _video_prompt_ingredients(
             "style_quality",
             _has_any_cue(prompt_text, STYLE_CUES),
             "style/quality anchor appears in prompt",
-            "add oil painting, painterly brush texture, canvas grain, or another style anchor",
+            "add the configured project style anchor and explicit quality language",
         ),
         _ingredient(
             "reference_binding",

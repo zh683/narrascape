@@ -206,6 +206,13 @@ video:
   requests_per_minute: 0
   max_concurrency: 1
   storyboard_conditioning: off
+  coverage_mode: single
+  max_coverage_shots: 3
+
+visual_semantic_qa:
+  multimodal: true
+  frames_per_clip: 3
+  max_images: 24
 ```
 
 `max_poll_time` is the per-task polling budget in seconds (default `900`).
@@ -242,6 +249,18 @@ shot. Single-take output keeps the legacy `assets/videos/vid_01.mp4` naming.
 Multi-take output writes `assets/videos/vid_01_take_01.mp4`,
 `assets/videos/vid_01_take_02.mp4`, and so on, then `take_select` chooses the
 clip that enters `film_timeline.yaml`.
+
+`coverage_mode: single` is the backward-compatible default and makes one video
+generation unit per script segment. `coverage_mode: director` executes all
+ordered shots in `director_contract.yaml`, capped by `max_coverage_shots`, and
+can multiply provider cost. Director coverage uses
+`vid_01_shot_01.mp4` or `vid_01_shot_01_take_01.mp4` names. The film timeline
+places those shots sequentially inside the same narration interval.
+
+`visual_semantic_qa` controls actual-frame review. A capable configured LLM
+receives up to `max_images` extracted frames and reference images. The report
+sets `pixel_evidence_reviewed: true` only when extracted visual pixels were
+attached to the successful review request.
 
 Seedance is the canonical production video provider for new projects.
 Narrascape sends generated stills, storyboard-bound reference plates, and

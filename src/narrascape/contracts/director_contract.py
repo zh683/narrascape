@@ -20,6 +20,15 @@ class FilmLanguage(ContractModel):
     camera_motion: str = "still"
     lighting: str = ""
     composition: str = ""
+    focal_length: str = ""
+    aperture: str = ""
+    camera_angle: str = ""
+    camera_height: str = ""
+    depth_of_field: str = ""
+    color_palette: str = ""
+    blocking: list[str] = Field(default_factory=list)
+    eyeline: str = ""
+    screen_axis: str = ""
 
 
 class ContinuityConstraints(ContractModel):
@@ -43,6 +52,38 @@ class CameraPlan(ContractModel):
     motion: str = "still"
     lighting: str = ""
     composition: str = ""
+    focal_length: str = ""
+    aperture: str = ""
+    camera_angle: str = ""
+    camera_height: str = ""
+    depth_of_field: str = ""
+    color_palette: str = ""
+    blocking: list[str] = Field(default_factory=list)
+    eyeline: str = ""
+    screen_axis: str = ""
+
+
+class TemporalBeat(ContractModel):
+    phase: str = "middle"
+    at: float = 0.5
+    subject_action: str = ""
+    camera_action: str = ""
+
+
+class TemporalPlan(ContractModel):
+    subject_action: str = ""
+    start_state: str = ""
+    beats: list[TemporalBeat] = Field(default_factory=list)
+    end_state: str = ""
+    performance_notes: str = ""
+
+
+class EditorialIntent(ContractModel):
+    coverage_role: str = "primary"
+    cut_motivation: str = ""
+    transition_in: str = "cut"
+    transition_out: str = "cut"
+    handles_seconds: float = 0.25
 
 
 class BlueprintContinuityLocks(ContractModel):
@@ -91,6 +132,8 @@ class PromptBlueprint(ContractModel):
     emotional_target: str = ""
     subject_action: str = ""
     camera_plan: CameraPlan = Field(default_factory=CameraPlan)
+    temporal_plan: TemporalPlan = Field(default_factory=TemporalPlan)
+    editorial_intent: EditorialIntent = Field(default_factory=EditorialIntent)
     continuity_locks: BlueprintContinuityLocks = Field(default_factory=BlueprintContinuityLocks)
     storyboard_locks: BlueprintStoryboardLocks = Field(default_factory=BlueprintStoryboardLocks)
     reference_strategy: ReferenceStrategy = Field(default_factory=ReferenceStrategy)
@@ -140,9 +183,14 @@ class ShotQa(ContractModel):
 class DirectorShot(ContractModel):
     segment_id: int = 0
     shot_id: str = ""
+    shot_order: int = 1
+    coverage_role: str = "primary"
     story_reason: str = ""
+    subject_action: str = ""
     emotional_target: str = ""
     film_language: FilmLanguage = Field(default_factory=FilmLanguage)
+    temporal_plan: TemporalPlan = Field(default_factory=TemporalPlan)
+    editorial_intent: EditorialIntent = Field(default_factory=EditorialIntent)
     continuity_constraints: ContinuityConstraints = Field(default_factory=ContinuityConstraints)
     storyboard_binding: StoryboardBinding = Field(default_factory=StoryboardBinding)
     generation: GenerationContract = Field(default_factory=GenerationContract)

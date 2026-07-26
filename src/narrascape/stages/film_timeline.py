@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +47,17 @@ class FilmTimelineStage(Stage):
         script_segments = list(context.script.segments)
         design_by_segment = self._items_by_int_key(design.get("segments", []), "segment_id")
         contract_model = self._parse_contract(director_contract)
-        contract_by_segment = (
-            {shot.segment_id: shot for shot in contract_model.shots}
+        contract_shots: list[Any] = (
+            list(contract_model.shots)
             if contract_model is not None
-            else self._items_by_int_key(director_contract.get("shots", []), "segment_id")
+            else [
+                shot for shot in director_contract.get("shots", []) or [] if isinstance(shot, dict)
+            ]
         )
+        contracts_by_segment = self._contracts_by_segment(contract_shots)
+        contract_by_segment = {
+            segment_id: shots[0] for segment_id, shots in contracts_by_segment.items() if shots
+        }
         image_map_by_segment = self._items_by_int_key(image_map.get("segments", []), "id")
         footage_by_segment = self._items_by_int_key(
             footage_timeline.get("edits", []), "target_segment_id"
@@ -77,27 +84,50 @@ class FilmTimelineStage(Stage):
             contract_item = contract_by_segment.get(segment_id, {})
             semantic_fields = self._semantic_fields(design_item, contract_item)
             footage_item = footage_by_segment.get(segment_id)
-            generated_video = generated_video_by_segment.get(segment_id)
-            if generated_video:
+            generated_videos = generated_video_by_segment.get(segment_id, [])
+            if generated_videos:
                 generated_video_segments.append(segment_id)
-                visual.append(
-                    {
-                        "id": f"v_{segment_id:03d}",
-                        "segment_id": segment_id,
-                        "source": "generated_video",
-                        "asset_ref": generated_video.stem,
-                        "path": generated_video.relative_to(config.project_dir).as_posix(),
-                        "start": round(cursor, 3),
-                        "duration": round(duration, 3),
-                        "role": "ai_generated_video",
-                        "transition": "cut",
-                        "shot_type": design_item.get("shot_type"),
-                        "movement": design_item.get("movement"),
-                        "emotion": design_item.get("emotion"),
-                        "intensity": design_item.get("intensity"),
-                        **semantic_fields,
-                    }
+                clip_durations = self._coverage_durations(
+                    generated_videos,
+                    contracts_by_segment.get(segment_id, []),
+                    duration,
                 )
+                shot_cursor = cursor
+                for shot_index, (generated_video, clip_duration) in enumerate(
+                    zip(generated_videos, clip_durations, strict=True), start=1
+                ):
+                    shot_contract = self._contract_for_video(
+                        generated_video, contracts_by_segment.get(segment_id, [])
+                    )
+                    shot_fields = self._shot_execution_fields(shot_contract)
+                    shot_semantics = self._semantic_fields(design_item, shot_contract)
+                    visual.append(
+                        {
+                            "id": f"v_{segment_id:03d}_{shot_index:02d}",
+                            "segment_id": segment_id,
+                            "shot_id": shot_fields["shot_id"] or generated_video.get("shot_id"),
+                            "shot_order": generated_video.get("shot_order") or shot_index,
+                            "coverage_role": shot_fields["coverage_role"]
+                            or generated_video.get("coverage_role"),
+                            "source": "generated_video",
+                            "asset_ref": generated_video["path"].stem,
+                            "path": generated_video["path"]
+                            .relative_to(config.project_dir)
+                            .as_posix(),
+                            "start": round(shot_cursor, 3),
+                            "duration": round(clip_duration, 3),
+                            "role": "ai_generated_video",
+                            "transition": shot_fields["transition_in"] or "cut",
+                            "transition_out": shot_fields["transition_out"] or "cut",
+                            "cut_motivation": shot_fields["cut_motivation"],
+                            "shot_type": shot_fields["shot_type"] or design_item.get("shot_type"),
+                            "movement": shot_fields["movement"] or design_item.get("movement"),
+                            "emotion": design_item.get("emotion"),
+                            "intensity": design_item.get("intensity"),
+                            **shot_semantics,
+                        }
+                    )
+                    shot_cursor += clip_duration
             elif footage_item:
                 source_media_segments.append(segment_id)
                 asset_ref = footage_item.get("asset_id")
@@ -255,9 +285,10 @@ class FilmTimelineStage(Stage):
         config: Any,
         state: dict[str, Any],
         take_selection: dict[str, Any] | None = None,
-    ) -> dict[int, Path]:
+    ) -> dict[int, list[dict[str, Any]]]:
         done = set(state.get("done", []))
-        videos: dict[int, Path] = {}
+        videos: dict[int, list[dict[str, Any]]] = {}
+        selected_keys: set[tuple[int, int | None]] = set()
         videos_dir = config.project_dir / "assets" / "videos"
         if not videos_dir.exists():
             return videos
@@ -271,18 +302,155 @@ class FilmTimelineStage(Stage):
                 continue
             path = config.project_dir / selected_path
             if path.exists():
-                videos[segment_id] = path
+                identity = self._video_identity(path.stem)
+                shot_order = self._to_int(item.get("shot_order"))
+                if shot_order is None and identity is not None:
+                    shot_order = identity[1]
+                videos.setdefault(segment_id, []).append(
+                    {
+                        "path": path,
+                        "shot_id": item.get("shot_id"),
+                        "shot_order": shot_order,
+                        "coverage_role": item.get("coverage_role"),
+                    }
+                )
+                selected_keys.add((segment_id, shot_order))
         for path in sorted(videos_dir.glob("vid_*.mp4")):
+            if "_take_" in path.stem:
+                continue
             if done and path.stem not in done:
                 continue
-            try:
-                segment_id = int(path.stem.split("_", 1)[1])
-            except (IndexError, ValueError):
+            identity = self._video_identity(path.stem)
+            if identity is None:
                 continue
-            if segment_id in videos:
+            segment_id, shot_order = identity
+            if (segment_id, shot_order) in selected_keys:
                 continue
-            videos[segment_id] = path
+            videos.setdefault(segment_id, []).append(
+                {
+                    "path": path,
+                    "shot_id": None,
+                    "shot_order": shot_order,
+                    "coverage_role": None,
+                }
+            )
+        for segment_videos in videos.values():
+            segment_videos.sort(key=lambda item: int(item.get("shot_order") or 1))
+        coverage_mode = str(getattr(config.video, "coverage_mode", "single"))
+        for segment_id, segment_videos in list(videos.items()):
+            shot_videos = [item for item in segment_videos if item.get("shot_order") is not None]
+            base_videos = [item for item in segment_videos if item.get("shot_order") is None]
+            if coverage_mode == "director" and shot_videos:
+                videos[segment_id] = shot_videos
+            elif coverage_mode != "director" and base_videos:
+                videos[segment_id] = base_videos[:1]
         return videos
+
+    def _video_identity(self, stem: str) -> tuple[int, int | None] | None:
+        match = re.match(r"^vid_(\d+)(?:_shot_(\d+))?(?:_take_\d+)?$", stem)
+        if not match:
+            return None
+        return int(match.group(1)), int(match.group(2)) if match.group(2) else None
+
+    def _to_int(self, value: Any) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _contracts_by_segment(self, shots: list[Any]) -> dict[int, list[Any]]:
+        result: dict[int, list[Any]] = {}
+        for shot in shots:
+            raw_segment = (
+                shot.segment_id if isinstance(shot, DirectorShot) else shot.get("segment_id")
+            )
+            segment_id = self._to_int(raw_segment)
+            if segment_id is not None:
+                result.setdefault(segment_id, []).append(shot)
+        for segment_shots in result.values():
+            segment_shots.sort(
+                key=lambda shot: int(
+                    shot.shot_order
+                    if isinstance(shot, DirectorShot)
+                    else shot.get("shot_order") or 1
+                )
+            )
+        return result
+
+    def _contract_for_video(self, video: dict[str, Any], contracts: list[Any]) -> Any:
+        shot_id = str(video.get("shot_id") or "")
+        shot_order = self._to_int(video.get("shot_order"))
+        for contract in contracts:
+            contract_id = (
+                contract.shot_id if isinstance(contract, DirectorShot) else contract.get("shot_id")
+            )
+            if shot_id and str(contract_id or "") == shot_id:
+                return contract
+        for contract in contracts:
+            contract_order = (
+                contract.shot_order
+                if isinstance(contract, DirectorShot)
+                else self._to_int(contract.get("shot_order")) or 1
+            )
+            if shot_order is not None and int(contract_order) == shot_order:
+                return contract
+        return contracts[0] if contracts else {}
+
+    def _coverage_durations(
+        self,
+        videos: list[dict[str, Any]],
+        contracts: list[Any],
+        total_duration: float,
+    ) -> list[float]:
+        weights: list[float] = []
+        for video in videos:
+            contract = self._contract_for_video(video, contracts)
+            generation = (
+                contract.generation
+                if isinstance(contract, DirectorShot)
+                else contract.get("generation", {}) if isinstance(contract, dict) else {}
+            )
+            raw_duration = (
+                generation.duration
+                if hasattr(generation, "duration")
+                else generation.get("duration") if isinstance(generation, dict) else None
+            )
+            try:
+                weight = float(str(raw_duration))
+            except (TypeError, ValueError):
+                weight = 1.0
+            weights.append(weight if weight > 0 else 1.0)
+        weight_total = sum(weights) or float(len(videos) or 1)
+        durations = [total_duration * weight / weight_total for weight in weights]
+        if durations:
+            durations[-1] = total_duration - sum(durations[:-1])
+        return durations
+
+    def _shot_execution_fields(self, contract: Any) -> dict[str, Any]:
+        if isinstance(contract, DirectorShot):
+            return {
+                "shot_id": contract.shot_id,
+                "coverage_role": contract.coverage_role,
+                "shot_type": contract.film_language.shot_type,
+                "movement": contract.film_language.camera_motion,
+                "transition_in": contract.editorial_intent.transition_in,
+                "transition_out": contract.editorial_intent.transition_out,
+                "cut_motivation": contract.editorial_intent.cut_motivation,
+            }
+        raw = contract if isinstance(contract, dict) else {}
+        film = raw.get("film_language", {}) if isinstance(raw.get("film_language"), dict) else {}
+        editorial = (
+            raw.get("editorial_intent", {}) if isinstance(raw.get("editorial_intent"), dict) else {}
+        )
+        return {
+            "shot_id": raw.get("shot_id"),
+            "coverage_role": raw.get("coverage_role") or editorial.get("coverage_role"),
+            "shot_type": film.get("shot_type"),
+            "movement": film.get("camera_motion"),
+            "transition_in": editorial.get("transition_in"),
+            "transition_out": editorial.get("transition_out"),
+            "cut_motivation": editorial.get("cut_motivation"),
+        }
 
     def _warn_if_multi_take_without_selection(self, config: Any) -> None:
         """Advisory warning: multi-take videos exist but take_select never ran.
@@ -363,6 +531,7 @@ class FilmTimelineStage(Stage):
             b_positions: list[Any] = list(binding.character_positions)
             fl_lighting: Any = film_language.lighting
             fl_composition: Any = film_language.composition
+            fl_screen_axis: Any = film_language.screen_axis
         else:
             raw = contract_item if isinstance(contract_item, dict) else {}
             continuity_raw = (
@@ -389,6 +558,7 @@ class FilmTimelineStage(Stage):
             b_positions = list(binding_raw.get("character_positions") or [])
             fl_lighting = film_language_raw.get("lighting")
             fl_composition = film_language_raw.get("composition")
+            fl_screen_axis = film_language_raw.get("screen_axis")
 
         fields = self._continuity_fields(design_item)
         character_ids = design_item.get("character_ids") or c_characters or []
@@ -409,7 +579,7 @@ class FilmTimelineStage(Stage):
                 c_lighting,
                 fl_lighting,
             ),
-            "screen_axis": fields.get("screen_axis"),
+            "screen_axis": self._first_value(fields.get("screen_axis"), fl_screen_axis),
             "storyboard_frame_ids": b_frame_ids,
             "character_positions": b_positions,
             "composition": self._first_value(

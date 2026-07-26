@@ -22,10 +22,10 @@
 3. Read `director_contract.yaml` when present, including `qa.must_show`, `qa.must_not_show`, the dimension-tagged `qa.assertions` checklist, and `storyboard_binding`.
 4. Resolve expected reference images from `storyboard_binding.reference_image_ids`, character ids, scene refs, style anchors, and pre-production assets.
 5. Read `video_gen_state.json` and verify generated videos actually recorded the expected reference-image execution handoff.
-6. Extract representative frames from generated video and source footage clips into `pipeline/<project>/visual_semantic_frames/`.
-7. If an LLM client is configured, ask it to judge visual match against the script, director intent, director contract, extracted frames, and reference image paths — organized by QA dimension using the `assertion_checklist` in the review payload, and require every finding to carry a `dimension` label.
+6. Extract `visual_semantic_qa.frames_per_clip` representative frames from each generated video and source clip into `pipeline/<project>/visual_semantic_frames/`, using shot-safe filenames.
+7. If a multimodal LLM client is configured, attach the actual extracted frame and local reference-image bytes to the request. OpenAI-compatible clients receive image blocks, Anthropic receives base64 image sources, and bridge assistants receive workspace-local paths they can open. Organize review by QA dimension and require every finding to carry both its segment and shot identity when available.
 8. If no LLM is configured, flag metadata mismatches and reference execution failures, but do not claim true face or scene understanding.
-9. Write findings with segment id, risk type, severity, evidence, and a stable QA `dimension` (valid LLM label > `risk_type` mapping > `uncategorized`); write `dimension_summary` with per-dimension assertions/passed/failed/unevaluated counts.
+9. Write findings with segment id, risk type, severity, evidence, and a stable QA `dimension` (valid LLM label > `risk_type` mapping > `uncategorized`); write `dimension_summary` with per-dimension assertions/passed/failed/unevaluated counts. Record `review_process.pixel_evidence_reviewed` and `multimodal_image_count`; only the multimodal path may set the former true.
 
 ## QA Dimensions
 
@@ -34,6 +34,7 @@ Every finding is attributed to one dimension from `narrascape.contracts.qa_taxon
 ## Do Not
 
 - Do not claim pixel-level semantic certainty in fallback mode.
+- Do not treat file paths alone as pixel evidence.
 - Do not ignore contract assertions when `director_contract.yaml` exists.
 - Do not ignore `storyboard_binding` when it exists.
 - Do not ignore missing or unexecuted reference-image ids.

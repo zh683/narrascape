@@ -402,6 +402,41 @@ class VideoConfig(StrictConfigModel):
             "back to the default inputs without blocking. 'off' keeps legacy behavior."
         ),
     )
+    coverage_mode: Literal["single", "director"] = Field(
+        "single",
+        description=(
+            "Generated-video coverage policy. 'single' preserves one clip per script "
+            "segment; 'director' executes every ordered shot in director_contract for "
+            "multi-shot editorial coverage. The latter can multiply provider cost."
+        ),
+    )
+    max_coverage_shots: int = Field(
+        3,
+        ge=1,
+        le=6,
+        description="Hard maximum generated coverage shots per script segment.",
+    )
+
+
+class VisualSemanticQAConfig(StrictConfigModel):
+    """Actual-frame evidence controls for visual semantic review."""
+
+    multimodal: bool = Field(
+        True,
+        description="Attach extracted frames and local reference images to capable LLM clients.",
+    )
+    frames_per_clip: int = Field(
+        3,
+        ge=1,
+        le=5,
+        description="Representative frames sampled from each video clip.",
+    )
+    max_images: int = Field(
+        24,
+        ge=1,
+        le=64,
+        description="Maximum frame/reference images attached to one semantic QA request.",
+    )
 
 
 # ───────────────────────────────────────────
@@ -667,6 +702,7 @@ class NarrascapeConfig(StrictConfigModel):
     images: ImageConfig = Field(default_factory=ImageConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
     take_select: TakeSelectConfig = Field(default_factory=TakeSelectConfig)
+    visual_semantic_qa: VisualSemanticQAConfig = Field(default_factory=VisualSemanticQAConfig)
     visual: VisualConfig = Field(default_factory=VisualConfig)
     subtitles: SubtitleConfig = Field(default_factory=SubtitleConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

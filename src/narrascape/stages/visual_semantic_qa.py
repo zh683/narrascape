@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from narrascape.contracts.qa_taxonomy import (
     is_known_dimension,
     normalize_assertions,
 )
+from narrascape.director_contract_quality import shot_semantic_errors
 from narrascape.prompt_quality import video_prompt_quality_assessment
 from narrascape.reference_assets import resolve_reference_assets_for_shot
 from narrascape.stages.base import Stage, StageContext, StageResult
@@ -28,6 +30,8 @@ class VisualSemanticQAStage(Stage):
 
     def __init__(self, llm_client: Any = None):
         self.llm_client = llm_client
+        self._pixel_evidence_reviewed = False
+        self._multimodal_image_count = 0
 
     def can_run(self, context: StageContext) -> tuple[bool, str]:
         timeline = context.config.project_dir / "film_timeline.yaml"
@@ -39,6 +43,8 @@ class VisualSemanticQAStage(Stage):
         config = context.config
         output = config.pipeline_dir / "visual_semantic_report.yaml"
         output.parent.mkdir(parents=True, exist_ok=True)
+        self._pixel_evidence_reviewed = False
+        self._multimodal_image_count = 0
         timeline = self._load_yaml(config.project_dir / "film_timeline.yaml")
         design = self._load_yaml(self._first_existing(*design_report_candidates(config)))
         continuity = self._load_yaml(config.pipeline_dir / "continuity_bible.yaml")
@@ -94,10 +100,14 @@ class VisualSemanticQAStage(Stage):
             "status": status,
             "review_process": {
                 "mode": (
-                    "llm_visual_semantic_review" if llm_status == "used" else "metadata_fallback"
+                    "llm_multimodal_visual_review"
+                    if llm_status == "used" and self._pixel_evidence_reviewed
+                    else "llm_text_metadata_review" if llm_status == "used" else "metadata_fallback"
                 ),
                 "llm_status": llm_status,
                 "llm_error": llm_error,
+                "pixel_evidence_reviewed": self._pixel_evidence_reviewed,
+                "multimodal_image_count": self._multimodal_image_count,
             },
             "reference_checks": visual_evidence,
             "findings": findings,
@@ -137,18 +147,28 @@ class VisualSemanticQAStage(Stage):
             "You are a visual semantic QA director. "
             "Check whether each visual clip matches the narration, character identity, costume, location, "
             "shot intent, storyboard binding, reference images, and continuity bible. "
-            "For each generated video or source footage clip, compare extracted frame paths against the "
-            "style, character, and scene reference image paths. Flag identity drift, wardrobe drift, "
+            "For each generated video or source footage clip, compare the attached extracted frame pixels "
+            "against the attached style, character, and scene reference images. Flag identity drift, wardrobe drift, "
             "scene mismatch, style mismatch, and composition mismatch. Use provided file paths as evidence handles. "
+            "The reference image paths in the payload identify which attached pixels are the expected anchors. "
             "Review per QA dimension using the assertion_checklist (dimension-tagged acceptance "
             f"checks per shot). Dimension definitions: {json.dumps(QA_DIMENSIONS, ensure_ascii=False)}. "
             "Attribute every finding to exactly one of those dimension ids via a "
             '"dimension" field (use the dimension whose assertion was violated). '
             "Return only JSON.\n\n"
             f"{json.dumps(payload, ensure_ascii=False)}\n\n"
-            'Return JSON only: {"status":"approved|needs_rework","findings":[{"segment_id":1,"risk_type":"...","dimension":"...","severity":"low|medium|high","evidence":"..."}]}.'
+            'Return JSON only: {"status":"approved|needs_rework","findings":[{"segment_id":1,"shot_id":"shot_001","risk_type":"...","dimension":"...","severity":"low|medium|high","evidence":"..."}]}.'
         )
-        response = self.llm_client.complete(prompt, json_mode=True)
+        image_paths = self._multimodal_image_paths(visual_evidence, context)
+        multimodal = getattr(self.llm_client, "complete_multimodal", None)
+        if context.config.visual_semantic_qa.multimodal and image_paths and callable(multimodal):
+            response = multimodal(prompt, image_paths, json_mode=True)
+            self._pixel_evidence_reviewed = any(
+                clip.get("extracted_frames") for clip in visual_evidence
+            )
+            self._multimodal_image_count = len(image_paths)
+        else:
+            response = self.llm_client.complete(prompt, json_mode=True)
         if hasattr(response, "extract_json_safe"):
             data = response.extract_json_safe(default={})
         else:
@@ -167,6 +187,8 @@ class VisualSemanticQAStage(Stage):
             checklist.append(
                 {
                     "segment_id": shot.get("segment_id"),
+                    "shot_id": shot.get("shot_id"),
+                    "shot_order": shot.get("shot_order"),
                     "assertions": normalize_assertions(qa.get("assertions")),
                 }
             )
@@ -195,11 +217,7 @@ class VisualSemanticQAStage(Stage):
             for item in design.get("segments", [])
             if item.get("segment_id") is not None
         }
-        contract_by_segment = {
-            int(item.get("segment_id")): item
-            for item in (director_contract or {}).get("shots", [])
-            if item.get("segment_id") is not None
-        }
+        contract_by_shot, contract_by_segment = self._contract_indexes(director_contract or {})
         findings: list[dict[str, Any]] = []
         for clip in timeline.get("tracks", {}).get("visual", []) or []:
             if clip.get("segment_id") is None:
@@ -239,10 +257,18 @@ class VisualSemanticQAStage(Stage):
                         "evidence": f"timeline wardrobe {clip.get('wardrobe')} differs from design {expected_wardrobe}",
                     }
                 )
-            contract = contract_by_segment.get(segment_id, {})
-            findings.extend(self._contract_findings(segment_id, clip, contract))
-            findings.extend(self._contract_quality_findings(segment_id, contract))
-            findings.extend(self._storyboard_binding_findings(segment_id, clip, contract))
+            contract = self._contract_for_clip(
+                clip, segment_id, contract_by_shot, contract_by_segment
+            )
+            clip_findings = [
+                *self._contract_findings(segment_id, clip, contract),
+                *self._contract_quality_findings(segment_id, contract),
+                *self._storyboard_binding_findings(segment_id, clip, contract),
+            ]
+            for finding in clip_findings:
+                if clip.get("shot_id"):
+                    finding.setdefault("shot_id", clip["shot_id"])
+            findings.extend(clip_findings)
         return findings
 
     def _reference_execution_findings(
@@ -306,8 +332,7 @@ class VisualSemanticQAStage(Stage):
                         }
                     )
             if (
-                reference_assets
-                and clip.get("source") in {"generated_video", "source_media"}
+                clip.get("source") in {"generated_video", "source_media"}
                 and clip.get("exists")
                 and not clip.get("extracted_frames")
             ):
@@ -418,18 +443,35 @@ class VisualSemanticQAStage(Stage):
     ) -> list[dict[str, Any]]:
         if not contract:
             return []
+        semantic_errors = shot_semantic_errors(
+            contract,
+            require_advanced=True,
+            require_compiled=True,
+        )
+        findings: list[dict[str, Any]] = [
+            {
+                "segment_id": segment_id,
+                "shot_id": contract.get("shot_id"),
+                "risk_type": "under_specified_director_contract",
+                "severity": "high",
+                "evidence": error,
+            }
+            for error in semantic_errors
+        ]
         prompt = str(contract.get("generation", {}).get("video_prompt") or "")
         assessment = video_prompt_quality_assessment(
             contract,
             provider="timeline",
             prompt=prompt,
         )
-        findings = assessment["findings"]
-        if not isinstance(findings, list):
-            return []
-        for item in findings:
+        quality_findings = assessment["findings"]
+        if not isinstance(quality_findings, list):
+            return findings
+        for item in quality_findings:
             if item["risk_type"] == "under_specified_video_prompt":
                 item["risk_type"] = "under_specified_director_contract"
+            if item not in findings:
+                findings.append(item)
         return findings
 
     def _storyboard_binding_findings(
@@ -633,11 +675,7 @@ class VisualSemanticQAStage(Stage):
             for item in design.get("segments", []) or []
             if item.get("segment_id") is not None
         }
-        contract_by_segment = {
-            int(item.get("segment_id")): item
-            for item in director_contract.get("shots", []) or []
-            if item.get("segment_id") is not None
-        }
+        contract_by_shot, contract_by_segment = self._contract_indexes(director_contract)
         evidence: list[dict[str, Any]] = []
         for clip in timeline.get("tracks", {}).get("visual", []) or []:
             item = dict(clip)
@@ -653,7 +691,9 @@ class VisualSemanticQAStage(Stage):
                 except (TypeError, ValueError):
                     segment_id_int = None
                 if segment_id_int is not None:
-                    contract = contract_by_segment.get(segment_id_int, {})
+                    contract = self._contract_for_clip(
+                        item, segment_id_int, contract_by_shot, contract_by_segment
+                    )
                     design_segment = design_by_segment.get(segment_id_int, {})
                     reference_manifest = resolve_reference_assets_for_shot(
                         context.config.project_dir,
@@ -720,27 +760,96 @@ class VisualSemanticQAStage(Stage):
             return []
         out_dir = context.config.pipeline_dir / "visual_semantic_frames"
         out_dir.mkdir(parents=True, exist_ok=True)
-        output = out_dir / f"segment_{int(segment_id):03d}_frame_001.jpg"
-        try:
-            result = run_ffmpeg_raw(
-                [
-                    "-ss",
-                    "0.5",
-                    "-i",
-                    str(path),
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "2",
-                    str(output),
-                ],
-                timeout=30,
-            )
-        except Exception:
-            return []
-        if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
-            return [output.as_posix()]
-        return []
+        frame_count = int(context.config.visual_semantic_qa.frames_per_clip)
+        duration = max(0.25, float(clip.get("duration") or 1.0))
+        key = str(clip.get("shot_id") or clip.get("asset_ref") or f"segment_{segment_id}")
+        safe_key = re.sub(r"[^A-Za-z0-9_-]+", "_", key).strip("_") or f"segment_{segment_id}"
+        frames: list[str] = []
+        for frame_index in range(frame_count):
+            source_in = float(clip.get("source_in") or 0.0)
+            timestamp = source_in + duration * (frame_index + 1) / (frame_count + 1)
+            output = out_dir / f"{safe_key}_frame_{frame_index + 1:03d}.jpg"
+            try:
+                result = run_ffmpeg_raw(
+                    [
+                        "-y",
+                        "-ss",
+                        f"{timestamp:.3f}",
+                        "-i",
+                        str(path),
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        str(output),
+                    ],
+                    timeout=30,
+                )
+            except Exception:
+                continue
+            if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
+                frames.append(output.as_posix())
+        return frames
+
+    def _contract_indexes(
+        self, director_contract: dict[str, Any]
+    ) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]]:
+        by_shot: dict[str, dict[str, Any]] = {}
+        by_segment: dict[int, dict[str, Any]] = {}
+        for shot in director_contract.get("shots", []) or []:
+            if not isinstance(shot, dict):
+                continue
+            try:
+                segment_id = int(str(shot.get("segment_id")))
+            except (TypeError, ValueError):
+                continue
+            shot_id = str(shot.get("shot_id") or "")
+            if shot_id:
+                by_shot[shot_id] = shot
+            current = by_segment.get(segment_id)
+            if current is None or int(shot.get("shot_order") or 1) < int(
+                current.get("shot_order") or 1
+            ):
+                by_segment[segment_id] = shot
+        return by_shot, by_segment
+
+    def _contract_for_clip(
+        self,
+        clip: dict[str, Any],
+        segment_id: int,
+        by_shot: dict[str, dict[str, Any]],
+        by_segment: dict[int, dict[str, Any]],
+    ) -> dict[str, Any]:
+        shot_id = str(clip.get("shot_id") or "")
+        return by_shot.get(shot_id) or by_segment.get(segment_id, {})
+
+    def _multimodal_image_paths(
+        self,
+        visual_evidence: list[dict[str, Any]],
+        context: StageContext,
+    ) -> list[str]:
+        candidates: list[Path] = []
+        for clip in visual_evidence:
+            candidates.extend(Path(path) for path in clip.get("extracted_frames", []) or [])
+            for asset in clip.get("reference_assets", []) or []:
+                if not isinstance(asset, dict) or not asset.get("path"):
+                    continue
+                path = Path(str(asset["path"]))
+                if not path.is_absolute():
+                    path = context.config.project_dir / path
+                candidates.append(path)
+        paths: list[str] = []
+        seen: set[str] = set()
+        limit = int(context.config.visual_semantic_qa.max_images)
+        for path in candidates:
+            resolved = path.resolve()
+            key = resolved.as_posix()
+            if resolved.is_file() and key not in seen:
+                paths.append(key)
+                seen.add(key)
+            if len(paths) >= limit:
+                break
+        return paths
 
     def _compact_reference_asset(self, asset: dict[str, Any]) -> dict[str, Any]:
         item = {

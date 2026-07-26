@@ -392,6 +392,36 @@ def test_director_contract_writes_prompt_blueprint_for_quality_gates(tmp_path):
     assert "field coat" in blueprint["qa_assertions"]["must_show"]
 
 
+def test_director_contract_builds_ordered_multi_shot_coverage_with_rich_language(tmp_path):
+    from narrascape.config import VideoConfig
+    from narrascape.stages.director_contract import DirectorContractStage
+
+    config = _config(tmp_path)
+    config.video = VideoConfig(coverage_mode="director", max_coverage_shots=2)
+    config.images.style = "neo-noir watercolor with restrained grain"
+
+    result = DirectorContractStage().run(_context(config))
+
+    assert result.success
+    contract = yaml.safe_load(
+        (config.pipeline_dir / "director_contract.yaml").read_text(encoding="utf-8")
+    )
+    first_segment = [shot for shot in contract["shots"] if shot["segment_id"] == 1]
+    assert [shot["shot_order"] for shot in first_segment] == [1, 2]
+    assert [shot["shot_id"] for shot in first_segment] == ["shot_001_01", "shot_001_02"]
+    assert first_segment[0]["coverage_role"] == "master"
+    assert first_segment[1]["coverage_role"] == "reaction"
+    for shot in first_segment:
+        assert shot["subject_action"] != shot["story_reason"]
+        assert shot["film_language"]["focal_length"]
+        assert shot["film_language"]["blocking"]
+        assert shot["temporal_plan"]["beats"]
+        assert shot["editorial_intent"]["cut_motivation"]
+        blueprint = shot["generation"]["prompt_blueprint"]
+        assert blueprint["style_anchor"] == "neo-noir watercolor with restrained grain"
+        assert blueprint["reference_strategy"]["provider_flow"] == "seedream_to_seedance"
+
+
 def test_director_contract_local_fallback_uses_storyboard_character_and_scene_locks(tmp_path):
     from narrascape.stages.director_contract import DirectorContractStage
 
@@ -455,13 +485,47 @@ def test_director_contract_uses_llm_when_available(tmp_path):
             "shots": [
                 {
                     "segment_id": 1,
+                    "shot_id": "shot_001",
+                    "shot_order": 1,
+                    "coverage_role": "master",
                     "story_reason": "LLM chooses a withheld panic beat.",
+                    "subject_action": "Mira grips the lab bench and turns toward the waking machine.",
                     "emotional_target": "withheld panic",
                     "film_language": {
                         "shot_type": "close_up",
                         "camera_motion": "slow push_in",
                         "lighting": "green practicals",
                         "composition": "Mira isolated in negative space",
+                        "focal_length": "85mm",
+                        "aperture": "f/2.0",
+                        "camera_angle": "eye level",
+                        "camera_height": "Mira eye line",
+                        "depth_of_field": "shallow focus on Mira",
+                        "color_palette": "green and charcoal",
+                        "blocking": ["Mira center-left, machine deep right"],
+                        "eyeline": "Mira looks frame right",
+                        "screen_axis": "Mira-machine axis",
+                    },
+                    "temporal_plan": {
+                        "subject_action": "Mira grips the lab bench and turns toward the waking machine.",
+                        "start_state": "Mira holds still beside the bench.",
+                        "beats": [
+                            {
+                                "phase": "middle",
+                                "at": 0.5,
+                                "subject_action": "Mira tightens her grip and turns frame right.",
+                                "camera_action": "slow push in",
+                            }
+                        ],
+                        "end_state": "Mira holds her gaze on the machine.",
+                        "performance_notes": "restrained panic",
+                    },
+                    "editorial_intent": {
+                        "coverage_role": "master",
+                        "cut_motivation": "Reveal Mira's reaction before the machine wakes.",
+                        "transition_in": "cut",
+                        "transition_out": "cut",
+                        "handles_seconds": 0.25,
                     },
                     "continuity_constraints": {
                         "characters": ["mira"],
@@ -478,12 +542,23 @@ def test_director_contract_uses_llm_when_available(tmp_path):
                     "qa": {
                         "must_show": ["mira", "field coat", "lab"],
                         "must_not_show": ["extra characters", "red dress"],
+                        "assertions": [
+                            {"dimension": "camera_language", "check": "Execute the slow push-in."},
+                            {
+                                "dimension": "motion_plausibility",
+                                "check": "Mira's turn and grip remain physically plausible.",
+                            },
+                            {
+                                "dimension": "technical_quality",
+                                "check": "No flicker, text, watermark, or malformed hands.",
+                            },
+                        ],
                     },
                 }
             ]
         }
     )
-    llm.data["shots"].append({**llm.data["shots"][0], "segment_id": 2})
+    llm.data["shots"].append({**llm.data["shots"][0], "segment_id": 2, "shot_id": "shot_002"})
     config = _config(tmp_path)
 
     result = DirectorContractStage(llm_client=llm).run(_context(config))
@@ -841,6 +916,57 @@ def test_generate_video_creates_configured_multi_takes(tmp_path, monkeypatch):
     assert result.metadata["take_count"] == 4
 
 
+def test_generate_video_expands_director_coverage_into_shot_named_tasks(tmp_path, monkeypatch):
+    from narrascape.config import VideoConfig
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.generate_video import GenerateVideoStage
+    from narrascape.stages.reference_plate import ReferencePlateStage
+
+    config = _config(tmp_path)
+    config.video = VideoConfig(coverage_mode="director", max_coverage_shots=2, takes=2)
+    DirectorContractStage().run(_context(config))
+    ReferencePlateStage().run(_context(config))
+    created = []
+
+    stage = GenerateVideoStage(api_key="fake", sleep_between=0)
+    monkeypatch.setattr(stage.uploader, "upload", lambda value: f"uploaded://{Path(value).stem}")
+
+    def fake_generate_one(
+        prompt,
+        out_name,
+        model,
+        resolution,
+        first_frame,
+        last_frame,
+        videos_dir,
+        reference_images=None,
+        provider="seedance",
+        negative_prompt="",
+    ):
+        created.append(out_name)
+        (videos_dir / f"{out_name}.mp4").write_bytes(b"video")
+        return True
+
+    monkeypatch.setattr(stage, "_generate_one", fake_generate_one)
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert created == [
+        "vid_01_shot_01_take_01",
+        "vid_01_shot_01_take_02",
+        "vid_01_shot_02_take_01",
+        "vid_01_shot_02_take_02",
+        "vid_02_shot_01_take_01",
+        "vid_02_shot_01_take_02",
+        "vid_02_shot_02_take_01",
+        "vid_02_shot_02_take_02",
+    ]
+    state = json.loads((config.pipeline_dir / "video_gen_state.json").read_text(encoding="utf-8"))
+    assert state["reference_inputs"]["vid_01_shot_02_take_01"]["shot_id"] == "shot_001_02"
+    assert result.metadata["take_count"] == 8
+
+
 def test_generate_video_blocks_under_specified_director_contract(tmp_path, monkeypatch):
     from narrascape.stages.director_contract import DirectorContractStage
     from narrascape.stages.generate_video import GenerateVideoStage
@@ -996,6 +1122,45 @@ def test_visual_semantic_qa_sends_director_contract_to_llm(tmp_path):
     assert "must_show" in prompt
     assert "reference image paths" in prompt
     assert kwargs["json_mode"] is True
+
+
+def test_visual_semantic_qa_attaches_extracted_pixels_to_multimodal_client(tmp_path, monkeypatch):
+    from narrascape.stages.director_contract import DirectorContractStage
+    from narrascape.stages.visual_semantic_qa import VisualSemanticQAStage
+
+    class MultimodalLLM(_FakeLLM):
+        def __init__(self):
+            super().__init__({"status": "approved", "findings": []})
+            self.multimodal_calls = []
+
+        def complete_multimodal(self, prompt, image_paths, **kwargs):
+            self.multimodal_calls.append((prompt, image_paths, kwargs))
+            return _Response(self.data)
+
+    config = _config(tmp_path)
+    DirectorContractStage().run(_context(config))
+    frame = config.pipeline_dir / "actual_frame.jpg"
+    frame.write_bytes(b"decoded frame pixels")
+    llm = MultimodalLLM()
+    stage = VisualSemanticQAStage(llm_client=llm)
+    monkeypatch.setattr(
+        stage, "_extract_clip_frames", lambda clip, path, context: [frame.as_posix()]
+    )
+
+    result = stage.run(_context(config))
+
+    assert result.success
+    assert llm.multimodal_calls
+    _, image_paths, kwargs = llm.multimodal_calls[0]
+    assert frame.resolve().as_posix() in image_paths
+    assert kwargs["json_mode"] is True
+    assert not llm.calls
+    report = yaml.safe_load(
+        (config.pipeline_dir / "visual_semantic_report.yaml").read_text(encoding="utf-8")
+    )
+    assert report["review_process"]["mode"] == "llm_multimodal_visual_review"
+    assert report["review_process"]["pixel_evidence_reviewed"] is True
+    assert report["review_process"]["multimodal_image_count"] >= 1
 
 
 def test_visual_semantic_qa_fallback_checks_contract_assertions(tmp_path):

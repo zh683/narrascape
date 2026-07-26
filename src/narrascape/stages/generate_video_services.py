@@ -96,7 +96,10 @@ class VideoPromptBuilder:
         provider: str | None = None,
     ) -> str:
         segment_id = _to_int(seg.get("segment_id"))
-        contract = (contract_by_segment or {}).get(segment_id) if segment_id is not None else None
+        embedded_contract = seg.get("_director_contract")
+        contract = embedded_contract if isinstance(embedded_contract, dict) else None
+        if contract is None and segment_id is not None:
+            contract = (contract_by_segment or {}).get(segment_id)
         generation = (contract or {}).get("generation", {})
         if isinstance(generation, dict):
             if provider:
@@ -138,10 +141,12 @@ class VideoPromptBuilder:
             parts.append(f"{motion_desc}, smooth and cinematic")
 
         prompt = ". ".join(parts)
-        prompt += (
-            ". Cinematic motion, smooth camera movement, oil painting style, "
-            "visible brush texture, cohesive painterly color palette, high quality."
+        style = str(
+            seg.get("_project_style")
+            or seg.get("style")
+            or "cinematic, coherent with the project style bible"
         )
+        prompt += f". Cinematic motion, smooth camera movement, {style}, high quality."
         return prompt
 
     def build_negative_prompt(self, contract: dict[str, Any], provider: str) -> str:
@@ -172,7 +177,12 @@ class VideoPromptQualityReporter:
             if segment_id is None:
                 continue
             checked_segments.append(segment_id)
-            contract = contract_by_segment.get(segment_id, {})
+            embedded_contract = segment.get("_director_contract")
+            contract = (
+                embedded_contract
+                if isinstance(embedded_contract, dict)
+                else contract_by_segment.get(segment_id, {})
+            )
             if not contract:
                 continue
             prompt = self.prompt_builder.build_prompt(
@@ -236,6 +246,9 @@ class VideoReferenceResolver:
             "uploaded_reference_assets": uploaded_reference_assets,
             "state": {
                 "segment_id": seg.get("segment_id"),
+                "shot_id": seg.get("shot_id"),
+                "shot_order": seg.get("shot_order"),
+                "coverage_role": seg.get("coverage_role"),
                 "storyboard_reference_image_ids": manifest["storyboard_reference_image_ids"],
                 "expected_reference_ids": manifest["expected_reference_ids"],
                 "resolved_references": compact_resolved,

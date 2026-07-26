@@ -18,6 +18,9 @@ from narrascape.contracts.common import ContractModel, ProjectRef
 class VisualClip(ContractModel):
     id: str = ""
     segment_id: int | None = None  # None on the ending card
+    shot_id: str | None = None
+    shot_order: int | None = None
+    coverage_role: str | None = None
     source: str = ""
     asset_ref: str | None = None
     path: str | None = ""
@@ -25,6 +28,8 @@ class VisualClip(ContractModel):
     duration: float = 0.0
     role: str = ""
     transition: str = ""
+    transition_out: str | None = None
+    cut_motivation: str | None = None
     # Design passthrough (absent on the ending card).
     shot_type: str | None = None
     movement: str | None = None

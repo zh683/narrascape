@@ -546,7 +546,7 @@ def test_visual_semantic_qa_uses_llm_when_available(tmp_path):
     )
     assert report["schema_version"] == "visual_semantic_report.v1"
     assert report["review_process"]["llm_status"] == "used"
-    assert report["findings"][0]["risk_type"] == "character_face_drift"
+    assert any(finding["risk_type"] == "character_face_drift" for finding in report["findings"])
 
 
 def test_visual_semantic_qa_fallback_flags_timeline_design_mismatch(tmp_path):

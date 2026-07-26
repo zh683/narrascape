@@ -44,6 +44,8 @@ Production-oriented features already implemented:
 - Seedream image generation and Seedance video generation through provider
   selection.
 - Multi-take video generation and `take_select`.
+- Opt-in ordered multi-shot coverage per narration segment, with shot-level
+  generation, take selection, timeline timing, and semantic QA.
 - Production readiness gates before expensive video generation.
 - Render QA for validity, audio, subtitles, duration drift, black frames,
   repeated shots, missing clips, placeholder residue, continuity risk, and
@@ -60,7 +62,8 @@ Production-oriented features already implemented:
 - Opt-in parallelism: `--stage-parallel` layered stage execution and
   `tts`/`video` `max_concurrency` per-asset generation pipelines.
 - Six-dimension QA assertion taxonomy (`qa.assertions`) reviewed per dimension
-  by `visual_semantic_qa`, plus optional MCTS take selection and
+  against extracted frame pixels and reference images by `visual_semantic_qa`,
+  plus optional MCTS take selection and
   storyboard-conditioned video generation.
 - Offline deterministic providers for end-to-end tests.
 - SQLite-backed persistent jobs executed by an independent local worker.
